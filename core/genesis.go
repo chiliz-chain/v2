@@ -262,6 +262,10 @@ func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
 		return params.ChapelChainConfig
 	case ghash == params.RialtoGenesisHash:
 		return params.RialtoChainConfig
+	case ghash == params.ChilizMainnetGenesisHash:
+		return params.ChilizMainnetChainConfig
+	case ghash == params.ChilizTestnetGenesisHash:
+		return params.ChilizTestnetChainConfig
 	default:
 		return params.AllEthashProtocolChanges
 	}
