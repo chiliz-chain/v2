@@ -67,15 +67,7 @@ var (
 	maxSystemBalance = new(big.Int).Mul(big.NewInt(100), big.NewInt(params.Ether))
 
 	systemContracts = map[common.Address]bool{
-		common.HexToAddress(systemcontracts.ValidatorContract):          true,
-		common.HexToAddress(systemcontracts.SlashContract):              true,
-		common.HexToAddress(systemcontracts.SystemRewardContract):       true,
-		common.HexToAddress(systemcontracts.LightClientContract):        true,
-		common.HexToAddress(systemcontracts.RelayerHubContract):         true,
-		common.HexToAddress(systemcontracts.GovHubContract):             true,
-		common.HexToAddress(systemcontracts.TokenHubContract):           true,
-		common.HexToAddress(systemcontracts.RelayerIncentivizeContract): true,
-		common.HexToAddress(systemcontracts.CrossChainContract):         true,
+		common.HexToAddress(systemcontracts.ValidatorContract): true,
 	}
 )
 
@@ -207,7 +199,6 @@ type Parlia struct {
 
 	ethAPI          *ethapi.PublicBlockChainAPI
 	validatorSetABI abi.ABI
-	slashABI        abi.ABI
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
@@ -241,10 +232,6 @@ func New(
 	if err != nil {
 		panic(err)
 	}
-	sABI, err := abi.JSON(strings.NewReader(slashABI))
-	if err != nil {
-		panic(err)
-	}
 	c := &Parlia{
 		chainConfig:     chainConfig,
 		config:          parliaConfig,
@@ -254,7 +241,6 @@ func New(
 		recentSnaps:     recentSnaps,
 		signatures:      signatures,
 		validatorSetABI: vABI,
-		slashABI:        sABI,
 		signer:          types.NewEIP155Signer(chainConfig.ChainID),
 	}
 
@@ -645,7 +631,7 @@ func (p *Parlia) Prepare(chain consensus.ChainReader, header *types.Header) erro
 // Finalize implements consensus.Engine, ensuring no uncles are set, nor block
 // rewards given.
 func (p *Parlia) Finalize(chain consensus.ChainReader, header *types.Header, state *state.StateDB, txs *[]*types.Transaction,
-	uncles []*types.Header, receipts *[]*types.Receipt, systemTxs *[]*types.Transaction, usedGas *uint64) error {
+	_ []*types.Header, receipts *[]*types.Receipt, systemTxs *[]*types.Transaction, usedGas *uint64) error {
 	// warn if not in majority fork
 	number := header.Number.Uint64()
 	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil)
@@ -969,19 +955,6 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 	state.SetBalance(consensus.SystemAddress, big.NewInt(0))
 	state.AddBalance(coinbase, balance)
 
-	doDistributeSysReward := state.GetBalance(common.HexToAddress(systemcontracts.SystemRewardContract)).Cmp(maxSystemBalance) < 0
-	if doDistributeSysReward {
-		var rewards = new(big.Int)
-		rewards = rewards.Rsh(balance, systemRewardPercent)
-		if rewards.Cmp(common.Big0) > 0 {
-			err := p.distributeToSystem(rewards, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
-			if err != nil {
-				return err
-			}
-			log.Trace("distribute to system reward pool", "block hash", header.Hash(), "amount", rewards)
-			balance = balance.Sub(balance, rewards)
-		}
-	}
 	log.Trace("distribute to validator contract", "block hash", header.Hash(), "amount", balance)
 	return p.distributeToValidator(balance, val, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 }
@@ -989,21 +962,10 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 // slash spoiled validators
 func (p *Parlia) slash(spoiledVal common.Address, state *state.StateDB, header *types.Header, chain core.ChainContext,
 	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
-	// method
-	method := "slash"
 
-	// get packed data
-	data, err := p.slashABI.Pack(method,
-		spoiledVal,
-	)
-	if err != nil {
-		log.Error("Unable to pack tx for slash", "error", err)
-		return err
-	}
-	// get system message
-	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(systemcontracts.SlashContract), data, common.Big0)
-	// apply message
-	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
+	/* TODO: "do we need slashing?" */
+
+	return nil
 }
 
 // init contract
@@ -1014,12 +976,6 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 	// contracts
 	contracts := []string{
 		systemcontracts.ValidatorContract,
-		systemcontracts.SlashContract,
-		systemcontracts.LightClientContract,
-		systemcontracts.RelayerHubContract,
-		systemcontracts.TokenHubContract,
-		systemcontracts.RelayerIncentivizeContract,
-		systemcontracts.CrossChainContract,
 	}
 	// get packed data
 	data, err := p.validatorSetABI.Pack(method)
@@ -1037,14 +993,6 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 		}
 	}
 	return nil
-}
-
-func (p *Parlia) distributeToSystem(amount *big.Int, state *state.StateDB, header *types.Header, chain core.ChainContext,
-	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
-	// get system message
-	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(systemcontracts.SystemRewardContract), nil, amount)
-	// apply message
-	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 }
 
 // slash spoiled validators
