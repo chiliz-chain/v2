@@ -191,6 +191,12 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 		return nil, gas, nil
 	}
 
+	// Fail if we're calling not whitelisted contract
+	_, err = evm.checkContractActive(addr, gas)
+	if err != nil {
+		return nil, gas, ErrNotAllowed
+	}
+
 	// Fail if we're trying to execute above the call depth limit
 	if evm.depth > int(params.CallCreateDepth) {
 		return nil, gas, ErrDepth
@@ -381,6 +387,10 @@ func (c *codeAndHash) Hash() common.Hash {
 
 // create creates a new contract using code as deployment code.
 func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64, value *big.Int, address common.Address) ([]byte, common.Address, uint64, error) {
+	gas, err := evm.registerDeployedContract(caller, address, gas)
+	if err != nil {
+		return nil, common.Address{}, gas, ErrNotAllowed
+	}
 	// Depth check execution. Fail if we're trying to execute above the
 	// limit.
 	if evm.depth > int(params.CallCreateDepth) {
