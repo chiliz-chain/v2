@@ -17,6 +17,11 @@ geth:
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/geth\" to launch geth."
 
+faucet:
+	$(GORUN) build/ci.go install ./cmd/faucet
+	@echo "Done building."
+	@echo "Run \"$(GOBIN)/faucet\" to launch faucet."
+
 all:
 	$(GORUN) build/ci.go install
 
