@@ -192,7 +192,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	}
 
 	// Fail if we're calling not whitelisted contract
-	_, err = evm.checkContractActive(addr, gas)
+	err = checkContractActive(evm, addr)
 	if err != nil {
 		return nil, gas, ErrNotAllowed
 	}
@@ -387,7 +387,7 @@ func (c *codeAndHash) Hash() common.Hash {
 
 // create creates a new contract using code as deployment code.
 func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64, value *big.Int, address common.Address) ([]byte, common.Address, uint64, error) {
-	gas, err := evm.registerDeployedContract(caller, address, gas)
+	err := registerDeployedContract(evm, caller, address)
 	if err != nil {
 		return nil, common.Address{}, gas, ErrNotAllowed
 	}

@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/chiliz"
 	"math/big"
 	"strings"
 
@@ -30,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -162,7 +162,6 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 	}
 	// Just commit the new block if there is no stored genesis block.
 	stored := rawdb.ReadCanonicalHash(db, 0)
-	systemcontracts.GenesisHash = stored
 	if (stored == common.Hash{}) {
 		if genesis == nil {
 			log.Info("Writing default main-net genesis block")
@@ -176,6 +175,7 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 		}
 		return genesis.Config, block.Hash(), nil
 	}
+	chiliz.GenesisHash = stored
 
 	// We have the genesis block in database(perhaps in ancient database)
 	// but the corresponding state is missing.
@@ -262,10 +262,6 @@ func (g *Genesis) configOrDefault(ghash common.Hash) *params.ChainConfig {
 		return params.ChapelChainConfig
 	case ghash == params.RialtoGenesisHash:
 		return params.RialtoChainConfig
-	case ghash == params.ChilizMainnetGenesisHash:
-		return params.ChilizMainnetChainConfig
-	case ghash == params.ChilizTestnetGenesisHash:
-		return params.ChilizTestnetChainConfig
 	default:
 		return params.AllEthashProtocolChanges
 	}

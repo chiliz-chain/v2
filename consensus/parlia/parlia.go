@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/chiliz"
 	"io"
 	"math"
 	"math/big"
 	"math/rand"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +20,6 @@ import (
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts"
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -28,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -67,7 +65,9 @@ var (
 	maxSystemBalance = new(big.Int).Mul(big.NewInt(100), big.NewInt(params.Ether))
 
 	systemContracts = map[common.Address]bool{
-		common.HexToAddress(systemcontracts.ValidatorContract): true,
+		chiliz.DeployerContract:   true,
+		chiliz.GovernanceContract: true,
+		chiliz.ParliaContract:     true,
 	}
 )
 
@@ -197,8 +197,7 @@ type Parlia struct {
 
 	lock sync.RWMutex // Protects the signer fields
 
-	ethAPI          *ethapi.PublicBlockChainAPI
-	validatorSetABI abi.ABI
+	ethAPI *ethapi.PublicBlockChainAPI
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
@@ -228,20 +227,15 @@ func New(
 	if err != nil {
 		panic(err)
 	}
-	vABI, err := abi.JSON(strings.NewReader(validatorSetABI))
-	if err != nil {
-		panic(err)
-	}
 	c := &Parlia{
-		chainConfig:     chainConfig,
-		config:          parliaConfig,
-		genesisHash:     genesisHash,
-		db:              db,
-		ethAPI:          ethAPI,
-		recentSnaps:     recentSnaps,
-		signatures:      signatures,
-		validatorSetABI: vABI,
-		signer:          types.NewEIP155Signer(chainConfig.ChainID),
+		chainConfig: chainConfig,
+		config:      parliaConfig,
+		genesisHash: genesisHash,
+		db:          db,
+		ethAPI:      ethAPI,
+		recentSnaps: recentSnaps,
+		signatures:  signatures,
+		signer:      types.NewEIP155Signer(chainConfig.ChainID),
 	}
 
 	return c
@@ -715,7 +709,7 @@ func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainReader, header *types.
 	if header.Number.Cmp(common.Big1) == 0 {
 		err := p.initContract(state, header, cx, &txs, &receipts, nil, &header.GasUsed, true)
 		if err != nil {
-			log.Error("init contract failed")
+			panic(fmt.Sprintf("init contract failed: %s", err))
 		}
 	}
 	if header.Difficulty.Cmp(diffInTurn) != 0 {
@@ -904,20 +898,17 @@ func (p *Parlia) getCurrentValidators(blockHash common.Hash) ([]common.Address, 
 	// block
 	blockNr := rpc.BlockNumberOrHashWithHash(blockHash, false)
 
-	// method
-	method := "getValidators"
-
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel() // cancel when we are finished consuming integers
 
-	data, err := p.validatorSetABI.Pack(method)
+	data, err := chiliz.ParliaAbi.Pack("getValidators")
 	if err != nil {
 		log.Error("Unable to pack tx for getValidators", "error", err)
 		return nil, err
 	}
 	// call
 	msgData := (hexutil.Bytes)(data)
-	toAddress := common.HexToAddress(systemcontracts.ValidatorContract)
+	toAddress := chiliz.ParliaContract
 	gas := (hexutil.Uint64)(uint64(math.MaxUint64 / 2))
 	result, err := p.ethAPI.Call(ctx, ethapi.CallArgs{
 		Gas:  &gas,
@@ -933,7 +924,7 @@ func (p *Parlia) getCurrentValidators(blockHash common.Hash) ([]common.Address, 
 	)
 	out := ret0
 
-	if err := p.validatorSetABI.Unpack(out, method, result); err != nil {
+	if err := chiliz.ParliaAbi.Unpack(out, "getValidators", result); err != nil {
 		return nil, err
 	}
 
@@ -971,22 +962,42 @@ func (p *Parlia) slash(spoiledVal common.Address, state *state.StateDB, header *
 // init contract
 func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain core.ChainContext,
 	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
-	// method
-	method := "init"
 	// contracts
-	contracts := []string{
-		systemcontracts.ValidatorContract,
+	contracts := []common.Address{
+		chiliz.DeployerContract,
+		chiliz.GovernanceContract,
+		chiliz.ParliaContract,
 	}
 	// get packed data
-	data, err := p.validatorSetABI.Pack(method)
+	data, err := chiliz.ParliaAbi.Pack("initialize", contracts[0], contracts[1], contracts[2])
 	if err != nil {
 		log.Error("Unable to pack tx for init validator set", "error", err)
 		return err
 	}
 	for _, c := range contracts {
-		msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(c), data, common.Big0)
+		msg := p.getSystemMessage(header.Coinbase, c, data, common.Big0)
 		// apply message
-		log.Trace("init contract", "block hash", header.Hash(), "contract", c)
+		log.Info("Init genesis contract", "block hash", header.Hash(), "contract", c.String())
+		err = p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
+		if err != nil {
+			return err
+		}
+	}
+	// add validators
+	genesisBlock := chain.GetHeader(chiliz.GenesisHash, 0)
+	if genesisBlock == nil {
+		return fmt.Errorf("genesis block doesn't exist")
+	}
+	genesisValidators, err := ParseValidators(genesisBlock.Extra[extraVanity : len(genesisBlock.Extra)-extraSeal])
+	for _, validator := range genesisValidators {
+		data, err := chiliz.ParliaAbi.Pack("addValidator", validator)
+		if err != nil {
+			log.Error("Unable to pack tx for init validator set", "error", err)
+			return err
+		}
+		msg := p.getSystemMessage(header.Coinbase, chiliz.ParliaContract, data, common.Big0)
+		// apply message
+		log.Info("Add genesis validator", "validator", validator.Hex())
 		err = p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 		if err != nil {
 			return err
@@ -999,19 +1010,14 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 func (p *Parlia) distributeToValidator(amount *big.Int, validator common.Address,
 	state *state.StateDB, header *types.Header, chain core.ChainContext,
 	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
-	// method
-	method := "deposit"
-
 	// get packed data
-	data, err := p.validatorSetABI.Pack(method,
-		validator,
-	)
+	data, err := chiliz.ParliaAbi.Pack("deposit", validator)
 	if err != nil {
 		log.Error("Unable to pack tx for deposit", "error", err)
 		return err
 	}
 	// get system message
-	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(systemcontracts.ValidatorContract), data, amount)
+	msg := p.getSystemMessage(header.Coinbase, chiliz.ParliaContract, data, amount)
 	// apply message
 	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 }

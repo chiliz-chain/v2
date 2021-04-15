@@ -1,4 +1,4 @@
-package systemcontracts
+package chiliz
 
 import (
 	"encoding/hex"
