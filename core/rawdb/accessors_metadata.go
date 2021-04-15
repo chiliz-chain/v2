@@ -75,7 +75,6 @@ func WriteChainConfig(db ethdb.KeyValueWriter, hash common.Hash, cfg *params.Cha
 	if err != nil {
 		log.Crit("Failed to JSON encode chain config", "err", err)
 	}
-	log.Info(string(data))
 	if err := db.Put(configKey(hash), data); err != nil {
 		log.Crit("Failed to store chain config", "err", err)
 	}
