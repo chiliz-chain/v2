@@ -61,14 +61,6 @@ var (
 	uncleHash  = types.CalcUncleHash(nil) // Always Keccak256(RLP([])) as uncles are meaningless outside of PoW.
 	diffInTurn = big.NewInt(2)            // Block difficulty for in-turn signatures
 	diffNoTurn = big.NewInt(1)            // Block difficulty for out-of-turn signatures
-	// 100 native token
-	maxSystemBalance = new(big.Int).Mul(big.NewInt(100), big.NewInt(params.Ether))
-
-	systemContracts = map[common.Address]bool{
-		chiliz.DeployerContract:   true,
-		chiliz.GovernanceContract: true,
-		chiliz.ParliaContract:     true,
-	}
 )
 
 // Various error messages to mark blocks invalid. These should be private to
@@ -136,10 +128,6 @@ var (
 // backing account.
 type SignerFn func(accounts.Account, string, []byte) ([]byte, error)
 type SignerTxFn func(accounts.Account, *types.Transaction, *big.Int) (*types.Transaction, error)
-
-func isToSystemContract(to common.Address) bool {
-	return systemContracts[to]
-}
 
 // ecrecover extracts the Ethereum account address from a signed header.
 func ecrecover(header *types.Header, sigCache *lru.ARCCache, chainId *big.Int) (common.Address, error) {
@@ -250,7 +238,7 @@ func (p *Parlia) IsSystemTransaction(tx *types.Transaction, header *types.Header
 	if err != nil {
 		return false, errors.New("UnAuthorized transaction")
 	}
-	if sender == header.Coinbase && isToSystemContract(*tx.To()) && tx.GasPrice().Cmp(big.NewInt(0)) == 0 {
+	if sender == header.Coinbase && chiliz.IsSystemContract(*tx.To()) && tx.GasPrice().Cmp(big.NewInt(0)) == 0 {
 		return true, nil
 	}
 	return false, nil
@@ -260,7 +248,7 @@ func (p *Parlia) IsSystemContract(to *common.Address) bool {
 	if to == nil {
 		return false
 	}
-	return isToSystemContract(*to)
+	return chiliz.IsSystemContract(*to)
 }
 
 // Author implements consensus.Engine, returning the SystemAddress
