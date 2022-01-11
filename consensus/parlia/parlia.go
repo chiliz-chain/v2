@@ -663,7 +663,8 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 	if header.Number.Cmp(common.Big1) == 0 {
 		err := p.initContract(state, header, cx, txs, receipts, systemTxs, usedGas, false)
 		if err != nil {
-			log.Fatalf("init contract failed: %+v", err)
+			log.Error("init contract failed", "error", err)
+			return err
 		}
 	}
 	if header.Difficulty.Cmp(diffInTurn) != 0 {
