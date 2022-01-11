@@ -11,7 +11,7 @@ require (
 	github.com/VividCortex/gohistogram v1.0.0 // indirect
 	github.com/aristanetworks/goarista v0.0.0-20170210015632-ea17b1a17847
 	github.com/aws/aws-sdk-go v1.25.48
-	github.com/btcsuite/btcd v0.20.0-beta
+	github.com/btcsuite/btcd v0.22.0-beta
 	github.com/cespare/cp v0.1.0
 	github.com/cespare/xxhash/v2 v2.1.1 // indirect
 	github.com/cloudflare/cloudflare-go v0.10.2-0.20190916151808-a80f83b9add9
@@ -71,11 +71,10 @@ require (
 	github.com/tyler-smith/go-bip39 v1.0.1-0.20181017060643-dbb3b84ba2ef
 	github.com/wsddn/go-ecdh v0.0.0-20161211032359-48726bab9208
 	go.etcd.io/bbolt v1.3.2 // indirect
-	golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550
-	golang.org/x/net v0.0.0-20200301022130-244492dfa37a // indirect
+	golang.org/x/crypto v0.0.0-20211202192323-5770296d904e
 	golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e
-	golang.org/x/sys v0.0.0-20191026070338-33540a1f6037
-	golang.org/x/text v0.3.2
+	golang.org/x/sys v0.0.0-20211205182925-97ca703d548d
+	golang.org/x/text v0.3.6
 	golang.org/x/time v0.0.0-20190308202827-9d24e82272b4
 	google.golang.org/grpc v1.27.1 // indirect
 	gopkg.in/natefinch/npipe.v2 v2.0.0-20160621034901-c1b8fa8bdcce

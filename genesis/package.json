@@ -1,0 +1,26 @@
+{
+  "name": "chiliz-genesis-smart-contracts",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "compile": "truffle compile --all",
+    "migrate:mainnet": "truffle compile --all && truffle migrate --network ganache",
+    "migrate:testnet": "truffle compile --all && truffle migrate --network smartchaintestnet",
+    "test": "truffle test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@openzeppelin/contracts": "^4.0.0",
+    "@truffle/hdwallet-provider": "^1.2.6",
+    "truffle": "^5.3.1"
+  },
+  "dependencies": {
+    "bignumber.js": "^9.0.1",
+    "ethereumjs-util": "^7.0.9",
+    "rlp": "^2.2.6",
+    "web3": "^1.3.4"
+  }
+}
