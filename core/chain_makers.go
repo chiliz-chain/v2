@@ -18,8 +18,9 @@ package core
 
 import (
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/chiliz"
 	"math/big"
+
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -104,12 +105,17 @@ func (b *BlockGen) AddTxWithChain(bc *BlockChain, tx *types.Transaction) {
 		b.SetCoinbase(common.Address{})
 	}
 	b.statedb.Prepare(tx.Hash(), common.Hash{}, len(b.txs))
-	receipt, err := ApplyTransaction(b.config, bc, &b.header.Coinbase, b.gasPool, b.statedb, b.header, tx, &b.header.GasUsed, vm.Config{})
+	receipt, err := ApplyTransaction(b.config, bc, &b.header.Coinbase, b.gasPool, b.statedb, b.header, tx, &b.header.GasUsed, vm.Config{}, NewReceiptBloomGenerator())
 	if err != nil {
 		panic(err)
 	}
 	b.txs = append(b.txs, tx)
 	b.receipts = append(b.receipts, receipt)
+}
+
+// GetBalance returns the balance of the given address at the generated block.
+func (b *BlockGen) GetBalance(addr common.Address) *big.Int {
+	return b.statedb.GetBalance(addr)
 }
 
 // AddUncheckedTx forcefully adds a transaction to the block without any
@@ -208,7 +214,7 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 		if config.DAOForkSupport && config.DAOForkBlock != nil && config.DAOForkBlock.Cmp(b.header.Number) == 0 {
 			misc.ApplyDAOHardFork(statedb)
 		}
-		chiliz.UpgradeBuildInSystemContract(config, b.header.Number, statedb)
+		systemcontracts.UpgradeBuildInSystemContract(config, b.header.Number, statedb)
 		// Execute any user modifications to the block
 		if gen != nil {
 			gen(i, b)
@@ -218,11 +224,11 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 			block, _, _ := b.engine.FinalizeAndAssemble(chainreader, b.header, statedb, b.txs, b.uncles, b.receipts)
 
 			// Write state changes to db
-			root, err := statedb.Commit(config.IsEIP158(b.header.Number))
+			root, _, err := statedb.Commit(config.IsEIP158(b.header.Number))
 			if err != nil {
 				panic(fmt.Sprintf("state write error: %v", err))
 			}
-			if err := statedb.Database().TrieDB().Commit(root, false); err != nil {
+			if err := statedb.Database().TrieDB().Commit(root, false, nil); err != nil {
 				panic(fmt.Sprintf("trie write error: %v", err))
 			}
 			return block, b.receipts
@@ -298,3 +304,4 @@ func (cr *fakeChainReader) GetHeaderByNumber(number uint64) *types.Header       
 func (cr *fakeChainReader) GetHeaderByHash(hash common.Hash) *types.Header          { return nil }
 func (cr *fakeChainReader) GetHeader(hash common.Hash, number uint64) *types.Header { return nil }
 func (cr *fakeChainReader) GetBlock(hash common.Hash, number uint64) *types.Block   { return nil }
+func (cr *fakeChainReader) GetHighestVerifiedHeader() *types.Header                 { return nil }

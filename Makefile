@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: geth android ios geth-cross evm all test clean
+.PHONY: geth android ios geth-cross evm all test truffle-test clean
 .PHONY: geth-linux geth-linux-386 geth-linux-amd64 geth-linux-mips64 geth-linux-mips64le
 .PHONY: geth-linux-arm geth-linux-arm-5 geth-linux-arm-6 geth-linux-arm-7 geth-linux-arm64
 .PHONY: geth-darwin geth-darwin-386 geth-darwin-amd64
@@ -29,6 +29,8 @@ android:
 	$(GORUN) build/ci.go aar --local
 	@echo "Done building."
 	@echo "Import \"$(GOBIN)/geth.aar\" to use the library."
+	@echo "Import \"$(GOBIN)/geth-sources.jar\" to add javadocs"
+	@echo "For more info see https://stackoverflow.com/questions/20994336/android-studio-how-to-attach-javadoc"
 
 ios:
 	$(GORUN) build/ci.go xcode --local
@@ -36,7 +38,17 @@ ios:
 	@echo "Import \"$(GOBIN)/Geth.framework\" to use the library."
 
 test: all
-	$(GORUN) build/ci.go test
+	$(GORUN) build/ci.go test -timeout 1h
+
+truffle-test:
+	docker build . -f ./docker/Dockerfile --target bsc-genesis -t bsc-genesis
+	docker build . -f ./docker/Dockerfile --target bsc -t bsc
+	docker build . -f ./docker/Dockerfile.truffle -t truffle-test
+	docker-compose -f ./tests/truffle/docker-compose.yml up genesis
+	docker-compose -f ./tests/truffle/docker-compose.yml up -d bsc-rpc bsc-validator1
+	sleep 30
+	docker-compose -f ./tests/truffle/docker-compose.yml up --exit-code-from truffle-test truffle-test
+	docker-compose -f ./tests/truffle/docker-compose.yml down
 
 lint: ## Run linters.
 	$(GORUN) build/ci.go lint
@@ -49,12 +61,11 @@ clean:
 # You need to put $GOBIN (or $GOPATH/bin) in your PATH to use 'go generate'.
 
 devtools:
-	env GOBIN= go get -u golang.org/x/tools/cmd/stringer
-	env GOBIN= go get -u github.com/kevinburke/go-bindata/go-bindata
-	env GOBIN= go get -u github.com/fjl/gencodec
-	env GOBIN= go get -u github.com/golang/protobuf/protoc-gen-go
+	env GOBIN= go install golang.org/x/tools/cmd/stringer@latest
+	env GOBIN= go install github.com/kevinburke/go-bindata/go-bindata@latest
+	env GOBIN= go install github.com/fjl/gencodec@latest
+	env GOBIN= go install github.com/golang/protobuf/protoc-gen-go@latest
 	env GOBIN= go install ./cmd/abigen
-	@type "npm" 2> /dev/null || echo 'Please install node.js and npm'
 	@type "solc" 2> /dev/null || echo 'Please install solc'
 	@type "protoc" 2> /dev/null || echo 'Please install protoc'
 

@@ -20,6 +20,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
 
@@ -104,9 +105,7 @@ func (it *lookup) startQueries() bool {
 
 	// The first query returns nodes from the local table.
 	if it.queries == -1 {
-		it.tab.mutex.Lock()
-		closest := it.tab.closest(it.result.target, bucketSize, false)
-		it.tab.mutex.Unlock()
+		closest := it.tab.findnodeByID(it.result.target, bucketSize, false)
 		// Avoid finishing the lookup too quickly if table is empty. It'd be better to wait
 		// for the table to fill in this case, but there is no good mechanism for that
 		// yet.
@@ -124,7 +123,9 @@ func (it *lookup) startQueries() bool {
 		if !it.asked[n.ID()] {
 			it.asked[n.ID()] = true
 			it.queries++
-			go it.query(n, it.replyCh)
+			gopool.Submit(func() {
+				it.query(n, it.replyCh)
+			})
 		}
 	}
 	// The lookup ends when no more nodes can be asked.
@@ -150,11 +151,14 @@ func (it *lookup) query(n *node, reply chan<- []*node) {
 	} else if len(r) == 0 {
 		fails++
 		it.tab.db.UpdateFindFails(n.ID(), n.IP(), fails)
-		it.tab.log.Trace("Findnode failed", "id", n.ID(), "failcount", fails, "results", len(r), "err", err)
-		if fails >= maxFindnodeFailures {
-			it.tab.log.Trace("Too many findnode failures, dropping", "id", n.ID(), "failcount", fails)
+		// Remove the node from the local table if it fails to return anything useful too
+		// many times, but only if there are enough other nodes in the bucket.
+		dropped := false
+		if fails >= maxFindnodeFailures && it.tab.bucketLen(n.ID()) >= bucketSize/2 {
+			dropped = true
 			it.tab.delete(n)
 		}
+		it.tab.log.Trace("FINDNODE failed", "id", n.ID(), "failcount", fails, "dropped", dropped, "err", err)
 	} else if fails > 0 {
 		// Reset failure counter because it counts _consecutive_ failures.
 		it.tab.db.UpdateFindFails(n.ID(), n.IP(), 0)

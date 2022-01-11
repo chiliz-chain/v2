@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -48,7 +49,7 @@ var (
 
 // Seal implements consensus.Engine, attempting to find a nonce that satisfies
 // the block's difficulty requirements.
-func (ethash *Ethash) Seal(chain consensus.ChainReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
+func (ethash *Ethash) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
 	// If we're running a fake PoW, simply return a 0 nonce immediately
 	if ethash.config.PowMode == ModeFake || ethash.config.PowMode == ModeFullFake {
 		header := block.Header()
@@ -100,7 +101,7 @@ func (ethash *Ethash) Seal(chain consensus.ChainReader, block *types.Block, resu
 		}(i, uint64(ethash.rand.Int63()))
 	}
 	// Wait until sealing is terminated or a nonce is found
-	go func() {
+	gopool.Submit(func() {
 		var result *types.Block
 		select {
 		case <-stop:
@@ -123,7 +124,7 @@ func (ethash *Ethash) Seal(chain consensus.ChainReader, block *types.Block, resu
 		}
 		// Wait for all miners to terminate and return the block
 		pend.Wait()
-	}()
+	})
 	return nil
 }
 
@@ -358,7 +359,16 @@ func (s *remoteSealer) makeWork(block *types.Block) {
 // new work to be processed.
 func (s *remoteSealer) notifyWork() {
 	work := s.currentWork
-	blob, _ := json.Marshal(work)
+
+	// Encode the JSON payload of the notification. When NotifyFull is set,
+	// this is the complete block header, otherwise it is a JSON array.
+	var blob []byte
+	if s.ethash.config.NotifyFull {
+		blob, _ = json.Marshal(s.currentBlock.Header())
+	} else {
+		blob, _ = json.Marshal(work)
+	}
+
 	s.reqWG.Add(len(s.notifyURLs))
 	for _, url := range s.notifyURLs {
 		go s.sendNotification(s.notifyCtx, url, blob, work)

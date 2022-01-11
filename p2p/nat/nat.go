@@ -25,6 +25,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common/gopool"
+
 	"github.com/ethereum/go-ethereum/log"
 	natpmp "github.com/jackpal/go-nat-pmp"
 )
@@ -91,15 +93,14 @@ func Parse(spec string) (Interface, error) {
 }
 
 const (
-	mapTimeout        = 20 * time.Minute
-	mapUpdateInterval = 15 * time.Minute
+	mapTimeout = 10 * time.Minute
 )
 
 // Map adds a port mapping on m and keeps it alive until c is closed.
 // This function is typically invoked in its own goroutine.
-func Map(m Interface, c chan struct{}, protocol string, extport, intport int, name string) {
+func Map(m Interface, c <-chan struct{}, protocol string, extport, intport int, name string) {
 	log := log.New("proto", protocol, "extport", extport, "intport", intport, "interface", m)
-	refresh := time.NewTimer(mapUpdateInterval)
+	refresh := time.NewTimer(mapTimeout)
 	defer func() {
 		refresh.Stop()
 		log.Debug("Deleting port mapping")
@@ -121,7 +122,7 @@ func Map(m Interface, c chan struct{}, protocol string, extport, intport int, na
 			if err := m.AddMapping(protocol, extport, intport, name, mapTimeout); err != nil {
 				log.Debug("Couldn't add port mapping", "err", err)
 			}
-			refresh.Reset(mapUpdateInterval)
+			refresh.Reset(mapTimeout)
 		}
 	}
 }
@@ -146,8 +147,8 @@ func Any() Interface {
 	// Internet-class address. Return ExtIP in this case.
 	return startautodisc("UPnP or NAT-PMP", func() Interface {
 		found := make(chan Interface, 2)
-		go func() { found <- discoverUPnP() }()
-		go func() { found <- discoverPMP() }()
+		gopool.Submit(func() { found <- discoverUPnP() })
+		gopool.Submit(func() { found <- discoverPMP() })
 		for i := 0; i < cap(found); i++ {
 			if c := <-found; c != nil {
 				return c
@@ -220,9 +221,8 @@ func (n *autodisc) String() string {
 	defer n.mu.Unlock()
 	if n.found == nil {
 		return n.what
-	} else {
-		return n.found.String()
 	}
+	return n.found.String()
 }
 
 // wait blocks until auto-discovery has been performed.

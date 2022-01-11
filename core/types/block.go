@@ -19,6 +19,7 @@ package types
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -28,12 +29,14 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
-	"golang.org/x/crypto/sha3"
 )
 
 var (
-	EmptyRootHash  = DeriveSha(Transactions{})
+	EmptyRootHash = common.HexToHash("56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
+	EmptyCodeHash = crypto.Keccak256(nil)
+
 	EmptyUncleHash = rlpHash([]*Header(nil))
 )
 
@@ -129,11 +132,15 @@ func (h *Header) SanityCheck() error {
 	return nil
 }
 
-func rlpHash(x interface{}) (h common.Hash) {
-	hw := sha3.NewLegacyKeccak256()
-	rlp.Encode(hw, x)
-	hw.Sum(h[:0])
-	return h
+// EmptyBody returns true if there is no additional 'body' to complete the header
+// that is: no transactions and no uncles.
+func (h *Header) EmptyBody() bool {
+	return h.TxHash == EmptyRootHash && h.UncleHash == EmptyUncleHash
+}
+
+// EmptyReceipts returns true if there are no receipts for this header/block.
+func (h *Header) EmptyReceipts() bool {
+	return h.ReceiptHash == EmptyRootHash
 }
 
 // Body is a simple (mutable, non-safe) data container for storing and moving
@@ -163,33 +170,11 @@ type Block struct {
 	ReceivedFrom interface{}
 }
 
-// DeprecatedTd is an old relic for extracting the TD of a block. It is in the
-// code solely to facilitate upgrading the database from the old format to the
-// new, after which it should be deleted. Do not use!
-func (b *Block) DeprecatedTd() *big.Int {
-	return b.td
-}
-
-// [deprecated by eth/63]
-// StorageBlock defines the RLP encoding of a Block stored in the
-// state database. The StorageBlock encoding contains fields that
-// would otherwise need to be recomputed.
-type StorageBlock Block
-
 // "external" block encoding. used for eth protocol, etc.
 type extblock struct {
 	Header *Header
 	Txs    []*Transaction
 	Uncles []*Header
-}
-
-// [deprecated by eth/63]
-// "storage" block encoding. used for database.
-type storageblock struct {
-	Header *Header
-	Txs    []*Transaction
-	Uncles []*Header
-	TD     *big.Int
 }
 
 // NewBlock creates a new block. The input data is copied,
@@ -199,14 +184,14 @@ type storageblock struct {
 // The values of TxHash, UncleHash, ReceiptHash and Bloom in header
 // are ignored and set to values derived from the given txs, uncles
 // and receipts.
-func NewBlock(header *Header, txs []*Transaction, uncles []*Header, receipts []*Receipt) *Block {
+func NewBlock(header *Header, txs []*Transaction, uncles []*Header, receipts []*Receipt, hasher TrieHasher) *Block {
 	b := &Block{header: CopyHeader(header), td: new(big.Int)}
 
 	// TODO: panic if len(txs) != len(receipts)
 	if len(txs) == 0 {
 		b.header.TxHash = EmptyRootHash
 	} else {
-		b.header.TxHash = DeriveSha(Transactions(txs))
+		b.header.TxHash = DeriveSha(Transactions(txs), hasher)
 		b.transactions = make(Transactions, len(txs))
 		copy(b.transactions, txs)
 	}
@@ -214,7 +199,7 @@ func NewBlock(header *Header, txs []*Transaction, uncles []*Header, receipts []*
 	if len(receipts) == 0 {
 		b.header.ReceiptHash = EmptyRootHash
 	} else {
-		b.header.ReceiptHash = DeriveSha(Receipts(receipts))
+		b.header.ReceiptHash = DeriveSha(Receipts(receipts), hasher)
 		b.header.Bloom = CreateBloom(receipts)
 	}
 
@@ -276,16 +261,6 @@ func (b *Block) EncodeRLP(w io.Writer) error {
 	})
 }
 
-// [deprecated by eth/63]
-func (b *StorageBlock) DecodeRLP(s *rlp.Stream) error {
-	var sb storageblock
-	if err := s.Decode(&sb); err != nil {
-		return err
-	}
-	b.header, b.uncles, b.transactions, b.td = sb.Header, sb.Uncles, sb.Txs, sb.TD
-	return nil
-}
-
 // TODO: copies
 
 func (b *Block) Uncles() []*Header          { return b.uncles }
@@ -334,6 +309,8 @@ func (b *Block) Size() common.StorageSize {
 	b.size.Store(common.StorageSize(c))
 	return common.StorageSize(c)
 }
+
+func (b *Block) SetRoot(root common.Hash) { b.header.Root = root }
 
 // SanityCheck can be used to prevent that unbounded fields are
 // stuffed with junk data to add processing overhead
@@ -393,3 +370,97 @@ func (b *Block) Hash() common.Hash {
 }
 
 type Blocks []*Block
+
+type DiffLayer struct {
+	BlockHash common.Hash
+	Number    uint64
+	Receipts  Receipts // Receipts are duplicated stored to simplify the logic
+	Codes     []DiffCode
+	Destructs []common.Address
+	Accounts  []DiffAccount
+	Storages  []DiffStorage
+
+	DiffHash common.Hash
+}
+
+type extDiffLayer struct {
+	BlockHash common.Hash
+	Number    uint64
+	Receipts  []*ReceiptForStorage // Receipts are duplicated stored to simplify the logic
+	Codes     []DiffCode
+	Destructs []common.Address
+	Accounts  []DiffAccount
+	Storages  []DiffStorage
+}
+
+// DecodeRLP decodes the Ethereum
+func (d *DiffLayer) DecodeRLP(s *rlp.Stream) error {
+	var ed extDiffLayer
+	if err := s.Decode(&ed); err != nil {
+		return err
+	}
+	d.BlockHash, d.Number, d.Codes, d.Destructs, d.Accounts, d.Storages =
+		ed.BlockHash, ed.Number, ed.Codes, ed.Destructs, ed.Accounts, ed.Storages
+
+	d.Receipts = make([]*Receipt, len(ed.Receipts))
+	for i, storageReceipt := range ed.Receipts {
+		d.Receipts[i] = (*Receipt)(storageReceipt)
+	}
+	return nil
+}
+
+// EncodeRLP serializes b into the Ethereum RLP block format.
+func (d *DiffLayer) EncodeRLP(w io.Writer) error {
+	storageReceipts := make([]*ReceiptForStorage, len(d.Receipts))
+	for i, receipt := range d.Receipts {
+		storageReceipts[i] = (*ReceiptForStorage)(receipt)
+	}
+	return rlp.Encode(w, extDiffLayer{
+		BlockHash: d.BlockHash,
+		Number:    d.Number,
+		Receipts:  storageReceipts,
+		Codes:     d.Codes,
+		Destructs: d.Destructs,
+		Accounts:  d.Accounts,
+		Storages:  d.Storages,
+	})
+}
+
+func (d *DiffLayer) Validate() error {
+	if d.BlockHash == (common.Hash{}) {
+		return errors.New("blockHash can't be empty")
+	}
+	for _, storage := range d.Storages {
+		if len(storage.Keys) != len(storage.Vals) {
+			return errors.New("the length of keys and values mismatch in storage")
+		}
+	}
+	return nil
+}
+
+type DiffCode struct {
+	Hash common.Hash
+	Code []byte
+}
+
+type DiffAccount struct {
+	Account common.Address
+	Blob    []byte
+}
+
+type DiffStorage struct {
+	Account common.Address
+	Keys    []string
+	Vals    [][]byte
+}
+
+type DiffAccountsInTx struct {
+	TxHash   common.Hash
+	Accounts map[common.Address]*big.Int
+}
+
+type DiffAccountsInBlock struct {
+	Number       uint64
+	BlockHash    common.Hash
+	Transactions []DiffAccountsInTx
+}
