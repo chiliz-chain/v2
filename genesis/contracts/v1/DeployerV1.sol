@@ -3,7 +3,7 @@ pragma solidity ^0.8.0;
 
 import "../Injector.sol";
 
-contract DeployerV1 is IDeployer, IEVMHooks, InjectorContextHolderV1 {
+contract DeployerV1 is IDeployer, InjectorContextHolderV1 {
 
     event DeployerAdded(address account);
     event DeployerRemoved(address account);
@@ -84,7 +84,7 @@ contract DeployerV1 is IDeployer, IEVMHooks, InjectorContextHolderV1 {
         emit ContractDeployed(account, impl);
     }
 
-    function checkContractActive(address impl) external onlyBlockchain override {
+    function checkContractActive(address impl) external view onlyBlockchain override {
         // for non-contract just exist
         if (!Address.isContract(impl)) {
             return;

@@ -11,7 +11,7 @@ module.exports = async function (deployer) {
   await deployer.deploy(Parlia);
   const parliaV1 = await Parlia.deployed();
   // init injector with deps
-  await deployerV1.initialize(deployerV1.address, governanceV1.address, parliaV1.address);
-  await governanceV1.initialize(deployerV1.address, governanceV1.address, parliaV1.address);
-  await parliaV1.initialize(deployerV1.address, governanceV1.address, parliaV1.address);
+  await deployerV1.init(deployerV1.address, governanceV1.address, parliaV1.address);
+  await governanceV1.init(deployerV1.address, governanceV1.address, parliaV1.address);
+  await parliaV1.init(deployerV1.address, governanceV1.address, parliaV1.address);
 };
