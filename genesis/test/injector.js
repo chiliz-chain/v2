@@ -24,4 +24,16 @@ contract("Injector", async (accounts) => {
     assert.equal(parlia.address, await governance.getParlia());
     assert.equal(parlia.address, await parlia.getParlia());
   });
+  it("consensus init is working", async () => {
+    const testInjector = async classType => {
+      const deployer = await classType.new();
+      await deployer.init()
+      assert.equal(await deployer.getDeployer(), '0x0000000000000000000000000000000000000010')
+      assert.equal(await deployer.getGovernance(), '0x0000000000000000000000000000000000000020')
+      assert.equal(await deployer.getParlia(), '0x0000000000000000000000000000000000000030')
+    }
+    await testInjector(Deployer)
+    await testInjector(Governance)
+    await testInjector(Parlia)
+  })
 });

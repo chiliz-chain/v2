@@ -5,8 +5,6 @@
   "main": "index.js",
   "scripts": {
     "compile": "truffle compile --all",
-    "migrate:mainnet": "truffle compile --all && truffle migrate --network ganache",
-    "migrate:testnet": "truffle compile --all && truffle migrate --network smartchaintestnet",
     "test": "truffle test"
   },
   "keywords": [],

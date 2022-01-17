@@ -36,7 +36,7 @@ contract DeployerV1 is IDeployer, InjectorContextHolderV1 {
         return _deployers[account].banned;
     }
 
-    function addDeployer(address account) public override {
+    function addDeployer(address account) public onlyGovernance override {
         require(!_deployers[account].exists, "Governance: deployer already exist");
         _deployers[account] = Deployer({
         exists : true,
@@ -46,20 +46,20 @@ contract DeployerV1 is IDeployer, InjectorContextHolderV1 {
         emit DeployerAdded(account);
     }
 
-    function removeDeployer(address account) public override {
+    function removeDeployer(address account) public onlyGovernance override {
         require(_deployers[account].exists, "Governance: deployer doesn't exist");
         delete _deployers[account];
         emit DeployerRemoved(account);
     }
 
-    function banDeployer(address account) public override {
+    function banDeployer(address account) public onlyGovernance override {
         require(_deployers[account].exists, "Governance: deployer doesn't exist");
         require(!_deployers[account].banned, "Governance: deployer already banned");
         _deployers[account].banned = true;
         emit DeployerBanned(account);
     }
 
-    function unbanDeployer(address account) public override {
+    function unbanDeployer(address account) public onlyGovernance override {
         require(_deployers[account].exists, "Governance: deployer doesn't exist");
         require(_deployers[account].banned, "Governance: deployer is not banned");
         _deployers[account].banned = false;
@@ -70,7 +70,7 @@ contract DeployerV1 is IDeployer, InjectorContextHolderV1 {
         return _contractDeployer[impl];
     }
 
-    function registerDeployedContract(address account, address impl) public onlyBlockchain override {
+    function registerDeployedContract(address account, address impl) public onlyCoinbase override {
         // make sure this call is allowed
         require(isDeployer(account), "Deployer: deployer is not allowed");
         // remember who deployed contract
@@ -84,7 +84,7 @@ contract DeployerV1 is IDeployer, InjectorContextHolderV1 {
         emit ContractDeployed(account, impl);
     }
 
-    function checkContractActive(address impl) external view onlyBlockchain override {
+    function checkContractActive(address impl) external view onlyCoinbase override {
         // for non-contract just exist
         if (!Address.isContract(impl)) {
             return;

@@ -60,15 +60,15 @@ const PARLIA_ADDRESS = "0x0000000000000000000000000000000000000030";
 const SYSTEM_CONTRACTS = [
   {
     address: DEPLOYER_ADDRESS,
-    artifactPath: "../smartcontract/build/contracts/DeployerV1.json",
+    artifactPath: "./build/contracts/DeployerV1.json",
   },
   {
     address: GOVERNANCE_ADDRESS,
-    artifactPath: "../smartcontract/build/contracts/GovernanceV1.json",
+    artifactPath: "./build/contracts/GovernanceV1.json",
   },
   {
     address: PARLIA_ADDRESS,
-    artifactPath: "../smartcontract/build/contracts/ParliaV1.json",
+    artifactPath: "./build/contracts/ParliaV1.json",
   },
 ];
 
@@ -89,15 +89,23 @@ const createGenesisConfig = (chainId, validators) => {
       balance: '0x00',
       code: deployedBytecode,
     };
-    // if (address === GOVERNANCE_ADDRESS) {
-    //   const PARLIA_VALIDATOR_MAP_OFFSET = 5;
+    // if (address === PARLIA_ADDRESS) {
+    //   const PARLIA_VALIDATOR_MAP_OFFSET = 50,
+    //     PARLIA_VALIDATOR_ARRAY_OFFSET = 51;
     //   const storage = {};
     //   validators.forEach((v, i) => {
-    //     const arrayKeyOffset = eth.keccak256(eth.toBuffer(utils.padLeft(PARLIA_VALIDATOR_MAP_OFFSET, 64))),
+    //     // fill mapping
+    //     const mappingOffset = eth.toBuffer(utils.padLeft(v, 64)),
+    //       mappingKey = eth.toBuffer(utils.padLeft(PARLIA_VALIDATOR_MAP_OFFSET, 64))
+    //     const mappingHash = eth.keccak256(Buffer.concat([mappingOffset, mappingKey])).toString('hex')
+    //     storage[`0x${mappingHash}`] = `0x000000000000000000000001${v.substr(2)}`;
+    //     // fill array
+    //     const arrayKeyOffset = eth.keccak256(eth.toBuffer(utils.padLeft(PARLIA_VALIDATOR_ARRAY_OFFSET, 64))),
     //       arrayIndexKey = utils.padLeft(new BigNumber(arrayKeyOffset.toString('hex'), 16).plus(i).toString(16), 64)
     //     storage[`0x${arrayIndexKey}`] = utils.padLeft(v, 64);
     //   });
-    //   storage[utils.padLeft(PARLIA_VALIDATOR_MAP_OFFSET, 64)] = utils.padLeft(validators.length, 64);
+    //   const arraySizeHash = eth.toBuffer(utils.padLeft(PARLIA_VALIDATOR_ARRAY_OFFSET, 64))
+    //   storage[`0x${arraySizeHash.toString('hex')}`] = utils.padLeft(validators.length, 64);
     //   balance.storage = storage;
     // }
     genesisConfig.alloc[address] = balance;

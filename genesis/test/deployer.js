@@ -13,11 +13,16 @@ contract("Deployer", async (accounts) => {
   it("add remove deployer", async () => {
     const deployer = await Deployer.deployed();
     assert.equal(await deployer.isDeployer('0x0000000000000000000000000000000000000001'), false)
-    const r1 = await deployer.addDeployer('0x0000000000000000000000000000000000000001')
-    console.log(r1)
+    const {logs} = await deployer.addDeployer('0x0000000000000000000000000000000000000001')
+    assert.equal(logs.length, 1)
+    assert.deepEqual(logs[0].event, 'DeployerAdded')
+    assert.deepEqual(logs[0].args.account, '0x0000000000000000000000000000000000000001')
     assert.equal(await deployer.isDeployer('0x0000000000000000000000000000000000000001'), true)
-    const r2 = await deployer.removeDeployer('0x0000000000000000000000000000000000000001')
-    console.log(r2)
+    const {logs: logs2} = await deployer.removeDeployer('0x0000000000000000000000000000000000000001')
+    assert.equal(logs2.length, 1)
+    assert.deepEqual(logs2[0].event, 'DeployerRemoved')
+    assert.deepEqual(logs2[0].args.account, '0x0000000000000000000000000000000000000001')
     assert.equal(await deployer.isDeployer('0x0000000000000000000000000000000000000001'), false)
   });
+
 });

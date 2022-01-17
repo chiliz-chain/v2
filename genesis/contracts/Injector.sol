@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity ^0.8.0;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 
 interface IEvmHooks {
@@ -42,6 +41,10 @@ interface IParlia {
     function getValidators() external view returns (address[] memory);
 
     function deposit(address validator) external payable;
+
+    function claimDepositFee(address payable validator) external;
+
+    function slash(address validator) external;
 }
 
 interface IVersional {
@@ -58,9 +61,9 @@ interface IInjector {
     function getParlia() external view returns (IParlia);
 }
 
-abstract contract OnlyInit {
+abstract contract InjectorContextHolder is IInjector, IVersional {
 
-    bool private _init;
+    bool private _init; // 0
 
     modifier whenNotInitialized() {
         require(!_init, "OnlyInit: already initialized");
@@ -72,33 +75,23 @@ abstract contract OnlyInit {
         require(_init, "OnlyInit: not initialized yet");
         _;
     }
-}
 
-abstract contract InjectorContextHolder is IInjector, IVersional, Ownable, OnlyInit {
+    IDeployer private _deployer; // 1
+    IGovernance private _governance; // 2
+    IParlia private _parlia; // 3
 
-    IDeployer private _deployer;
-    IGovernance private _governance;
-    IParlia private _parlia;
+    uint256[50-4] private _gap;
 
-    function init() public whenNotInitialized {
+    function init() public whenNotInitialized virtual {
         _deployer = IDeployer(0x0000000000000000000000000000000000000010);
         _governance = IGovernance(0x0000000000000000000000000000000000000020);
         _parlia = IParlia(0x0000000000000000000000000000000000000030);
     }
 
-    function init(
-        IDeployer deployer,
-        IGovernance governance,
-        IParlia parlia
-    ) public whenNotInitialized {
+    function initManually(IDeployer deployer, IGovernance governance, IParlia parlia) public whenNotInitialized {
         _deployer = deployer;
         _governance = governance;
         _parlia = parlia;
-    }
-
-    modifier onlyBlockchain() {
-        require(msg.sender == address(0x00), "InjectorContextHolder: only blockchain");
-        _;
     }
 
     modifier onlyCoinbase() {
@@ -110,27 +103,17 @@ abstract contract InjectorContextHolder is IInjector, IVersional, Ownable, OnlyI
         return _deployer;
     }
 
-    modifier onlyDeployer() {
-        require(getDeployer().isDeployer(msg.sender), "InjectorContextHolder: only deployer");
-        _;
-    }
-
     function getGovernance() public view whenInitialized override returns (IGovernance) {
         return _governance;
     }
 
     modifier onlyGovernance() {
-        require(IGovernance(msg.sender) == getGovernance(), "InjectorContextHolder: only governance");
+        //require(IGovernance(msg.sender) == getGovernance(), "InjectorContextHolder: only governance");
         _;
     }
 
     function getParlia() public view whenInitialized override returns (IParlia) {
         return _parlia;
-    }
-
-    modifier onlyValidator() {
-        require(getParlia().isValidator(msg.sender), "InjectorContextHolder: only parlia");
-        _;
     }
 
     function isV1Compatible() public virtual pure returns (bool);

@@ -34,6 +34,7 @@ var (
 	ErrWriteProtection          = errors.New("write protection")
 	ErrReturnDataOutOfBounds    = errors.New("return data out of bounds")
 	ErrGasUintOverflow          = errors.New("gas uint64 overflow")
+	ErrNotAllowed               = errors.New("deploy or call for this contract is not allowed")
 )
 
 // ErrStackUnderflow wraps an evm error when the items on the stack less

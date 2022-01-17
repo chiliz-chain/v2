@@ -18,6 +18,7 @@ package vm
 
 import (
 	"errors"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -222,6 +223,19 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	if evm.depth > int(params.CallCreateDepth) {
 		return nil, gas, ErrDepth
 	}
+
+	// Fail if we're calling not whitelisted contract
+	if !systemcontracts.IsSystemContract(addr) {
+		input, err := systemcontracts.DeployerAbi.Pack("checkContractActive(address)", addr)
+		if err != nil {
+			return nil, gas, ErrNotAllowed
+		}
+		_, _, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.DeployerContract, input, gas, big.NewInt(0))
+		if err != nil {
+			return nil, gas, ErrNotAllowed
+		}
+	}
+
 	// Fail if we're trying to transfer more than the available balance
 	if value.Sign() != 0 && !evm.Context.CanTransfer(evm.StateDB, caller.Address(), value) {
 		return nil, gas, ErrInsufficientBalance
@@ -433,6 +447,19 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	if evm.depth > int(params.CallCreateDepth) {
 		return nil, common.Address{}, gas, ErrDepth
 	}
+
+	// Make sure it's allowed to deploy smart contracts
+	if !systemcontracts.IsSystemContract(address) {
+		input, err := systemcontracts.DeployerAbi.Pack("registerDeployedContract(address,address)", caller.Address(), address)
+		if err != nil {
+			return nil, common.Address{}, gas, ErrNotAllowed
+		}
+		_, _, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.DeployerContract, input, gas, big.NewInt(0))
+		if err != nil {
+			return nil, common.Address{}, gas, ErrNotAllowed
+		}
+	}
+
 	if !evm.Context.CanTransfer(evm.StateDB, caller.Address(), value) {
 		return nil, common.Address{}, gas, ErrInsufficientBalance
 	}

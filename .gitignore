@@ -50,3 +50,5 @@ profile.cov
 **/yarn-error.log
 
 geth.exe
+geth
+/datadir
