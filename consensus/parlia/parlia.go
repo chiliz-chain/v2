@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
@@ -38,6 +39,7 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 const (
@@ -54,6 +56,7 @@ const (
 	validatorBytesLength = common.AddressLength
 	wiggleTime           = uint64(1) // second, Random delay (per signer) to allow concurrent signers
 	initialBackOffTime   = uint64(1) // second
+	processBackOffTime   = uint64(1) // second
 
 	systemRewardPercent = 4 // it means 1/2^4 = 1/16 percentage of gas fee incoming will be distributed to system
 
@@ -289,18 +292,18 @@ func (p *Parlia) Author(header *types.Header) (common.Address, error) {
 }
 
 // VerifyHeader checks whether a header conforms to the consensus rules.
-func (p *Parlia) VerifyHeader(chain consensus.ChainReader, header *types.Header, seal bool) error {
+func (p *Parlia) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header, seal bool) error {
 	return p.verifyHeader(chain, header, nil)
 }
 
 // VerifyHeaders is similar to VerifyHeader, but verifies a batch of headers. The
 // method returns a quit channel to abort the operations and a results channel to
 // retrieve the async verifications (the order is that of the input slice).
-func (p *Parlia) VerifyHeaders(chain consensus.ChainReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error) {
+func (p *Parlia) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*types.Header, seals []bool) (chan<- struct{}, <-chan error) {
 	abort := make(chan struct{})
 	results := make(chan error, len(headers))
 
-	go func() {
+	gopool.Submit(func() {
 		for i, header := range headers {
 			err := p.verifyHeader(chain, header, headers[:i])
 
@@ -310,7 +313,7 @@ func (p *Parlia) VerifyHeaders(chain consensus.ChainReader, headers []*types.Hea
 			case results <- err:
 			}
 		}
-	}()
+	})
 	return abort, results
 }
 
@@ -318,7 +321,7 @@ func (p *Parlia) VerifyHeaders(chain consensus.ChainReader, headers []*types.Hea
 // caller may optionally pass in a batch of parents (ascending order) to avoid
 // looking those up from the database. This is useful for concurrently verifying
 // a batch of new headers.
-func (p *Parlia) verifyHeader(chain consensus.ChainReader, header *types.Header, parents []*types.Header) error {
+func (p *Parlia) verifyHeader(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header) error {
 	if header.Number == nil {
 		return errUnknownBlock
 	}
@@ -374,7 +377,7 @@ func (p *Parlia) verifyHeader(chain consensus.ChainReader, header *types.Header,
 // rather depend on a batch of previous headers. The caller may optionally pass
 // in a batch of parents (ascending order) to avoid looking those up from the
 // database. This is useful for concurrently verifying a batch of new headers.
-func (p *Parlia) verifyCascadingFields(chain consensus.ChainReader, header *types.Header, parents []*types.Header) error {
+func (p *Parlia) verifyCascadingFields(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header) error {
 	// The genesis block is the always valid dead-end
 	number := header.Number.Uint64()
 	if number == 0 {
@@ -428,7 +431,7 @@ func (p *Parlia) verifyCascadingFields(chain consensus.ChainReader, header *type
 }
 
 // snapshot retrieves the authorization snapshot at a given point in time.
-func (p *Parlia) snapshot(chain consensus.ChainReader, number uint64, hash common.Hash, parents []*types.Header) (*Snapshot, error) {
+func (p *Parlia) snapshot(chain consensus.ChainHeaderReader, number uint64, hash common.Hash, parents []*types.Header) (*Snapshot, error) {
 	// Search for a snapshot in memory or on disk for checkpoints
 	var (
 		headers []*types.Header
@@ -540,7 +543,7 @@ func (p *Parlia) VerifySeal(chain consensus.ChainReader, header *types.Header) e
 // consensus protocol requirements. The method accepts an optional list of parent
 // headers that aren't yet part of the local blockchain to generate the snapshots
 // from.
-func (p *Parlia) verifySeal(chain consensus.ChainReader, header *types.Header, parents []*types.Header) error {
+func (p *Parlia) verifySeal(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header) error {
 	// Verifying the genesis block is not supported
 	number := header.Number.Uint64()
 	if number == 0 {
@@ -591,7 +594,7 @@ func (p *Parlia) verifySeal(chain consensus.ChainReader, header *types.Header, p
 
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
-func (p *Parlia) Prepare(chain consensus.ChainReader, header *types.Header) error {
+func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
 	header.Coinbase = p.val
 	header.Nonce = types.BlockNonce{}
 
@@ -644,13 +647,13 @@ func (p *Parlia) Prepare(chain consensus.ChainReader, header *types.Header) erro
 
 // Finalize implements consensus.Engine, ensuring no uncles are set, nor block
 // rewards given.
-func (p *Parlia) Finalize(chain consensus.ChainReader, header *types.Header, state *state.StateDB, txs *[]*types.Transaction,
+func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs *[]*types.Transaction,
 	uncles []*types.Header, receipts *[]*types.Receipt, systemTxs *[]*types.Transaction, usedGas *uint64) error {
 	// warn if not in majority fork
 	number := header.Number.Uint64()
 	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	nextForkHash := forkid.NextForkHash(p.chainConfig, p.genesisHash, number)
 	if !snap.isMajorityFork(hex.EncodeToString(nextForkHash[:])) {
@@ -704,19 +707,17 @@ func (p *Parlia) Finalize(chain consensus.ChainReader, header *types.Header, sta
 	val := header.Coinbase
 	err = p.distributeIncoming(val, state, header, cx, txs, receipts, systemTxs, usedGas, false)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	if len(*systemTxs) > 0 {
 		return errors.New("the length of systemTxs do not match")
 	}
-	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
-	header.UncleHash = types.CalcUncleHash(nil)
 	return nil
 }
 
 // FinalizeAndAssemble implements consensus.Engine, ensuring no uncles are set,
 // nor block rewards given, and returns the final block.
-func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainReader, header *types.Header, state *state.StateDB,
+func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB,
 	txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, []*types.Receipt, error) {
 	// No block rewards in PoA, so the state remains as is and uncles are dropped
 	cx := chainContext{Chain: chain, parlia: p}
@@ -736,7 +737,7 @@ func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainReader, header *types.
 		number := header.Number.Uint64()
 		snap, err := p.snapshot(chain, number-1, header.ParentHash, nil)
 		if err != nil {
-			panic(err)
+			return nil, nil, err
 		}
 		spoiledVal := snap.supposeValidator()
 		signedRecently := false
@@ -756,17 +757,29 @@ func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainReader, header *types.
 	}
 	err := p.distributeIncoming(p.val, state, header, cx, &txs, &receipts, nil, &header.GasUsed, true)
 	if err != nil {
-		panic(err)
+		return nil, nil, err
 	}
 	// should not happen. Once happen, stop the node is better than broadcast the block
 	if header.GasLimit < header.GasUsed {
-		panic("Gas consumption of system txs exceed the gas limit")
+		return nil, nil, errors.New("gas consumption of system txs exceed the gas limit")
 	}
-	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 	header.UncleHash = types.CalcUncleHash(nil)
-
+	var blk *types.Block
+	var rootHash common.Hash
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		rootHash = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
+		wg.Done()
+	}()
+	go func() {
+		blk = types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil))
+		wg.Done()
+	}()
+	wg.Wait()
+	blk.SetRoot(rootHash)
 	// Assemble and return the final block for sealing
-	return types.NewBlock(header, txs, nil, receipts), receipts, nil
+	return blk, receipts, nil
 }
 
 // Authorize injects a private key into the consensus engine to mint new blocks
@@ -787,12 +800,17 @@ func (p *Parlia) Delay(chain consensus.ChainReader, header *types.Header) *time.
 		return nil
 	}
 	delay := p.delayForRamanujanFork(snap, header)
+	// The blocking time should be no more than half of period
+	half := time.Duration(p.config.Period) * time.Second / 2
+	if delay > half {
+		delay = half
+	}
 	return &delay
 }
 
 // Seal implements consensus.Engine, attempting to create a sealed block using
 // the local signing credentials.
-func (p *Parlia) Seal(chain consensus.ChainReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
+func (p *Parlia) Seal(chain consensus.ChainHeaderReader, block *types.Block, results chan<- *types.Block, stop <-chan struct{}) error {
 	header := block.Header()
 
 	// Sealing the genesis block is not supported
@@ -851,6 +869,16 @@ func (p *Parlia) Seal(chain consensus.ChainReader, block *types.Block, results c
 			return
 		case <-time.After(delay):
 		}
+		if p.shouldWaitForCurrentBlockProcess(chain, header, snap) {
+			log.Info("Waiting for received in turn block to process")
+			select {
+			case <-stop:
+				log.Info("Received block process finished, abort block seal")
+				return
+			case <-time.After(time.Duration(processBackOffTime) * time.Second):
+				log.Info("Process backoff time exhausted, start to seal block")
+			}
+		}
 
 		select {
 		case results <- block.WithSeal(header):
@@ -862,18 +890,73 @@ func (p *Parlia) Seal(chain consensus.ChainReader, block *types.Block, results c
 	return nil
 }
 
+func (p *Parlia) shouldWaitForCurrentBlockProcess(chain consensus.ChainHeaderReader, header *types.Header, snap *Snapshot) bool {
+	if header.Difficulty.Cmp(diffInTurn) == 0 {
+		return false
+	}
+
+	highestVerifiedHeader := chain.GetHighestVerifiedHeader()
+	if highestVerifiedHeader == nil {
+		return false
+	}
+
+	if header.ParentHash == highestVerifiedHeader.ParentHash {
+		return true
+	}
+	return false
+}
+
 func (p *Parlia) EnoughDistance(chain consensus.ChainReader, header *types.Header) bool {
 	snap, err := p.snapshot(chain, header.Number.Uint64()-1, header.ParentHash, nil)
 	if err != nil {
 		return true
 	}
-	return snap.enoughDistance(p.val)
+	return snap.enoughDistance(p.val, header)
+}
+
+func (p *Parlia) AllowLightProcess(chain consensus.ChainReader, currentHeader *types.Header) bool {
+	snap, err := p.snapshot(chain, currentHeader.Number.Uint64()-1, currentHeader.ParentHash, nil)
+	if err != nil {
+		return true
+	}
+
+	idx := snap.indexOfVal(p.val)
+	// validator is not allowed to diff sync
+	return idx < 0
+}
+
+func (p *Parlia) IsLocalBlock(header *types.Header) bool {
+	return p.val == header.Coinbase
+}
+
+func (p *Parlia) SignRecently(chain consensus.ChainReader, parent *types.Header) (bool, error) {
+	snap, err := p.snapshot(chain, parent.Number.Uint64(), parent.ParentHash, nil)
+	if err != nil {
+		return true, err
+	}
+
+	// Bail out if we're unauthorized to sign a block
+	if _, authorized := snap.Validators[p.val]; !authorized {
+		return true, errUnauthorizedValidator
+	}
+
+	// If we're amongst the recent signers, wait for the next block
+	number := parent.Number.Uint64() + 1
+	for seen, recent := range snap.Recents {
+		if recent == p.val {
+			// Signer is among recents, only wait if the current block doesn't shift it out
+			if limit := uint64(len(snap.Validators)/2 + 1); number < limit || seen > number-limit {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // CalcDifficulty is the difficulty adjustment algorithm. It returns the difficulty
 // that a new block should have based on the previous blocks in the chain and the
 // current signer.
-func (p *Parlia) CalcDifficulty(chain consensus.ChainReader, time uint64, parent *types.Header) *big.Int {
+func (p *Parlia) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
 	snap, err := p.snapshot(chain, parent.Number.Uint64(), parent.Hash(), nil)
 	if err != nil {
 		return nil
@@ -897,7 +980,7 @@ func (p *Parlia) SealHash(header *types.Header) common.Hash {
 }
 
 // APIs implements consensus.Engine, returning the user facing RPC API to query snapshot.
-func (p *Parlia) APIs(chain consensus.ChainReader) []rpc.API {
+func (p *Parlia) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 	return []rpc.API{{
 		Namespace: "parlia",
 		Version:   "1.0",
@@ -947,7 +1030,7 @@ func (p *Parlia) getCurrentValidators(blockHash common.Hash) ([]common.Address, 
 	)
 	out := ret0
 
-	if err := p.validatorSetABI.Unpack(out, method, result); err != nil {
+	if err := p.validatorSetABI.UnpackIntoInterface(out, method, result); err != nil {
 		return nil, err
 	}
 
@@ -1105,7 +1188,14 @@ func (p *Parlia) applyTransaction(
 		}
 		actualTx := (*receivedTxs)[0]
 		if !bytes.Equal(p.signer.Hash(actualTx).Bytes(), expectedHash.Bytes()) {
-			return fmt.Errorf("expected tx hash %v, get %v", expectedHash.String(), actualTx.Hash().String())
+			return fmt.Errorf("expected tx hash %v, get %v, nonce %d, to %s, value %s, gas %d, gasPrice %s, data %s", expectedHash.String(), actualTx.Hash().String(),
+				expectedTx.Nonce(),
+				expectedTx.To().String(),
+				expectedTx.Value().String(),
+				expectedTx.Gas(),
+				expectedTx.GasPrice().String(),
+				hex.EncodeToString(expectedTx.Data()),
+			)
 		}
 		expectedTx = actualTx
 		// move to next
@@ -1198,7 +1288,7 @@ func backOffTime(snap *Snapshot, val common.Address) uint64 {
 
 // chain context
 type chainContext struct {
-	Chain  consensus.ChainReader
+	Chain  consensus.ChainHeaderReader
 	parlia consensus.Engine
 }
 
@@ -1233,10 +1323,10 @@ func applyMessage(
 	chainContext core.ChainContext,
 ) (uint64, error) {
 	// Create a new context to be used in the EVM environment
-	context := core.NewEVMContext(msg, header, chainContext, nil)
+	context := core.NewEVMBlockContext(header, chainContext, nil)
 	// Create a new environment which holds all relevant information
 	// about the transaction and calling mechanisms.
-	vmenv := vm.NewEVM(context, state, chainConfig, vm.Config{})
+	vmenv := vm.NewEVM(context, vm.TxContext{Origin: msg.From(), GasPrice: big.NewInt(0)}, state, chainConfig, vm.Config{})
 	// Apply the transaction to the current state (included in the env)
 	ret, returnGas, err := vmenv.Call(
 		vm.AccountRef(msg.From()),

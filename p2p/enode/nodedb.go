@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/errors"
@@ -167,7 +168,7 @@ func splitNodeItemKey(key []byte) (id ID, ip net.IP, field string) {
 	}
 	key = key[len(dbDiscoverRoot)+1:]
 	// Split out the IP.
-	ip = net.IP(key[:16])
+	ip = key[:16]
 	if ip4 := ip.To4(); ip4 != nil {
 		ip = ip4
 	}
@@ -303,7 +304,11 @@ func deleteRange(db *leveldb.DB, prefix []byte) {
 // convergence, it's simpler to "ensure" the correct state when an appropriate
 // condition occurs (i.e. a successful bonding), and discard further events.
 func (db *DB) ensureExpirer() {
-	db.runner.Do(func() { go db.expirer() })
+	db.runner.Do(func() {
+		gopool.Submit(func() {
+			db.expirer()
+		})
+	})
 }
 
 // expirer should be started in a go routine, and is responsible for looping ad

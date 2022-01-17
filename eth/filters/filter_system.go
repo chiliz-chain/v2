@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	ethereum "github.com/ethereum/go-ethereum"
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -174,17 +174,6 @@ func (sub *Subscription) Unsubscribe() {
 		// this ensures that the manager won't use the event channel which
 		// will probably be closed by the client asap after this method returns.
 		<-sub.Err()
-
-	drainLoop:
-		for {
-			select {
-			case <-sub.f.logs:
-			case <-sub.f.hashes:
-			case <-sub.f.headers:
-			default:
-				break drainLoop
-			}
-		}
 	})
 }
 
