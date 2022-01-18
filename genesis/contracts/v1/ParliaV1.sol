@@ -62,4 +62,7 @@ contract ParliaV1 is IParlia, InjectorContextHolderV1 {
     function slash(address /*validator*/) external view onlyCoinbase override {
         revert("not implemented");
     }
+
+    receive() external payable {
+    }
 }
