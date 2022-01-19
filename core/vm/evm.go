@@ -226,7 +226,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 
 	// Fail if we're calling not whitelisted contract
 	if !systemcontracts.IsSystemContract(addr) {
-		input, err := systemcontracts.DeployerAbi.Pack("checkContractActive(address)", addr)
+		input, err := systemcontracts.DeployerAbi.Pack("checkContractActive", addr)
 		if err != nil {
 			return nil, gas, ErrNotAllowed
 		}
@@ -450,7 +450,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 
 	// Make sure it's allowed to deploy smart contracts
 	if !systemcontracts.IsSystemContract(address) {
-		input, err := systemcontracts.DeployerAbi.Pack("registerDeployedContract(address,address)", caller.Address(), address)
+		input, err := systemcontracts.DeployerAbi.Pack("registerDeployedContract", caller.Address(), address)
 		if err != nil {
 			return nil, common.Address{}, gas, ErrNotAllowed
 		}

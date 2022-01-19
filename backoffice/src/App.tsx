@@ -57,19 +57,11 @@ const App: FC<IAppProps> = ({deployerStore}) => {
               <Tabs.TabPane tab={"Smart Contracts"} key={"2"}>
                 <h4>List of smart contracts</h4>
                 <List>
-                  {deployerStore.deployers.map(deployer => {
+                  {deployerStore.smartContracts.map(smartContract => {
                     return (
                       <List.Item>
-                        {deployer}&nbsp;&nbsp;
-                        <Button loading={deployerStore.isRemoving} onClick={() => {
-                          // noinspection JSIgnoredPromiseFromCall
-                          deployerStore.removeDeployer(deployer);
-                        }} size={"small"}>Remove</Button>
-                        {/*&nbsp;*/}
-                        {/*<Button disabled={deployerStore.bannedDeployers.has(deployer)} loading={deployerStore.isBanning} onClick={() => {*/}
-                        {/*  // noinspection JSIgnoredPromiseFromCall*/}
-                        {/*  deployerStore.banDeployer(deployer);*/}
-                        {/*}} size={"small"}>Ban</Button>*/}
+                        Address:&nbsp;{smartContract.contractAddress}&nbsp;&nbsp;
+                        Deployer:&nbsp;{smartContract.account}&nbsp;&nbsp;
                       </List.Item>
                     );
                   })}

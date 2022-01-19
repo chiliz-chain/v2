@@ -59,7 +59,7 @@ contract ParliaV1 is IParlia, InjectorContextHolderV1 {
         require(validator.send(totalFee), "Parlia: transfer failed");
     }
 
-    function slash(address /*validator*/) external view onlyCoinbase override {
+    function slash(address /*validator*/) external pure onlyCoinbase override {
         revert("not implemented");
     }
 

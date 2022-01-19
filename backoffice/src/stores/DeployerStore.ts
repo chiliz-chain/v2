@@ -7,7 +7,10 @@ import {Contract} from 'web3-eth-contract';
 const deployerContractAddress = '0x0000000000000000000000000000000000000010';
 
 export interface ISmartContract {
-
+  blockNumber: number;
+  transactionHash: string;
+  account: string;
+  contractAddress: string;
 }
 
 export default class DeployerStore {
@@ -55,7 +58,7 @@ export default class DeployerStore {
       fromBlock: 'earliest'
     });
     const validDeployers = new Set<string>()
-    for (const { returnValues: {account} } of possibleDeployers) {
+    for (const {returnValues: {account}} of possibleDeployers) {
       const isDeployer = await this.deployerContract.methods.isDeployer(account).call()
       if (isDeployer) {
         validDeployers.add(account)
@@ -77,8 +80,13 @@ export default class DeployerStore {
   async loadSmartContracts(): Promise<void> {
     if (!this.deployerContract) throw new Error(`Deployer is not initialized`);
     this.isLoading = true
-    const deployedContracts = await this.deployerContract.getPastEvents('ContractDeployed')
-    console.log(deployedContracts)
+    const deployedContracts = await this.deployerContract.getPastEvents('ContractDeployed', {
+      fromBlock: 'earliest',
+    })
+    this.smartContracts = deployedContracts.map(({blockNumber, transactionHash, returnValues: {account, impl}}) => {
+      return {blockNumber, transactionHash, account, contractAddress: impl}
+    })
+    console.log(this.smartContracts)
     this.isLoading = false
   }
 

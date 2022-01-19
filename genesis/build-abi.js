@@ -1,7 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const buildPath = path.join(__dirname, "../build/contracts");
+const buildPath = path.join(__dirname, "./build/contracts");
 const addresses = {};
 
 fs.readdirSync(buildPath).forEach(val => {
@@ -12,10 +12,10 @@ fs.readdirSync(buildPath).forEach(val => {
         }
         addresses[network][contractName] = address;
     }
-    fs.mkdirSync(path.join(__dirname, `../build/abi/`), {
+    fs.mkdirSync(path.join(__dirname, `./build/abi/`), {
         recursive: true,
     })
-    fs.writeFileSync(path.join(__dirname, `../build/abi/${contractName}.json`), JSON.stringify(abi, null, 2));
+    fs.writeFileSync(path.join(__dirname, `./build/abi/${contractName}.json`), JSON.stringify(abi, null, 2));
 });
 
-fs.writeFileSync(path.join(__dirname, `../build/addresses.json`), JSON.stringify(addresses, null, 2));
+fs.writeFileSync(path.join(__dirname, `./build/addresses.json`), JSON.stringify(addresses, null, 2));

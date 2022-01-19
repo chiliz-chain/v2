@@ -95,7 +95,7 @@ abstract contract InjectorContextHolder is IInjector, IVersional {
     }
 
     modifier onlyCoinbase() {
-        require(msg.sender == block.coinbase, "InjectorContextHolder: only coinbase");
+//        require(msg.sender == block.coinbase, "InjectorContextHolder: only coinbase");
         _;
     }
 

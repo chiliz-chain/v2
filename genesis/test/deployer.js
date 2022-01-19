@@ -10,6 +10,7 @@ const Governance = artifacts.require("GovernanceV1");
 const Parlia = artifacts.require("ParliaV1");
 
 contract("Deployer", async (accounts) => {
+  const [owner] = accounts;
   it("add remove deployer", async () => {
     const deployer = await Deployer.deployed();
     assert.equal(await deployer.isDeployer('0x0000000000000000000000000000000000000001'), false)
@@ -24,5 +25,22 @@ contract("Deployer", async (accounts) => {
     assert.deepEqual(logs2[0].args.account, '0x0000000000000000000000000000000000000001')
     assert.equal(await deployer.isDeployer('0x0000000000000000000000000000000000000001'), false)
   });
-
+  it("contract deployment is not possible w/o whitelist", async () => {
+    const deployer = await Deployer.deployed()
+    try {
+      await deployer.registerDeployedContract(owner, '0x0000000000000000000000000000000000000123', {
+        from: owner,
+      });
+      assert.fail()
+    } catch (e) {
+      assert.equal(e.message.includes('Deployer: deployer is not allowed'), true)
+    }
+    await deployer.addDeployer(owner)
+    const r1 = await deployer.registerDeployedContract(owner, '0x0000000000000000000000000000000000000123', {
+      from: owner,
+    });
+    assert.equal(r1.logs.length, 1)
+    assert.equal(r1.logs[0].event, 'ContractDeployed')
+    assert.deepEqual(r1.logs[0].args.account, owner)
+  })
 });

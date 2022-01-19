@@ -18,7 +18,7 @@ const GENESIS_CONFIG = {
     "muirGlacierBlock": 0,
     "parlia": {
       "period": 12,
-      "epoch": 10
+      "epoch": 10,
     }
   },
   "nonce": "0x0",
