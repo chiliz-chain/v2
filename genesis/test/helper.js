@@ -25,6 +25,16 @@ const randomProposalDesc = () => {
   return `${(Math.random() * 10000) | 0}`
 }
 
+const addValidator = async (governance, parlia, user, sender) => {
+  const abi = parlia.contract.methods.addValidator(user).encodeABI()
+  return createAndExecuteInstantProposal(governance, [parlia.address], ['0x00'], [abi], `Add ${user} validator (${randomProposalDesc()})`, sender)
+}
+
+const removeValidator = async (governance, parlia, user, sender) => {
+  const abi = parlia.contract.methods.removeValidator(user).encodeABI()
+  return createAndExecuteInstantProposal(governance, [parlia.address], ['0x00'], [abi], `Add ${user} validator (${randomProposalDesc()})`, sender)
+}
+
 const addDeployer = async (governance, deployer, user, sender) => {
   const abi = deployer.contract.methods.addDeployer(user).encodeABI()
   return createAndExecuteInstantProposal(governance, [deployer.address], ['0x00'], [abi], `Add ${user} deployer (${randomProposalDesc()})`, sender)
@@ -41,6 +51,8 @@ const registerDeployedContract = async (governance, deployer, owner, contract, s
 }
 
 module.exports = {
+  addValidator,
+  removeValidator,
   addDeployer,
   removeDeployer,
   registerDeployedContract,

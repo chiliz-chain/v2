@@ -23,6 +23,12 @@ contract Deployer is IDeployer, InjectorContextHolderV1 {
         Enabled
     }
 
+    constructor(address[] memory deployers) {
+        for (uint256 i = 0; i < deployers.length; i++) {
+            _addDeployer(deployers[i]);
+        }
+    }
+
     mapping(address => address[]) private _deployedContracts;
     mapping(address => address) private _contractDeployer;
     mapping(address => DeployerInfo) private _deployers;
@@ -37,7 +43,11 @@ contract Deployer is IDeployer, InjectorContextHolderV1 {
     }
 
     function addDeployer(address account) public onlyFromGovernance override {
-        require(!_deployers[account].exists, "Governance: deployer already exist");
+        _addDeployer(account);
+    }
+
+    function _addDeployer(address account) internal {
+        require(!_deployers[account].exists, "Deployer: deployer already exist");
         _deployers[account] = DeployerInfo({
         exists : true,
         account : account,
@@ -47,21 +57,21 @@ contract Deployer is IDeployer, InjectorContextHolderV1 {
     }
 
     function removeDeployer(address account) public onlyFromGovernance override {
-        require(_deployers[account].exists, "Governance: deployer doesn't exist");
+        require(_deployers[account].exists, "Deployer: deployer doesn't exist");
         delete _deployers[account];
         emit DeployerRemoved(account);
     }
 
     function banDeployer(address account) public onlyFromGovernance override {
-        require(_deployers[account].exists, "Governance: deployer doesn't exist");
-        require(!_deployers[account].banned, "Governance: deployer already banned");
+        require(_deployers[account].exists, "Deployer: deployer doesn't exist");
+        require(!_deployers[account].banned, "Deployer: deployer already banned");
         _deployers[account].banned = true;
         emit DeployerBanned(account);
     }
 
     function unbanDeployer(address account) public onlyFromGovernance override {
-        require(_deployers[account].exists, "Governance: deployer doesn't exist");
-        require(_deployers[account].banned, "Governance: deployer is not banned");
+        require(_deployers[account].exists, "Deployer: deployer doesn't exist");
+        require(_deployers[account].banned, "Deployer: deployer is not banned");
         _deployers[account].banned = false;
         emit DeployerUnbanned(account);
     }

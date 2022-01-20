@@ -17,10 +17,10 @@ contract Parlia is IParlia, InjectorContextHolderV1 {
     address[] private _validators;
     mapping(address => uint256) private _collectedFees;
 
-    function init() public override {
-        super.init();
-        // TODO: "remove this validator in the future"
-        addValidator(0x00A601f45688DbA8a070722073B015277cF36725);
+    constructor(address[] memory validators) {
+        for (uint256 i = 0; i < validators.length; i++) {
+            _addValidator(validators[i]);
+        }
     }
 
     function isValidator(address account) public override view returns (bool) {
@@ -28,6 +28,10 @@ contract Parlia is IParlia, InjectorContextHolderV1 {
     }
 
     function addValidator(address account) public onlyFromGovernance override {
+        _addValidator(account);
+    }
+
+    function _addValidator(address account) internal {
         require(!_validatorsMap[account].exists, "Parlia: validator already exist");
         _validatorsMap[account] = Validator({
         exists : true,

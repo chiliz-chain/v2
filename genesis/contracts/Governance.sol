@@ -15,7 +15,8 @@ contract Governance is InjectorContextHolderV1, GovernorCountingSimple, Governor
     mapping(address => uint256) private _votingPower;
     uint256 private _votingSupply;
 
-    constructor() Governor("Chiliz Governance") GovernorSettings(0, 1, 0) {
+    constructor(address owner) Governor("Chiliz Governance") GovernorSettings(0, 1, 0) {
+        _owner = owner;
     }
 
     function getOwner() external view returns (address) {
@@ -28,11 +29,6 @@ contract Governance is InjectorContextHolderV1, GovernorCountingSimple, Governor
 
     function getVotingSupply() external view returns (uint256) {
         return _votingSupply;
-    }
-
-    function obtainOwnership() external {
-        require(_owner == address(0x00), "Governance: owner is already assigned");
-        _owner = msg.sender;
     }
 
     modifier onlyOwner() {

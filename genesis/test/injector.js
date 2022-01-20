@@ -10,6 +10,7 @@ const Governance = artifacts.require("Governance");
 const Parlia = artifacts.require("Parlia");
 
 contract("Injector", async (accounts) => {
+  const [owner] = accounts
   it("migration is working fine", async () => {
     const deployer = await Deployer.deployed();
     const governance = await Governance.deployed();
@@ -25,15 +26,15 @@ contract("Injector", async (accounts) => {
     assert.equal(parlia.address, await parlia.getParlia());
   });
   it("consensus init is working", async () => {
-    const testInjector = async classType => {
-      const deployer = await classType.new();
+    const testInjector = async (classType, ...args) => {
+      const deployer = await classType.new(...args);
       await deployer.init()
       assert.equal(await deployer.getDeployer(), '0x0000000000000000000000000000000000000010')
       assert.equal(await deployer.getGovernance(), '0x0000000000000000000000000000000000000020')
       assert.equal(await deployer.getParlia(), '0x0000000000000000000000000000000000000030')
     }
-    await testInjector(Deployer)
-    await testInjector(Governance)
-    await testInjector(Parlia)
+    await testInjector(Deployer, [])
+    await testInjector(Governance, owner)
+    await testInjector(Parlia, [])
   })
 });

@@ -10,19 +10,7 @@ const Governance = artifacts.require("Governance");
 const Parlia = artifacts.require("Parlia");
 
 contract("Governance", async (accounts) => {
-  const [owner, voter, deployer] = accounts
-  it("ownership can be only obtained once", async () => {
-    const governance = await Governance.deployed();
-    assert.equal(await governance.getOwner(), '0x0000000000000000000000000000000000000000')
-    await governance.obtainOwnership();
-    assert.equal(await governance.getOwner(), owner)
-    try {
-      await governance.obtainOwnership();
-      assert.fail()
-    } catch (e) {
-      assert.equal(e.message.includes('Governance: owner is already assigned'), true)
-    }
-  })
+  const [owner, voter] = accounts
   it("voting power is managed by owner", async () => {
     const governance = await Governance.deployed();
     const r1 = await governance.setVotingPower(owner, '1000')
