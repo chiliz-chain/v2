@@ -60,15 +60,15 @@ const PARLIA_ADDRESS = "0x0000000000000000000000000000000000000030";
 const SYSTEM_CONTRACTS = [
   {
     address: DEPLOYER_ADDRESS,
-    artifactPath: "./build/contracts/DeployerV1.json",
+    artifactPath: "./build/contracts/Deployer.json",
   },
   {
     address: GOVERNANCE_ADDRESS,
-    artifactPath: "./build/contracts/GovernanceV1.json",
+    artifactPath: "./build/contracts/Governance.json",
   },
   {
     address: PARLIA_ADDRESS,
-    artifactPath: "./build/contracts/ParliaV1.json",
+    artifactPath: "./build/contracts/Parlia.json",
   },
 ];
 

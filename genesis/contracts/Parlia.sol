@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity ^0.8.0;
 
-import "../Injector.sol";
+import "./Injector.sol";
 
-contract ParliaV1 is IParlia, InjectorContextHolderV1 {
+contract Parlia is IParlia, InjectorContextHolderV1 {
 
     event ValidatorAdded(address account);
     event ValidatorRemoved(address account);
@@ -27,7 +27,7 @@ contract ParliaV1 is IParlia, InjectorContextHolderV1 {
         return _validatorsMap[account].exists;
     }
 
-    function addValidator(address account) public onlyGovernance override {
+    function addValidator(address account) public onlyFromGovernance override {
         require(!_validatorsMap[account].exists, "Parlia: validator already exist");
         _validatorsMap[account] = Validator({
         exists : true,
@@ -37,7 +37,7 @@ contract ParliaV1 is IParlia, InjectorContextHolderV1 {
         emit ValidatorAdded(account);
     }
 
-    function removeValidator(address account) public onlyGovernance override {
+    function removeValidator(address account) public onlyFromGovernance override {
         require(_validatorsMap[account].exists, "Parlia: validator doesn't exist");
         delete _validatorsMap[account];
         emit ValidatorRemoved(account);
@@ -47,7 +47,7 @@ contract ParliaV1 is IParlia, InjectorContextHolderV1 {
         return _validators;
     }
 
-    function deposit(address validator) public payable onlyCoinbase override {
+    function deposit(address validator) public payable onlyFromCoinbaseOrGovernance override {
         require(msg.value > 0, "Parlia: deposit is zero");
         _collectedFees[validator] += msg.value;
     }
@@ -59,7 +59,7 @@ contract ParliaV1 is IParlia, InjectorContextHolderV1 {
         require(validator.send(totalFee), "Parlia: transfer failed");
     }
 
-    function slash(address /*validator*/) external pure onlyCoinbase override {
+    function slash(address /*validator*/) external view onlyFromCoinbaseOrGovernance override {
         revert("not implemented");
     }
 

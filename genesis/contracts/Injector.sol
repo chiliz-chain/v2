@@ -94,8 +94,13 @@ abstract contract InjectorContextHolder is IInjector, IVersional {
         _parlia = parlia;
     }
 
-    modifier onlyCoinbase() {
-//        require(msg.sender == block.coinbase, "InjectorContextHolder: only coinbase");
+    modifier onlyFromCoinbaseOrGovernance() {
+        require(msg.sender == block.coinbase || IGovernance(msg.sender) == getGovernance(), "InjectorContextHolder: only coinbase or governance");
+        _;
+    }
+
+    modifier onlyFromGovernance() {
+        require(IGovernance(msg.sender) == getGovernance(), "InjectorContextHolder: only governance");
         _;
     }
 
@@ -105,11 +110,6 @@ abstract contract InjectorContextHolder is IInjector, IVersional {
 
     function getGovernance() public view whenInitialized override returns (IGovernance) {
         return _governance;
-    }
-
-    modifier onlyGovernance() {
-        //require(IGovernance(msg.sender) == getGovernance(), "InjectorContextHolder: only governance");
-        _;
     }
 
     function getParlia() public view whenInitialized override returns (IParlia) {

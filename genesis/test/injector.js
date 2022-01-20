@@ -5,9 +5,9 @@
 /** @function before */
 /** @var assert */
 
-const Deployer = artifacts.require("DeployerV1");
-const Governance = artifacts.require("GovernanceV1");
-const Parlia = artifacts.require("ParliaV1");
+const Deployer = artifacts.require("Deployer");
+const Governance = artifacts.require("Governance");
+const Parlia = artifacts.require("Parlia");
 
 contract("Injector", async (accounts) => {
   it("migration is working fine", async () => {

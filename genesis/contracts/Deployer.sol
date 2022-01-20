@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 pragma solidity ^0.8.0;
 
-import "../Injector.sol";
+import "./Injector.sol";
 
-contract DeployerV1 is IDeployer, InjectorContextHolderV1 {
+contract Deployer is IDeployer, InjectorContextHolderV1 {
 
     event DeployerAdded(address account);
     event DeployerRemoved(address account);
@@ -12,7 +12,7 @@ contract DeployerV1 is IDeployer, InjectorContextHolderV1 {
 
     event ContractDeployed(address account, address impl);
 
-    struct Deployer {
+    struct DeployerInfo {
         bool exists;
         address account;
         bool banned;
@@ -25,7 +25,7 @@ contract DeployerV1 is IDeployer, InjectorContextHolderV1 {
 
     mapping(address => address[]) private _deployedContracts;
     mapping(address => address) private _contractDeployer;
-    mapping(address => Deployer) private _deployers;
+    mapping(address => DeployerInfo) private _deployers;
     mapping(address => State) private _contractState;
 
     function isDeployer(address account) public override view returns (bool) {
@@ -36,9 +36,9 @@ contract DeployerV1 is IDeployer, InjectorContextHolderV1 {
         return _deployers[account].banned;
     }
 
-    function addDeployer(address account) public onlyGovernance override {
+    function addDeployer(address account) public onlyFromGovernance override {
         require(!_deployers[account].exists, "Governance: deployer already exist");
-        _deployers[account] = Deployer({
+        _deployers[account] = DeployerInfo({
         exists : true,
         account : account,
         banned : false
@@ -46,20 +46,20 @@ contract DeployerV1 is IDeployer, InjectorContextHolderV1 {
         emit DeployerAdded(account);
     }
 
-    function removeDeployer(address account) public onlyGovernance override {
+    function removeDeployer(address account) public onlyFromGovernance override {
         require(_deployers[account].exists, "Governance: deployer doesn't exist");
         delete _deployers[account];
         emit DeployerRemoved(account);
     }
 
-    function banDeployer(address account) public onlyGovernance override {
+    function banDeployer(address account) public onlyFromGovernance override {
         require(_deployers[account].exists, "Governance: deployer doesn't exist");
         require(!_deployers[account].banned, "Governance: deployer already banned");
         _deployers[account].banned = true;
         emit DeployerBanned(account);
     }
 
-    function unbanDeployer(address account) public onlyGovernance override {
+    function unbanDeployer(address account) public onlyFromGovernance override {
         require(_deployers[account].exists, "Governance: deployer doesn't exist");
         require(_deployers[account].banned, "Governance: deployer is not banned");
         _deployers[account].banned = false;
@@ -70,7 +70,7 @@ contract DeployerV1 is IDeployer, InjectorContextHolderV1 {
         return _contractDeployer[impl];
     }
 
-    function registerDeployedContract(address account, address impl) public onlyCoinbase override {
+    function registerDeployedContract(address account, address impl) public onlyFromCoinbaseOrGovernance override {
         // make sure this call is allowed
         require(isDeployer(account), "Deployer: deployer is not allowed");
         // remember who deployed contract
@@ -84,7 +84,7 @@ contract DeployerV1 is IDeployer, InjectorContextHolderV1 {
         emit ContractDeployed(account, impl);
     }
 
-    function checkContractActive(address impl) external view onlyCoinbase override {
+    function checkContractActive(address impl) external view onlyFromCoinbaseOrGovernance override {
         // for non-contract just exist
         if (!Address.isContract(impl)) {
             return;
