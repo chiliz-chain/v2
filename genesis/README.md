@@ -24,7 +24,6 @@ How to generate genesis files
 ```bash
 cd config
 yarn install
-node create-genesis.js
 ```
 
 How to create validator private key
