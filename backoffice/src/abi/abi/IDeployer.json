@@ -124,15 +124,25 @@
     "inputs": [
       {
         "internalType": "address",
-        "name": "impl",
+        "name": "contractAddress",
         "type": "address"
       }
     ],
     "name": "getContractDeployer",
     "outputs": [
       {
+        "internalType": "uint8",
+        "name": "state",
+        "type": "uint8"
+      },
+      {
         "internalType": "address",
-        "name": "",
+        "name": "impl",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "deployer",
         "type": "address"
       }
     ],

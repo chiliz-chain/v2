@@ -12,15 +12,21 @@ contract Deployer is IDeployer, InjectorContextHolderV1 {
 
     event ContractDeployed(address account, address impl);
 
-    struct DeployerInfo {
+    struct ContractDeployer {
         bool exists;
         address account;
         bool banned;
     }
 
-    enum State {
+    enum ContractState {
         Disabled,
         Enabled
+    }
+
+    struct SmartContract {
+        ContractState state;
+        address impl;
+        address deployer;
     }
 
     constructor(address[] memory deployers) {
@@ -29,17 +35,15 @@ contract Deployer is IDeployer, InjectorContextHolderV1 {
         }
     }
 
-    mapping(address => address[]) private _deployedContracts;
-    mapping(address => address) private _contractDeployer;
-    mapping(address => DeployerInfo) private _deployers;
-    mapping(address => State) private _contractState;
+    mapping(address => SmartContract) private _deployedContracts;
+    mapping(address => ContractDeployer) private _contractDeployers;
 
     function isDeployer(address account) public override view returns (bool) {
-        return _deployers[account].exists;
+        return _contractDeployers[account].exists;
     }
 
     function isBanned(address account) public override view returns (bool) {
-        return _deployers[account].banned;
+        return _contractDeployers[account].banned;
     }
 
     function addDeployer(address account) public onlyFromGovernance override {
@@ -47,8 +51,8 @@ contract Deployer is IDeployer, InjectorContextHolderV1 {
     }
 
     function _addDeployer(address account) internal {
-        require(!_deployers[account].exists, "Deployer: deployer already exist");
-        _deployers[account] = DeployerInfo({
+        require(!_contractDeployers[account].exists, "Deployer: deployer already exist");
+        _contractDeployers[account] = ContractDeployer({
         exists : true,
         account : account,
         banned : false
@@ -57,41 +61,44 @@ contract Deployer is IDeployer, InjectorContextHolderV1 {
     }
 
     function removeDeployer(address account) public onlyFromGovernance override {
-        require(_deployers[account].exists, "Deployer: deployer doesn't exist");
-        delete _deployers[account];
+        require(_contractDeployers[account].exists, "Deployer: deployer doesn't exist");
+        delete _contractDeployers[account];
         emit DeployerRemoved(account);
     }
 
     function banDeployer(address account) public onlyFromGovernance override {
-        require(_deployers[account].exists, "Deployer: deployer doesn't exist");
-        require(!_deployers[account].banned, "Deployer: deployer already banned");
-        _deployers[account].banned = true;
+        require(_contractDeployers[account].exists, "Deployer: deployer doesn't exist");
+        require(!_contractDeployers[account].banned, "Deployer: deployer already banned");
+        _contractDeployers[account].banned = true;
         emit DeployerBanned(account);
     }
 
     function unbanDeployer(address account) public onlyFromGovernance override {
-        require(_deployers[account].exists, "Deployer: deployer doesn't exist");
-        require(_deployers[account].banned, "Deployer: deployer is not banned");
-        _deployers[account].banned = false;
+        require(_contractDeployers[account].exists, "Deployer: deployer doesn't exist");
+        require(_contractDeployers[account].banned, "Deployer: deployer is not banned");
+        _contractDeployers[account].banned = false;
         emit DeployerUnbanned(account);
     }
 
-    function getContractDeployer(address impl) public view override returns (address) {
-        return _contractDeployer[impl];
+    function getContractDeployer(address contractAddress) public view override returns (uint8 state, address impl, address deployer) {
+        SmartContract memory dc = _deployedContracts[contractAddress];
+        state = uint8(dc.state);
+        impl = dc.impl;
+        deployer = dc.deployer;
     }
 
-    function registerDeployedContract(address account, address impl) public onlyFromCoinbaseOrGovernance override {
+    function registerDeployedContract(address deployer, address impl) public onlyFromCoinbaseOrGovernance override {
         // make sure this call is allowed
-        require(isDeployer(account), "Deployer: deployer is not allowed");
+        require(isDeployer(deployer), "Deployer: deployer is not allowed");
         // remember who deployed contract
-        require(_contractDeployer[impl] == address(0x00), "Deployer: contract is deployed already");
-        _contractDeployer[impl] = account;
-        // lets keep list of all deployed contracts
-        _deployedContracts[account].push(impl);
-        // enable this contract by default
-        _contractState[impl] = State.Enabled;
+        SmartContract memory dc = _deployedContracts[impl];
+        require(dc.impl == address(0x00), "Deployer: contract is deployed already");
+        dc.state = ContractState.Enabled;
+        dc.impl = impl;
+        dc.deployer = deployer;
+        _deployedContracts[impl] = dc;
         // emit event
-        emit ContractDeployed(account, impl);
+        emit ContractDeployed(deployer, impl);
     }
 
     function checkContractActive(address impl) external view onlyFromCoinbaseOrGovernance override {
@@ -100,11 +107,9 @@ contract Deployer is IDeployer, InjectorContextHolderV1 {
             return;
         }
         // check that contract is enabled
-        require(_contractState[impl] == State.Enabled, "Deployer: contract is not enabled");
-        // make sure contract exists
-        address deployer = _contractDeployer[impl];
-        require(deployer != address(0x00), "Deployer: contract is not registered");
+        SmartContract memory dc = _deployedContracts[impl];
+        require(dc.state == ContractState.Enabled, "Deployer: contract is not enabled");
         // check is deployer still active (don't allow to make calls to contracts deployed by disabled deployers)
-        require(!isBanned(deployer), "Deployer: contract is disabled");
+        require(!isBanned(dc.deployer), "Deployer: contract is disabled");
     }
 }

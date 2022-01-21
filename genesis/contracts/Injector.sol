@@ -24,7 +24,7 @@ interface IDeployer is IEvmHooks {
 
     function removeDeployer(address account) external;
 
-    function getContractDeployer(address impl) external view returns (address);
+    function getContractDeployer(address contractAddress) external view returns (uint8 state, address impl, address deployer);
 }
 
 interface IGovernance {
