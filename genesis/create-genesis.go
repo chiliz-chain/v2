@@ -4,6 +4,10 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"io/fs"
+	"io/ioutil"
+	"math/big"
+
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -15,9 +19,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
 	"github.com/ethereum/go-ethereum/trie"
-	"io/fs"
-	"io/ioutil"
-	"math/big"
 )
 
 //go:embed testnet.json
@@ -123,7 +124,7 @@ type genesisConfig struct {
 	Deployers  []common.Address
 	Validators []common.Address
 	Owner      common.Address
-	Faucet     map[string]string
+	Faucet     map[common.Address]string
 }
 
 func createGenesisConfig(rawGenesis []byte, config genesisConfig, targetFile string) error {
@@ -165,7 +166,7 @@ func createGenesisConfig(rawGenesis []byte, config genesisConfig, targetFile str
 		if !ok {
 			return fmt.Errorf("failed to parse number (%s)", value)
 		}
-		genesis.Alloc[common.HexToAddress(key)] = core.GenesisAccount{
+		genesis.Alloc[key] = core.GenesisAccount{
 			Balance: balance,
 		}
 	}
@@ -178,6 +179,9 @@ var testnetConfig = genesisConfig{
 	// who is able to deploy smart contract from genesis block
 	Deployers: []common.Address{
 		common.HexToAddress("0x00a601f45688dba8a070722073b015277cf36725"),
+		common.HexToAddress("0xbAdCab1E02FB68dDD8BBB0A45Cc23aBb60e174C8"),
+		common.HexToAddress("0xEbCf9D06cf9333706E61213F17A795B2F7c55F1b"),
+		common.HexToAddress("0x57BA24bE2cF17400f37dB3566e839bfA6A2d018a"),
 	},
 	// list of default validators
 	Validators: []common.Address{
@@ -186,12 +190,12 @@ var testnetConfig = genesisConfig{
 	// owner of the governance
 	Owner: common.HexToAddress("0x00a601f45688dba8a070722073b015277cf36725"),
 	// faucet
-	Faucet: map[string]string{
-		"0x86d274133714A88CE821F279e5eD3fb0BfB42503": "0x21e19e0c9bab2400000",
-		"0x00a601f45688dba8a070722073b015277cf36725": "0x21e19e0c9bab2400000",
-		"0xbAdCab1E02FB68dDD8BBB0A45Cc23aBb60e174C8": "0x21e19e0c9bab2400000",
-		"0x57BA24bE2cF17400f37dB3566e839bfA6A2d018a": "0x21e19e0c9bab2400000",
-		"0xEbCf9D06cf9333706E61213F17A795B2F7c55F1b": "0x21e19e0c9bab2400000",
+	Faucet: map[common.Address]string{
+		common.HexToAddress("0x86d274133714A88CE821F279e5eD3fb0BfB42503"): "0x21e19e0c9bab2400000",
+		common.HexToAddress("0x00a601f45688dba8a070722073b015277cf36725"): "0x21e19e0c9bab2400000",
+		common.HexToAddress("0xbAdCab1E02FB68dDD8BBB0A45Cc23aBb60e174C8"): "0x21e19e0c9bab2400000",
+		common.HexToAddress("0x57BA24bE2cF17400f37dB3566e839bfA6A2d018a"): "0x21e19e0c9bab2400000",
+		common.HexToAddress("0xEbCf9D06cf9333706E61213F17A795B2F7c55F1b"): "0x21e19e0c9bab2400000",
 	},
 }
 
