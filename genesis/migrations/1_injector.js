@@ -7,7 +7,7 @@ module.exports = async function (deployer) {
   // deploy dependencies
   await deployer.deploy(Deployer, []);
   const deployerContract = await Deployer.deployed();
-  await deployer.deploy(Governance, deployerAccount);
+  await deployer.deploy(Governance, deployerAccount, 1);
   const governanceContract = await Governance.deployed();
   await deployer.deploy(Parlia, []);
   const parliaContract = await Parlia.deployed();

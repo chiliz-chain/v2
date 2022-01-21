@@ -3,6 +3,37 @@
     "inputs": [
       {
         "internalType": "address",
+        "name": "impl",
+        "type": "address"
+      }
+    ],
+    "name": "checkContractActive",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "impl",
+        "type": "address"
+      }
+    ],
+    "name": "registerDeployedContract",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
         "name": "account",
         "type": "address"
       }
@@ -58,6 +89,32 @@
         "type": "address"
       }
     ],
+    "name": "banDeployer",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "unbanDeployer",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
     "name": "removeDeployer",
     "outputs": [],
     "stateMutability": "nonpayable",
@@ -67,50 +124,29 @@
     "inputs": [
       {
         "internalType": "address",
-        "name": "impl",
+        "name": "contractAddress",
         "type": "address"
       }
     ],
     "name": "getContractDeployer",
     "outputs": [
       {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "account",
-        "type": "address"
+        "internalType": "uint8",
+        "name": "state",
+        "type": "uint8"
       },
       {
         "internalType": "address",
         "name": "impl",
         "type": "address"
-      }
-    ],
-    "name": "registerDeployedContract",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
+      },
       {
         "internalType": "address",
-        "name": "impl",
+        "name": "deployer",
         "type": "address"
       }
     ],
-    "name": "checkContractActive",
-    "outputs": [],
-    "stateMutability": "nonpayable",
+    "stateMutability": "view",
     "type": "function"
   }
 ]

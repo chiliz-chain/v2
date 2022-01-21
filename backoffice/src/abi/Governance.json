@@ -5,11 +5,6 @@
         "internalType": "address",
         "name": "owner",
         "type": "address"
-      },
-      {
-        "internalType": "uint256",
-        "name": "votingPeriod",
-        "type": "uint256"
       }
     ],
     "stateMutability": "nonpayable",

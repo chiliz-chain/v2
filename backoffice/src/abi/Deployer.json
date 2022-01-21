@@ -1,21 +1,32 @@
 [
   {
+    "inputs": [
+      {
+        "internalType": "address[]",
+        "name": "deployers",
+        "type": "address[]"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
     "anonymous": false,
     "inputs": [
       {
-        "indexed": true,
+        "indexed": false,
         "internalType": "address",
-        "name": "previousOwner",
+        "name": "account",
         "type": "address"
       },
       {
-        "indexed": true,
+        "indexed": false,
         "internalType": "address",
-        "name": "newOwner",
+        "name": "impl",
         "type": "address"
       }
     ],
-    "name": "OwnershipTransferred",
+    "name": "ContractDeployed",
     "type": "event"
   },
   {
@@ -28,7 +39,7 @@
         "type": "address"
       }
     ],
-    "name": "ValidatorAdded",
+    "name": "DeployerAdded",
     "type": "event"
   },
   {
@@ -41,7 +52,33 @@
         "type": "address"
       }
     ],
-    "name": "ValidatorRemoved",
+    "name": "DeployerBanned",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "DeployerRemoved",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "DeployerUnbanned",
     "type": "event"
   },
   {
@@ -97,6 +134,13 @@
     "type": "function"
   },
   {
+    "inputs": [],
+    "name": "init",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
     "inputs": [
       {
         "internalType": "contract IDeployer",
@@ -114,7 +158,7 @@
         "type": "address"
       }
     ],
-    "name": "initialize",
+    "name": "initManually",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -133,39 +177,6 @@
     "type": "function"
   },
   {
-    "inputs": [],
-    "name": "owner",
-    "outputs": [
-      {
-        "internalType": "address",
-        "name": "",
-        "type": "address"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [],
-    "name": "renounceOwnership",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "newOwner",
-        "type": "address"
-      }
-    ],
-    "name": "transferOwnership",
-    "outputs": [],
-    "stateMutability": "nonpayable",
-    "type": "function"
-  },
-  {
     "inputs": [
       {
         "internalType": "address",
@@ -173,7 +184,7 @@
         "type": "address"
       }
     ],
-    "name": "isValidator",
+    "name": "isDeployer",
     "outputs": [
       {
         "internalType": "bool",
@@ -192,7 +203,26 @@
         "type": "address"
       }
     ],
-    "name": "addValidator",
+    "name": "isBanned",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "addDeployer",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
@@ -205,19 +235,61 @@
         "type": "address"
       }
     ],
-    "name": "removeValidator",
+    "name": "removeDeployer",
     "outputs": [],
     "stateMutability": "nonpayable",
     "type": "function"
   },
   {
-    "inputs": [],
-    "name": "getValidators",
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "banDeployer",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "unbanDeployer",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "contractAddress",
+        "type": "address"
+      }
+    ],
+    "name": "getContractDeployer",
     "outputs": [
       {
-        "internalType": "address[]",
-        "name": "",
-        "type": "address[]"
+        "internalType": "uint8",
+        "name": "state",
+        "type": "uint8"
+      },
+      {
+        "internalType": "address",
+        "name": "impl",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "deployer",
+        "type": "address"
       }
     ],
     "stateMutability": "view",
@@ -227,13 +299,31 @@
     "inputs": [
       {
         "internalType": "address",
-        "name": "",
+        "name": "deployer",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "impl",
         "type": "address"
       }
     ],
-    "name": "deposit",
+    "name": "registerDeployedContract",
     "outputs": [],
-    "stateMutability": "payable",
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "impl",
+        "type": "address"
+      }
+    ],
+    "name": "checkContractActive",
+    "outputs": [],
+    "stateMutability": "view",
     "type": "function"
   }
 ]

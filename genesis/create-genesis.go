@@ -18,14 +18,9 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb/memorydb"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
 )
-
-//go:embed testnet.json
-var testnetGenesisConfig []byte
-
-//go:embed mainnet.json
-var mainnetGenesisConfig []byte
 
 type artifactData struct {
 	Bytecode         string `json:"bytecode"`
@@ -121,17 +116,16 @@ func newArguments(typeNames ...string) abi.Arguments {
 }
 
 type genesisConfig struct {
-	Deployers  []common.Address
-	Validators []common.Address
-	Owner      common.Address
-	Faucet     map[common.Address]string
+	Genesis         *core.Genesis
+	Deployers       []common.Address
+	Validators      []common.Address
+	GovernanceOwner common.Address
+	VotingPeriod    int64
+	Faucet          map[common.Address]string
 }
 
-func createGenesisConfig(rawGenesis []byte, config genesisConfig, targetFile string) error {
-	genesis := &core.Genesis{}
-	if err := json.Unmarshal(rawGenesis, genesis); err != nil {
-		return err
-	}
+func createGenesisConfig(config genesisConfig, targetFile string) error {
+	genesis := config.Genesis
 	// extra data
 	genesis.ExtraData = createExtraData(config.Validators)
 	// execute system contracts
@@ -142,7 +136,7 @@ func createGenesisConfig(rawGenesis []byte, config genesisConfig, targetFile str
 	if err := simulateSystemContract(genesis, deployerAddress, deployerRawArtifact, ctor); err != nil {
 		return err
 	}
-	ctor, err = newArguments("address").Pack(config.Owner)
+	ctor, err = newArguments("address", "uint256").Pack(config.GovernanceOwner, big.NewInt(config.VotingPeriod))
 	if err != nil {
 		return err
 	}
@@ -172,10 +166,48 @@ func createGenesisConfig(rawGenesis []byte, config genesisConfig, targetFile str
 	}
 	// save to file
 	newJson, _ := json.MarshalIndent(genesis, "", "  ")
-	return ioutil.WriteFile(targetFile, newJson, fs.ModeExclusive)
+	return ioutil.WriteFile(targetFile, newJson, fs.ModePerm)
+}
+
+func defaultGenesisConfig(chainId int64) *core.Genesis {
+	chainConfig := &params.ChainConfig{
+		ChainID:             big.NewInt(chainId),
+		HomesteadBlock:      big.NewInt(0),
+		EIP150Block:         big.NewInt(0),
+		EIP155Block:         big.NewInt(0),
+		EIP158Block:         big.NewInt(0),
+		ByzantiumBlock:      big.NewInt(0),
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		MuirGlacierBlock:    big.NewInt(0),
+		RamanujanBlock:      big.NewInt(0),
+		NielsBlock:          big.NewInt(0),
+		MirrorSyncBlock:     big.NewInt(0),
+		BrunoBlock:          big.NewInt(0),
+		Parlia: &params.ParliaConfig{
+			Period: 3,
+			Epoch:  200,
+		},
+	}
+	return &core.Genesis{
+		Config:     chainConfig,
+		Nonce:      0,
+		Timestamp:  0x5e9da7ce,
+		ExtraData:  nil,
+		GasLimit:   0x2625a00,
+		Difficulty: big.NewInt(0x01),
+		Mixhash:    common.Hash{},
+		Coinbase:   common.Address{},
+		Alloc:      nil,
+		Number:     0x00,
+		GasUsed:    0x00,
+		ParentHash: common.Hash{},
+	}
 }
 
 var testnetConfig = genesisConfig{
+	Genesis: defaultGenesisConfig(17242),
 	// who is able to deploy smart contract from genesis block
 	Deployers: []common.Address{
 		common.HexToAddress("0x00a601f45688dba8a070722073b015277cf36725"),
@@ -188,7 +220,8 @@ var testnetConfig = genesisConfig{
 		common.HexToAddress("0x00a601f45688dba8a070722073b015277cf36725"),
 	},
 	// owner of the governance
-	Owner: common.HexToAddress("0x00a601f45688dba8a070722073b015277cf36725"),
+	GovernanceOwner: common.HexToAddress("0x00a601f45688dba8a070722073b015277cf36725"),
+	VotingPeriod:    60, // 3 minutes
 	// faucet
 	Faucet: map[common.Address]string{
 		common.HexToAddress("0x86d274133714A88CE821F279e5eD3fb0BfB42503"): "0x21e19e0c9bab2400000",
@@ -200,7 +233,7 @@ var testnetConfig = genesisConfig{
 }
 
 func main() {
-	if err := createGenesisConfig(testnetGenesisConfig, testnetConfig, "testnet/genesis.json"); err != nil {
+	if err := createGenesisConfig(testnetConfig, "testnet.json"); err != nil {
 		panic(err)
 	}
 }
