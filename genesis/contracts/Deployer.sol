@@ -35,8 +35,8 @@ contract Deployer is IDeployer, InjectorContextHolderV1 {
         }
     }
 
-    mapping(address => SmartContract) private _deployedContracts;
     mapping(address => ContractDeployer) private _contractDeployers;
+    mapping(address => SmartContract) private _smartContracts;
 
     function isDeployer(address account) public override view returns (bool) {
         return _contractDeployers[account].exists;
@@ -81,7 +81,7 @@ contract Deployer is IDeployer, InjectorContextHolderV1 {
     }
 
     function getContractDeployer(address contractAddress) public view override returns (uint8 state, address impl, address deployer) {
-        SmartContract memory dc = _deployedContracts[contractAddress];
+        SmartContract memory dc = _smartContracts[contractAddress];
         state = uint8(dc.state);
         impl = dc.impl;
         deployer = dc.deployer;
@@ -91,12 +91,12 @@ contract Deployer is IDeployer, InjectorContextHolderV1 {
         // make sure this call is allowed
         require(isDeployer(deployer), "Deployer: deployer is not allowed");
         // remember who deployed contract
-        SmartContract memory dc = _deployedContracts[impl];
+        SmartContract memory dc = _smartContracts[impl];
         require(dc.impl == address(0x00), "Deployer: contract is deployed already");
         dc.state = ContractState.Enabled;
         dc.impl = impl;
         dc.deployer = deployer;
-        _deployedContracts[impl] = dc;
+        _smartContracts[impl] = dc;
         // emit event
         emit ContractDeployed(deployer, impl);
     }
@@ -107,7 +107,7 @@ contract Deployer is IDeployer, InjectorContextHolderV1 {
             return;
         }
         // check that contract is enabled
-        SmartContract memory dc = _deployedContracts[impl];
+        SmartContract memory dc = _smartContracts[impl];
         require(dc.state == ContractState.Enabled, "Deployer: contract is not enabled");
         // check is deployer still active (don't allow to make calls to contracts deployed by disabled deployers)
         require(!isBanned(dc.deployer), "Deployer: contract is disabled");
