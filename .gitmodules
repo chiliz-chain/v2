@@ -1,3 +1,6 @@
 [submodule "tests"]
 	path = tests/testdata
 	url = https://github.com/ethereum/tests
+[submodule "genesis"]
+	path = genesis
+	url = git@github.com:chiliz-chain/v2-genesis-config.git
