@@ -33,6 +33,10 @@ import (
 	"text/template"
 	"time"
 
+	pcsclite "github.com/gballet/go-libpcsclite"
+	gopsutil "github.com/shirou/gopsutil/mem"
+	"gopkg.in/urfave/cli.v1"
+
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/common"
@@ -66,9 +70,6 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/nat"
 	"github.com/ethereum/go-ethereum/p2p/netutil"
 	"github.com/ethereum/go-ethereum/params"
-	pcsclite "github.com/gballet/go-libpcsclite"
-	gopsutil "github.com/shirou/gopsutil/mem"
-	"gopkg.in/urfave/cli.v1"
 )
 
 func init() {
@@ -183,6 +184,14 @@ var (
 	RopstenFlag = cli.BoolFlag{
 		Name:  "ropsten",
 		Usage: "Ropsten network: pre-configured proof-of-work test network",
+	}
+	ChilizMainnetFlag = cli.BoolFlag{
+		Name:  "chiliz",
+		Usage: "Chiliz network: pre-configured proof-of-work test network",
+	}
+	ChilizTestnetFlag = cli.BoolFlag{
+		Name:  "chiliztestnet",
+		Usage: "Chiliz network: pre-configured proof-of-work test network",
 	}
 	DeveloperFlag = cli.BoolFlag{
 		Name:  "dev",
@@ -900,8 +909,16 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 		urls = params.RinkebyBootnodes
 	case ctx.GlobalBool(GoerliFlag.Name):
 		urls = params.GoerliBootnodes
+	case ctx.GlobalBool(GoerliFlag.Name):
+		urls = params.GoerliBootnodes
+	case ctx.GlobalBool(GoerliFlag.Name):
+		urls = params.GoerliBootnodes
 	case ctx.GlobalBool(YoloV3Flag.Name):
 		urls = params.YoloV3Bootnodes
+	case ctx.GlobalBool(ChilizMainnetFlag.Name):
+		urls = params.ChilizMainnetBootnodes
+	case ctx.GlobalBool(ChilizTestnetFlag.Name):
+		urls = params.ChilizTestnetBootnodes
 	case cfg.BootstrapNodes != nil:
 		return // already set, don't apply defaults.
 	}
@@ -1353,6 +1370,10 @@ func setDataDir(ctx *cli.Context, cfg *node.Config) {
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "goerli")
 	case ctx.GlobalBool(YoloV3Flag.Name) && cfg.DataDir == node.DefaultDataDir():
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "yolo-v3")
+	case ctx.GlobalBool(ChilizMainnetFlag.Name) && cfg.DataDir == node.DefaultDataDir():
+		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "chiliz")
+	case ctx.GlobalBool(ChilizTestnetFlag.Name) && cfg.DataDir == node.DefaultDataDir():
+		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "chiliz")
 	}
 }
 
@@ -1542,7 +1563,7 @@ func CheckExclusive(ctx *cli.Context, args ...interface{}) {
 // SetEthConfig applies eth-related command line flags to the config.
 func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Avoid conflicting network flags
-	CheckExclusive(ctx, MainnetFlag, DeveloperFlag, RopstenFlag, RinkebyFlag, GoerliFlag, YoloV3Flag)
+	CheckExclusive(ctx, MainnetFlag, DeveloperFlag, RopstenFlag, RinkebyFlag, GoerliFlag, YoloV3Flag, ChilizMainnetFlag, ChilizTestnetFlag)
 	CheckExclusive(ctx, LightServeFlag, SyncModeFlag, "light")
 	CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
 	if ctx.GlobalString(GCModeFlag.Name) == "archive" && ctx.GlobalUint64(TxLookupLimitFlag.Name) != 0 {
@@ -1727,6 +1748,16 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			cfg.NetworkId = new(big.Int).SetBytes([]byte("yolov3x")).Uint64() // "yolov3x"
 		}
 		cfg.Genesis = core.DefaultYoloV3GenesisBlock()
+	case ctx.GlobalBool(ChilizMainnetFlag.Name):
+		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = 17243
+		}
+		cfg.Genesis = core.DefaultChilizMainnetGenesisBlock()
+	case ctx.GlobalBool(ChilizTestnetFlag.Name):
+		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = 17242
+		}
+		cfg.Genesis = core.DefaultChilizTestnetGenesisBlock()
 	case ctx.GlobalBool(DeveloperFlag.Name):
 		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 1337
@@ -1917,6 +1948,10 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 		genesis = core.DefaultGoerliGenesisBlock()
 	case ctx.GlobalBool(YoloV3Flag.Name):
 		genesis = core.DefaultYoloV3GenesisBlock()
+	case ctx.GlobalBool(ChilizMainnetFlag.Name):
+		genesis = core.DefaultChilizMainnetGenesisBlock()
+	case ctx.GlobalBool(ChilizTestnetFlag.Name):
+		genesis = core.DefaultChilizTestnetGenesisBlock()
 	case ctx.GlobalBool(DeveloperFlag.Name):
 		Fatalf("Developer chains are ephemeral")
 	}

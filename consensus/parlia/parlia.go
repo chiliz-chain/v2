@@ -1090,7 +1090,7 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 	for _, c := range contracts {
 		msg := p.getSystemMessage(header.Coinbase, c, data, common.Big0)
 		// apply message
-		log.Trace("init contract", "block hash", header.Hash(), "contract", c)
+		log.Info("init contract", "block hash", header.Hash(), "contract", c)
 		err = p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 		if err != nil {
 			return err

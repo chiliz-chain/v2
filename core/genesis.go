@@ -416,6 +416,14 @@ func DefaultYoloV3GenesisBlock() *Genesis {
 	}
 }
 
+func DefaultChilizMainnetGenesisBlock() *Genesis {
+	return nil
+}
+
+func DefaultChilizTestnetGenesisBlock() *Genesis {
+	return nil
+}
+
 // DeveloperGenesisBlock returns the 'geth --dev' genesis block.
 func DeveloperGenesisBlock(period uint64, faucet common.Address) *Genesis {
 	// Override the default period to the user requested one
