@@ -25,6 +25,7 @@ import (
 	"time"
 
 	mapset "github.com/deckarep/golang-set"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
@@ -392,7 +393,7 @@ func (w *worker) newWorkLoop(recommit time.Duration) {
 			if p, ok := w.engine.(*parlia.Parlia); ok {
 				signedRecent, err := p.SignRecently(w.chain, head.Block.Header())
 				if err != nil {
-					log.Info("Not allowed to propose block", "err", err)
+					log.Info("Not allowed to propose block", "err", err, "number", head.Block.Number())
 					continue
 				}
 				if signedRecent {

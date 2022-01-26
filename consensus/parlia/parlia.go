@@ -639,7 +639,7 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 	if !snap.isMajorityFork(hex.EncodeToString(nextForkHash[:])) {
 		log.Debug("there is a possible fork, and your client is not the majority. Please check...", "nextForkHash", hex.EncodeToString(nextForkHash[:]))
 	}
-	// If the block is a epoch end block, verify the validator list
+	// If the block is an epoch end block, verify the validator list
 	// The verification can only be done when the state is ready, it can't be done in VerifyHeader.
 	if header.Number.Uint64()%p.config.Epoch == 0 {
 		newValidators, err := p.getCurrentValidators(header.ParentHash)
@@ -650,6 +650,7 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 		sort.Sort(validatorsAscending(newValidators))
 		validatorsBytes := make([]byte, len(newValidators)*validatorBytesLength)
 		for i, validator := range newValidators {
+			log.Info("updating validator set", "validator", validator.Hex())
 			copy(validatorsBytes[i*validatorBytesLength:], validator.Bytes())
 		}
 
@@ -711,7 +712,8 @@ func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 	if header.Number.Cmp(common.Big1) == 0 {
 		err := p.initContract(state, header, cx, &txs, &receipts, nil, &header.GasUsed, true)
 		if err != nil {
-			log.Error("init contract failed")
+			log.Error("init contract failed", "error", err)
+			return nil, nil, err
 		}
 	}
 	if header.Difficulty.Cmp(diffInTurn) != 0 {
