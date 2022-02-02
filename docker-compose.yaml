@@ -78,54 +78,44 @@ services:
       - "./genesis/keystore:/datadir/keystore"
     restart: always
 
-  # faucet:
-  #   build:
-  #     context: "./v2"
-  #     dockerfile: Dockerfile.faucet
-  #  command:
-  #    - "/faucet"
-  #    - "--genesis"
-  #    - "/datadir/genesis.json"
-  #    - "--bootnodes"
-  #    - "enode://dfe5a80f5bbd7c16c12d64aebbfc31806c6bae138032fcb19f0babc79c94d4f07ca52f5ee981afb92daf5973b621065614345498ac21b4418bf88a1bcad1364c@138.197.189.243:30311"
-  #    - "--network"
-  #    - "17243"
-  #    - "--faucet.name"
-  #    - "Chiliz"
-  #    - "--faucet.amount"
-  #    - "10"
-  #    - "--account.json"
-  #    - "/datadir/keystore/UTC--2021-04-15T12-00-01.560260400Z--00a601f45688dba8a070722073b015277cf36725"
-  #    - "--account.pass"
-  #    - "/datadir/password.txt"
-  #  volumes:
-  #    - "./faucet:/faucet"
-  #    - "./validator:/datadir"
-  #  restart: always
+#  faucet:
+#    build:
+#      context: "./"
+#      dockerfile: Dockerfile.chiliz
+#    command:
+#      - "faucet"
+#      - "--genesis=/genesis/testnet.json"
+#      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+#      - "--network=17243"
+#      - "--faucet.name=Chiliz"
+#      - "--faucet.amount=100"
+#      - "--account.json=/genesis/keystore/UTC--2022-02-02T10-59-47.185Z--b891fe7b38f857f53a7b5529204c58d5c487280b"
+#      - "--account.pass=/genesis/password.txt"
+#    volumes:
+#      - "./genesis:/genesis"
+#    restart: always
 
-  # blockscout:
-  #   image: puppeth/blockscout
-  #   command: [ "mix", "do", "ecto.create,", "ecto.migrate,", "phx.server" ]
-  #   environment:
-  #     ETHEREUM_JSONRPC_VARIANT: geth
-  #     ETHEREUM_JSONRPC_HTTP_URL: http://node:8575/
-  #     ETHEREUM_JSONRPC_WS_URL: ws://node:8576
-  #     COIN: CHZ
-  #     DATABASE_URL: "postgresql://postgres:U9jstUBDcCgQTBOvVeeQzC9rl8OrzEcP@postgresql:5432/blockscout?ssl=false"
-  #     PORT: 4000
-  #   ports:
-  #    - "4000:4000"
-  #   restart: always
-  # postgresql:
-  #   image: postgres:11-alpine
-  #   volumes:
-  #    - postgresql_data:/var/lib/postgresql/data
-  #   environment:
-  #     POSTGRES_USER: "postgres"
-  #     POSTGRES_PASSWORD: "U9jstUBDcCgQTBOvVeeQzC9rl8OrzEcP"
-  #   ports:
-  #    - "5432:5432"
-  #   restart: always
+#  blockscout:
+#    image: blockscout/blockscout-core:4.1.2-pre-2
+#    command: [ "mix", "do", "ecto.create,", "ecto.migrate,", "phx.server" ]
+#    environment:
+#      ETHEREUM_JSONRPC_VARIANT: geth
+#      ETHEREUM_JSONRPC_HTTP_URL: http://bootnode:8575/
+#      ETHEREUM_JSONRPC_WS_URL: ws://bootnode:8576
+#      COIN: CHZ
+#      DATABASE_URL: "postgresql://postgres:U9jstUBDcCgQTBOvVeeQzC9rl8OrzEcP@blockscout-postgresql:5432/blockscout?ssl=false"
+#      PORT: 4000
+#    ports:
+#      - "4000:4000"
+#    restart: always
+#  blockscout-postgresql:
+#    image: postgres:11-alpine
+#    volumes:
+#      - postgresql_data:/var/lib/postgresql/data
+#    environment:
+#      POSTGRES_USER: "postgres"
+#      POSTGRES_PASSWORD: "U9jstUBDcCgQTBOvVeeQzC9rl8OrzEcP"
+#    restart: always
 
   # nginx:
   #   image: nginx
@@ -137,6 +127,4 @@ services:
   #   restart: always
 
 volumes:
-  validator_data: { }
-  node_data: { }
   postgresql_data: { }
