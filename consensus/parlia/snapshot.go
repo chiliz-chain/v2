@@ -24,13 +24,14 @@ import (
 	"math/big"
 	"sort"
 
+	lru "github.com/hashicorp/golang-lru"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/params"
-	lru "github.com/hashicorp/golang-lru"
 )
 
 // Snapshot is the state of the validatorSet at a given point.
@@ -242,6 +243,12 @@ func (s *Snapshot) inturn(validator common.Address) bool {
 	validators := s.validators()
 	offset := (s.Number + 1) % uint64(len(validators))
 	return validators[offset] == validator
+}
+
+func (s *Snapshot) blockProducer() common.Address {
+	validators := s.validators()
+	offset := (s.Number + 1) % uint64(len(validators))
+	return validators[offset]
 }
 
 func (s *Snapshot) enoughDistance(validator common.Address, header *types.Header) bool {

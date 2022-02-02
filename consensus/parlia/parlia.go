@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"math/rand"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -501,6 +502,13 @@ func (p *Parlia) snapshot(chain consensus.ChainHeaderReader, number uint64, hash
 		}
 		log.Trace("Stored snapshot to disk", "number", snap.Number, "hash", snap.Hash)
 	}
+
+	var validators []string
+	for v := range snap.Validators {
+		validators = append(validators, v.Hex())
+	}
+	log.Trace("loaded snapshot", "number", snap.Number, "hash", snap.Hash, "validators", strings.Join(validators, ","), "len", len(snap.Validators))
+
 	return snap, err
 }
 
@@ -586,6 +594,9 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 
 	// Set the correct difficulty
 	header.Difficulty = CalcDifficulty(snap, p.val)
+	if header.Difficulty.Cmp(diffInTurn) != 0 {
+		return fmt.Errorf("not your turn for block producing")
+	}
 
 	// Ensure the extra data has all it's components
 	if len(header.Extra) < extraVanity-nextForkHashSize {
@@ -602,6 +613,11 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 		}
 		// sort validator by address
 		sort.Sort(validatorsAscending(newValidators))
+		var newValidatorsString []string
+		for _, validator := range newValidators {
+			newValidatorsString = append(newValidatorsString, validator.Hex())
+		}
+		log.Info("Updating validator set", "validator", strings.Join(newValidatorsString, ","))
 		for _, validator := range newValidators {
 			header.Extra = append(header.Extra, validator.Bytes()...)
 		}
@@ -650,9 +666,13 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 		sort.Sort(validatorsAscending(newValidators))
 		validatorsBytes := make([]byte, len(newValidators)*validatorBytesLength)
 		for i, validator := range newValidators {
-			log.Info("updating validator set", "validator", validator.Hex())
 			copy(validatorsBytes[i*validatorBytesLength:], validator.Bytes())
 		}
+		var newValidatorsString []string
+		for _, validator := range newValidators {
+			newValidatorsString = append(newValidatorsString, validator.Hex())
+		}
+		log.Info("Updating validator set", "validator", strings.Join(newValidatorsString, ","))
 
 		extraSuffix := len(header.Extra) - extraSeal
 		if !bytes.Equal(header.Extra[extraVanity:extraSuffix], validatorsBytes) {
@@ -845,7 +865,7 @@ func (p *Parlia) Seal(chain consensus.ChainHeaderReader, block *types.Block, res
 	copy(header.Extra[len(header.Extra)-extraSeal:], sig)
 
 	// Wait until sealing is terminated or delay timeout.
-	log.Trace("Waiting for slot to sign and propagate", "delay", common.PrettyDuration(delay))
+	log.Info("Waiting for slot to sign and propagate", "delay", common.PrettyDuration(delay))
 	go func() {
 		select {
 		case <-stop:
@@ -880,6 +900,7 @@ func (p *Parlia) shouldWaitForCurrentBlockProcess(chain consensus.ChainHeaderRea
 
 	highestVerifiedHeader := chain.GetHighestVerifiedHeader()
 	if highestVerifiedHeader == nil {
+		log.Warn("Shouldn't wait for block process, because there is no highest verified header")
 		return false
 	}
 

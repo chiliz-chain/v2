@@ -1,16 +1,16 @@
 version: "3"
 services:
 
-#  bootnode:
-#    build:
-#      context: "./"
-#      dockerfile: Dockerfile.chiliz
-#    environment:
-#      GENESIS_FILE: "/genesis/testnet.json"
-#      NODE_MODE: "bootnode"
-#    volumes:
-#      - "./genesis/keystore:/datadir/keystore"
-#    restart: always
+  bootnode:
+    build:
+      context: "./"
+      dockerfile: Dockerfile.chiliz
+    environment:
+      GENESIS_FILE: "/genesis/testnet.json"
+      NODE_MODE: "bootnode"
+    volumes:
+      - "./genesis/keystore:/datadir/keystore"
+    restart: always
 
   validator_1:
     build:
@@ -19,11 +19,9 @@ services:
     environment:
       GENESIS_FILE: "/genesis/testnet.json"
       NODE_MODE: "validator"
-      VALIDATOR_ADDRESS: "0x00a601f45688dba8a070722073b015277cf36725"
-      NODE_KEY: "633ab917d09441de38ae9251e79ced41df39a1c338842b826c18fb1773246e18"
-      BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@validator_1:30303,enode://de484c6ac63fe81624cc995d6888a2508f1b28ef07c5bf8eb0721a1b70afff3b815d1278a74581b5767741102fd4eb6281374343d62fb26504430701ff091ac9@validator_2:30303,enode://eb20164b3433be5db7109c74845e6137a06cfc2e07ed2c6c3e41b02c29dd480ac906f48610dd62ed4f10710e77f15d65125b0f603dcafbf29d6482dcf2dc8368@validator_3:30303"
-    ports:
-      - "8545:8545"
+      VALIDATOR_ADDRESS: "0x08fae3885e299c24ff9841478eb946f41023ac69"
+      BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      SLEEP_FOR: "3"
     volumes:
       - "./genesis/keystore:/datadir/keystore"
     restart: always
@@ -34,9 +32,9 @@ services:
     environment:
       GENESIS_FILE: "/genesis/testnet.json"
       NODE_MODE: "validator"
-      VALIDATOR_ADDRESS: "0x08fae3885e299c24ff9841478eb946f41023ac69"
-      NODE_KEY: "199fd55d39f7fccf5bb9ddd562121c2309650655236cc8d153fb075903e311c0"
-      BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@validator_1:30303,enode://de484c6ac63fe81624cc995d6888a2508f1b28ef07c5bf8eb0721a1b70afff3b815d1278a74581b5767741102fd4eb6281374343d62fb26504430701ff091ac9@validator_2:30303,enode://eb20164b3433be5db7109c74845e6137a06cfc2e07ed2c6c3e41b02c29dd480ac906f48610dd62ed4f10710e77f15d65125b0f603dcafbf29d6482dcf2dc8368@validator_3:30303"
+      VALIDATOR_ADDRESS: "0x751aaca849b09a3e347bbfe125cf18423cc24b40"
+      BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      SLEEP_FOR: "3"
     volumes:
       - "./genesis/keystore:/datadir/keystore"
     restart: always
@@ -47,41 +45,38 @@ services:
     environment:
       GENESIS_FILE: "/genesis/testnet.json"
       NODE_MODE: "validator"
-      VALIDATOR_ADDRESS: "0x751aaca849b09a3e347bbfe125cf18423cc24b40"
-      NODE_KEY: "f4480fa445c93130cc73ac32e6c2388efa7e2b60d30f1e954426a304a761e329"
-      BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@validator_1:30303,enode://de484c6ac63fe81624cc995d6888a2508f1b28ef07c5bf8eb0721a1b70afff3b815d1278a74581b5767741102fd4eb6281374343d62fb26504430701ff091ac9@validator_2:30303,enode://eb20164b3433be5db7109c74845e6137a06cfc2e07ed2c6c3e41b02c29dd480ac906f48610dd62ed4f10710e77f15d65125b0f603dcafbf29d6482dcf2dc8368@validator_3:30303"
+      VALIDATOR_ADDRESS: "0xa6ff33e3250cc765052ac9d7f7dfebda183c4b9b"
+      BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      SLEEP_FOR: "3"
     volumes:
       - "./genesis/keystore:/datadir/keystore"
     restart: always
-
-  # validator:
-  #   build:
-  #     context: "./v2"
-  #     dockerfile: Dockerfile.chiliz
-  #   command:
-  #    - "/geth"
-  #    - "--config"
-  #    - "/datadir/config.toml"
-  #    - "--datadir"
-  #    - "/datadir"
-  #    - "-unlock"
-  #    - "0x00a601f45688dba8a070722073b015277cf36725"
-  #    - "--password"
-  #    - "/datadir/password.txt"
-  #    - "--mine"
-  #    - "--gcmode"
-  #    - "archive"
-  #    - "--allow-insecure-unlock"
-  #    - "--pprofaddr"
-  #    - "0.0.0.0"
-  #    - "--metrics"
-  #    - "--pprof"
-  #   volumes:
-  #    - "validator_data:/geth"
-  #   ports:
-  #    - "30311:30311"
-  #    - "30311:30311/udp"
-  #   restart: always
+  validator_4:
+    build:
+      context: "./"
+      dockerfile: Dockerfile.chiliz
+    environment:
+      GENESIS_FILE: "/genesis/testnet.json"
+      NODE_MODE: "validator"
+      VALIDATOR_ADDRESS: "0x49c0f7c8c11a4c80dc6449efe1010bb166818da8"
+      BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      SLEEP_FOR: "3"
+    volumes:
+      - "./genesis/keystore:/datadir/keystore"
+    restart: always
+  validator_5:
+    build:
+      context: "./"
+      dockerfile: Dockerfile.chiliz
+    environment:
+      GENESIS_FILE: "/genesis/testnet.json"
+      NODE_MODE: "validator"
+      VALIDATOR_ADDRESS: "0x8e1ea6eaa09c3b40f4a51fcd056a031870a0549a"
+      BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      SLEEP_FOR: "3"
+    volumes:
+      - "./genesis/keystore:/datadir/keystore"
+    restart: always
 
   # faucet:
   #   build:

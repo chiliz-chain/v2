@@ -18,16 +18,18 @@ package vm
 
 import (
 	"errors"
-	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"math/big"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
+
+	"github.com/holiman/uint256"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/holiman/uint256"
 )
 
 // emptyCodeHash is used by create to ensure deployment is disallowed to already
@@ -587,7 +589,7 @@ func (evm *EVM) Create(caller ContractRef, code []byte, gas uint64, value *big.I
 
 // CreateWithAddress creates a new contract using code as deployment code.
 func (evm *EVM) CreateWithAddress(caller ContractRef, code []byte, gas uint64, value *big.Int, contractAddr common.Address) (ret []byte, leftOverGas uint64, err error) {
-	ret, _, leftOverGas, err = evm.create(caller, &codeAndHash{code: code}, gas, value, contractAddr)
+	ret, _, leftOverGas, err = evm.create(caller, &codeAndHash{code: code}, gas, value, contractAddr, STOP)
 	return
 }
 
