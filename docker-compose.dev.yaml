@@ -1,0 +1,25 @@
+version: "3"
+services:
+  bootnode:
+    build:
+      context: "./"
+      dockerfile: Dockerfile.chiliz
+    environment:
+      GENESIS_FILE: "/genesis/devnet.json"
+      NODE_MODE: "bootnode"
+    volumes:
+      - "./genesis/keystore:/datadir/keystore"
+    restart: always
+  validator:
+    build:
+      context: "./"
+      dockerfile: Dockerfile.chiliz
+    environment:
+      GENESIS_FILE: "/genesis/devnet.json"
+      NODE_MODE: "validator"
+      VALIDATOR_ADDRESS: "0x00a601f45688dba8a070722073b015277cf36725"
+      BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      SLEEP_FOR: "3"
+    volumes:
+      - "./genesis/keystore:/datadir/keystore"
+    restart: always
