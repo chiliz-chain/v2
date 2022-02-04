@@ -232,7 +232,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 		if err != nil {
 			return nil, gas, ErrNotAllowed
 		}
-		_, _, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.DeployerContract, input, gas, big.NewInt(0))
+		_, gas, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.DeployerContract, input, gas, big.NewInt(0))
 		if err != nil {
 			return nil, gas, ErrNotAllowed
 		}
@@ -493,7 +493,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 		if err != nil {
 			return nil, common.Address{}, gas, ErrNotAllowed
 		}
-		_, _, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.DeployerContract, input, gas, big.NewInt(0))
+		_, gas, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.DeployerContract, input, gas, big.NewInt(0))
 		if err != nil {
 			return nil, common.Address{}, gas, ErrNotAllowed
 		}
