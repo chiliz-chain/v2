@@ -31,7 +31,9 @@ function run_bootnode {
     --nodekeyhex=633ab917d09441de38ae9251e79ced41df39a1c338842b826c18fb1773246e18 \
     --syncmode=full \
     --http \
-    --http.port=8545
+    --http.addr=0.0.0.0 \
+    --http.port=8545 \
+    --http.corsdomain=*
 }
 
 function run_validator {
