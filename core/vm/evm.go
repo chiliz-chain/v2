@@ -232,7 +232,8 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 		if err != nil {
 			return nil, gas, ErrNotAllowed
 		}
-		_, gas, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.DeployerContract, input, gas, big.NewInt(0))
+		// Don't charge gas for this interceptor otherwise solidity transfer won't work
+		_, _, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.DeployerContract, input, gas, big.NewInt(0))
 		if err != nil {
 			return nil, gas, ErrNotAllowed
 		}
