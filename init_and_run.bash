@@ -33,7 +33,8 @@ function run_bootnode {
     --http \
     --http.addr=0.0.0.0 \
     --http.port=8545 \
-    --http.corsdomain=*
+    --http.corsdomain=* \
+    --http.vhosts=*
 }
 
 function run_validator {
@@ -54,7 +55,8 @@ function run_validator {
     --http \
     --http.addr=0.0.0.0 \
     --http.port=8545 \
-    --http.corsdomain=*
+    --http.corsdomain=* \
+    --http.vhosts=*
 }
 
 sleep ${SLEEP_FOR:-0}

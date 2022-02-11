@@ -2,7 +2,9 @@ version: "3"
 services:
 
   bootnode:
-    image: ankrnetwork/chiliz-devel:latest
+    build:
+      context: "./"
+      dockerfile: Dockerfile.chiliz
     environment:
       GENESIS_FILE: "/genesis/testnet.json"
       NODE_MODE: "bootnode"
@@ -14,49 +16,69 @@ services:
     restart: always
 
   validator_1:
-    image: ankrnetwork/chiliz-devel:latest
+    build:
+      context: "./"
+      dockerfile: Dockerfile.chiliz
     environment:
       GENESIS_FILE: "/genesis/testnet.json"
       NODE_MODE: "validator"
       VALIDATOR_ADDRESS: "0x08fae3885e299c24ff9841478eb946f41023ac69"
       BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
       SLEEP_FOR: "3"
+    volumes:
+      - "./genesis/keystore:/datadir/keystore"
     restart: always
   validator_2:
-    image: ankrnetwork/chiliz-devel:latest
+    build:
+      context: "./"
+      dockerfile: Dockerfile.chiliz
     environment:
       GENESIS_FILE: "/genesis/testnet.json"
       NODE_MODE: "validator"
       VALIDATOR_ADDRESS: "0x751aaca849b09a3e347bbfe125cf18423cc24b40"
       BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
       SLEEP_FOR: "3"
+    volumes:
+      - "./genesis/keystore:/datadir/keystore"
     restart: always
   validator_3:
-    image: ankrnetwork/chiliz-devel:latest
+    build:
+      context: "./"
+      dockerfile: Dockerfile.chiliz
     environment:
       GENESIS_FILE: "/genesis/testnet.json"
       NODE_MODE: "validator"
       VALIDATOR_ADDRESS: "0xa6ff33e3250cc765052ac9d7f7dfebda183c4b9b"
       BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
       SLEEP_FOR: "3"
+    volumes:
+      - "./genesis/keystore:/datadir/keystore"
     restart: always
   validator_4:
-    image: ankrnetwork/chiliz-devel:latest
+    build:
+      context: "./"
+      dockerfile: Dockerfile.chiliz
     environment:
       GENESIS_FILE: "/genesis/testnet.json"
       NODE_MODE: "validator"
       VALIDATOR_ADDRESS: "0x49c0f7c8c11a4c80dc6449efe1010bb166818da8"
       BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
       SLEEP_FOR: "3"
+    volumes:
+      - "./genesis/keystore:/datadir/keystore"
     restart: always
   validator_5:
-    image: ankrnetwork/chiliz-devel:latest
+    build:
+      context: "./"
+      dockerfile: Dockerfile.chiliz
     environment:
       GENESIS_FILE: "/genesis/testnet.json"
       NODE_MODE: "validator"
       VALIDATOR_ADDRESS: "0x8e1ea6eaa09c3b40f4a51fcd056a031870a0549a"
       BOOT_NODES: "enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
       SLEEP_FOR: "3"
+    volumes:
+      - "./genesis/keystore:/datadir/keystore"
     restart: always
 
 #  faucet:
