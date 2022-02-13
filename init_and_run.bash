@@ -32,6 +32,7 @@ function run_bootnode {
     --syncmode=full \
     --http \
     --http.addr=0.0.0.0 \
+    --http.api=eth,net,web3,debug,trace,txpool \
     --http.port=8545 \
     --http.corsdomain=* \
     --http.vhosts=*
@@ -51,12 +52,7 @@ function run_validator {
     --miner.gastarget=30000000 \
     --miner.gaslimit=40000000 \
     --miner.gasprice=5000000000 \
-    --nodekeyhex=${NODE_KEY} \
-    --http \
-    --http.addr=0.0.0.0 \
-    --http.port=8545 \
-    --http.corsdomain=* \
-    --http.vhosts=*
+    --nodekeyhex=${NODE_KEY}
 }
 
 sleep ${SLEEP_FOR:-0}
