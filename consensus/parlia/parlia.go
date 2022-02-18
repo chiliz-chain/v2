@@ -80,6 +80,9 @@ var (
 		common.HexToAddress(systemcontracts.TokenHubContract):           false,
 		common.HexToAddress(systemcontracts.RelayerIncentivizeContract): false,
 		common.HexToAddress(systemcontracts.CrossChainContract):         false,
+		// chiliz smart contracts
+		common.HexToAddress(systemcontracts.ContractDeployerContract): true,
+		common.HexToAddress(systemcontracts.GovernanceContract):       true,
 	}
 )
 
@@ -1118,24 +1121,17 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
 	// method
 	method := "init"
-	// contracts
-	contracts := []string{
-		systemcontracts.ValidatorContract,
-		systemcontracts.SlashContract,
-		systemcontracts.LightClientContract,
-		systemcontracts.RelayerHubContract,
-		systemcontracts.TokenHubContract,
-		systemcontracts.RelayerIncentivizeContract,
-		systemcontracts.CrossChainContract,
-	}
 	// get packed data
 	data, err := p.validatorSetABI.Pack(method)
 	if err != nil {
 		log.Error("Unable to pack tx for init validator set", "error", err)
 		return err
 	}
-	for _, c := range contracts {
-		msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(c), data, common.Big0)
+	for c, isActive := range systemContracts {
+		if !isActive {
+			continue
+		}
+		msg := p.getSystemMessage(header.Coinbase, c, data, common.Big0)
 		// apply message
 		log.Info("init contract", "block hash", header.Hash(), "contract", c)
 		err = p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
