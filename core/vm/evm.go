@@ -23,8 +23,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/ethereum/go-ethereum/core/systemcontracts"
-
 	"github.com/holiman/uint256"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -227,16 +225,9 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	}
 
 	// Fail if we're calling not whitelisted contract
-	if !systemcontracts.IsSystemContract(addr) {
-		input, err := systemcontracts.DeployerAbi.Pack("checkContractActive", addr)
-		if err != nil {
-			return nil, gas, ErrNotAllowed
-		}
-		// Don't charge gas for this interceptor otherwise solidity transfer won't work
-		_, _, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.DeployerContract, input, gas, big.NewInt(0))
-		if err != nil {
-			return nil, gas, ErrNotAllowed
-		}
+	gas, err = applyChilizInvocationEvmHook(evm, addr, gas)
+	if err != nil {
+		return nil, gas, err
 	}
 
 	// Fail if we're trying to transfer more than the available balance
@@ -489,15 +480,10 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 	}
 
 	// Make sure it's allowed to deploy smart contracts
-	if !systemcontracts.IsSystemContract(address) {
-		input, err := systemcontracts.DeployerAbi.Pack("registerDeployedContract", caller.Address(), address)
-		if err != nil {
-			return nil, common.Address{}, gas, ErrNotAllowed
-		}
-		_, gas, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.DeployerContract, input, gas, big.NewInt(0))
-		if err != nil {
-			return nil, common.Address{}, gas, ErrNotAllowed
-		}
+	var err error
+	gas, err = applyChilizDeploymentEvmHook(evm, caller, address, gas)
+	if err != nil {
+		return nil, common.Address{}, gas, err
 	}
 
 	if !evm.Context.CanTransfer(evm.StateDB, caller.Address(), value) {

@@ -26,15 +26,27 @@ type Upgrade struct {
 
 type upgradeHook func(blockNumber *big.Int, contractAddr common.Address, statedb *state.StateDB) error
 
+const (
+	mainNet    = "Mainnet"
+	chapelNet  = "Chapel"
+	rialtoNet  = "Rialto"
+	defaultNet = "Default"
+)
+
 var (
 	GenesisHash common.Hash
 )
+
+func init() {
+}
 
 func UpgradeBuildInSystemContract(config *params.ChainConfig, blockNumber *big.Int, statedb *state.StateDB) {
 	if config == nil || blockNumber == nil || statedb == nil {
 		return
 	}
-	/* apply other upgrades */
+	/*
+		apply other upgrades
+	*/
 }
 
 func applySystemContractUpgrade(upgrade *Upgrade, blockNumber *big.Int, statedb *state.StateDB, logger log.Logger) {
