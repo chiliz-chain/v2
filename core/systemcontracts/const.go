@@ -29,10 +29,26 @@ const (
 	GovernanceContract       = "0x0000000000000000000000000000000000007002"
 )
 
-var ContractDeployerContractAddress = common.HexToAddress(ContractDeployerContract)
+var systemContracts = map[common.Address]bool{
+	// bsc default contracts
+	common.HexToAddress(ValidatorContract):    true,
+	common.HexToAddress(SlashContract):        true,
+	common.HexToAddress(SystemRewardContract): true,
+	// chiliz contracts
+	common.HexToAddress(ContractDeployerContract): true,
+	common.HexToAddress(GovernanceContract):       true,
+}
 
-func IsContractDeployer(address common.Address) bool {
-	return bytes.Equal(address.Bytes(), ContractDeployerContractAddress.Bytes())
+var (
+	StakingAddress           = common.HexToAddress(ValidatorContract)
+	SlashingIndicatorAddress = common.HexToAddress(SlashContract)
+	SystemRewardAddress      = common.HexToAddress(SystemRewardContract)
+	ContractDeployerAddress  = common.HexToAddress(ContractDeployerContract)
+	GovernanceAddress        = common.HexToAddress(GovernanceContract)
+)
+
+func IsSystemContract(address common.Address) bool {
+	return systemContracts[address]
 }
 
 //go:embed abi/IEvmHooks.json

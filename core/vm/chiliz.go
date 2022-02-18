@@ -8,7 +8,7 @@ import (
 )
 
 func applyChilizInvocationEvmHook(evm *EVM, addr common.Address, gas uint64) (leftOverGas uint64, err error) {
-	if systemcontracts.IsContractDeployer(addr) {
+	if systemcontracts.IsSystemContract(addr) {
 		return gas, nil
 	}
 	input, err := systemcontracts.EvmHooksAbi.Pack("checkContractActive", addr)
@@ -16,7 +16,7 @@ func applyChilizInvocationEvmHook(evm *EVM, addr common.Address, gas uint64) (le
 		return gas, ErrNotAllowed
 	}
 	// don't charge gas for this interceptor to let simple send be 21000 gas
-	_, _, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.ContractDeployerContractAddress, input, gas, big.NewInt(0))
+	_, _, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.ContractDeployerAddress, input, gas, big.NewInt(0))
 	if err != nil {
 		return gas, ErrNotAllowed
 	}
@@ -24,14 +24,14 @@ func applyChilizInvocationEvmHook(evm *EVM, addr common.Address, gas uint64) (le
 }
 
 func applyChilizDeploymentEvmHook(evm *EVM, caller ContractRef, addr common.Address, gas uint64) (leftOverGas uint64, err error) {
-	if systemcontracts.IsContractDeployer(addr) {
+	if systemcontracts.IsSystemContract(addr) {
 		return gas, nil
 	}
 	input, err := systemcontracts.EvmHooksAbi.Pack("registerDeployedContract", caller.Address(), addr)
 	if err != nil {
 		return gas, ErrNotAllowed
 	}
-	_, gas, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.ContractDeployerContractAddress, input, gas, big.NewInt(0))
+	_, gas, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.ContractDeployerAddress, input, gas, big.NewInt(0))
 	if err != nil {
 		return gas, ErrNotAllowed
 	}

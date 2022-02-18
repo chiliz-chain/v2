@@ -1127,10 +1127,14 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 		log.Error("Unable to pack tx for init validator set", "error", err)
 		return err
 	}
-	for c, isActive := range systemContracts {
-		if !isActive {
-			continue
-		}
+	contracts := []common.Address{
+		common.HexToAddress(systemcontracts.ValidatorContract),
+		common.HexToAddress(systemcontracts.SlashContract),
+		common.HexToAddress(systemcontracts.SystemRewardContract),
+		common.HexToAddress(systemcontracts.ContractDeployerContract),
+		common.HexToAddress(systemcontracts.GovernanceContract),
+	}
+	for _, c := range contracts {
 		msg := p.getSystemMessage(header.Coinbase, c, data, common.Big0)
 		// apply message
 		log.Info("init contract", "block hash", header.Hash(), "contract", c)
