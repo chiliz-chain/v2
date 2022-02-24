@@ -83,6 +83,7 @@ var (
 		// chiliz smart contracts
 		common.HexToAddress(systemcontracts.ContractDeployerContract): true,
 		common.HexToAddress(systemcontracts.GovernanceContract):       true,
+		common.HexToAddress(systemcontracts.ChainConfigContract):      true,
 	}
 )
 
@@ -1133,6 +1134,7 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 		common.HexToAddress(systemcontracts.SystemRewardContract),
 		common.HexToAddress(systemcontracts.ContractDeployerContract),
 		common.HexToAddress(systemcontracts.GovernanceContract),
+		common.HexToAddress(systemcontracts.ChainConfigContract),
 	}
 	for _, c := range contracts {
 		msg := p.getSystemMessage(header.Coinbase, c, data, common.Big0)

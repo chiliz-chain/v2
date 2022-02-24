@@ -27,6 +27,7 @@ const (
 const (
 	ContractDeployerContract = "0x0000000000000000000000000000000000007001"
 	GovernanceContract       = "0x0000000000000000000000000000000000007002"
+	ChainConfigContract      = "0x0000000000000000000000000000000000007003"
 )
 
 var systemContracts = map[common.Address]bool{
@@ -37,6 +38,7 @@ var systemContracts = map[common.Address]bool{
 	// chiliz contracts
 	common.HexToAddress(ContractDeployerContract): true,
 	common.HexToAddress(GovernanceContract):       true,
+	common.HexToAddress(ChainConfigContract):      true,
 }
 
 var (
@@ -45,6 +47,7 @@ var (
 	SystemRewardAddress      = common.HexToAddress(SystemRewardContract)
 	ContractDeployerAddress  = common.HexToAddress(ContractDeployerContract)
 	GovernanceAddress        = common.HexToAddress(GovernanceContract)
+	ChainConfigAddress       = common.HexToAddress(ChainConfigContract)
 )
 
 func IsSystemContract(address common.Address) bool {
