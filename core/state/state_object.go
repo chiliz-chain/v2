@@ -306,10 +306,6 @@ func (s *StateObject) SetStorage(storage map[common.Hash]common.Hash) {
 	// debugging and the `fake` storage won't be committed to database.
 }
 
-func (s *StateObject) GetDirtyStorage() Storage {
-	return s.dirtyStorage
-}
-
 func (s *StateObject) setState(key, value common.Hash) {
 	s.dirtyStorage[key] = value
 }
