@@ -618,7 +618,7 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 
 	// Set the correct difficulty
 	header.Difficulty = CalcDifficulty(snap, p.val)
-	if header.Difficulty.Cmp(diffInTurn) != 0 {
+	if header.Difficulty.Cmp(diffInTurn) != 0 && header.Number.Uint64() == 1 {
 		return fmt.Errorf("not your turn for block producing")
 	}
 
