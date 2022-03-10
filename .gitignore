@@ -54,3 +54,5 @@ cmd/geth/__debug_bin
 geth.exe
 geth
 /datadir
+build.cmd
+build.bash
