@@ -16,7 +16,7 @@ func applyChilizInvocationEvmHook(evm *EVM, addr common.Address, gas uint64) (le
 		return gas, ErrNotAllowed
 	}
 	// don't charge gas for this interceptor to let simple send be 21000 gas
-	_, _, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.ContractDeployerAddress, input, gas, big.NewInt(0))
+	_, _, err = evm.Call(AccountRef(evm.Context.Coinbase), systemcontracts.ContractDeployerAddress, input, 1_000_000, big.NewInt(0))
 	if err != nil {
 		return gas, ErrNotAllowed
 	}
