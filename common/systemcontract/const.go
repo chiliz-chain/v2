@@ -1,11 +1,8 @@
-package parlia
+package systemcontract
 
 import (
-	"bytes"
 	_ "embed"
-	"log"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -51,23 +48,6 @@ var systemContracts = map[common.Address]bool{
 	common.HexToAddress(DeployerProxyContract):  true,
 }
 
-var (
-	StakingAddress           = common.HexToAddress(ValidatorContract)
-	SlashingIndicatorAddress = common.HexToAddress(SlashContract)
-	SystemRewardAddress      = common.HexToAddress(SystemRewardContract)
-	GovernanceAddress        = common.HexToAddress(GovernanceContract)
-	ChainConfigAddress       = common.HexToAddress(ChainConfigContract)
-	RuntimeUpgradeAddress    = common.HexToAddress(RuntimeUpgradeContract)
-)
-
 func IsSystemContract(address common.Address) bool {
 	return systemContracts[address]
-}
-
-func loadJsonAbiOrFatal(jsonAbi []byte) abi.ABI {
-	result, err := abi.JSON(bytes.NewReader(jsonAbi))
-	if err != nil {
-		log.Fatalf("can't load abi file: %s", err)
-	}
-	return result
 }

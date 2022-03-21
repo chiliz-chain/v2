@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/common/systemcontract"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core"
@@ -136,7 +137,7 @@ type SignerFn func(accounts.Account, string, []byte) ([]byte, error)
 type SignerTxFn func(accounts.Account, *types.Transaction, *big.Int) (*types.Transaction, error)
 
 func isToSystemContract(to common.Address) bool {
-	return systemContracts[to]
+	return systemcontract.IsSystemContract(to)
 }
 
 // ecrecover extracts the Ethereum account address from a signed header.
@@ -1024,7 +1025,7 @@ func (p *Parlia) getCurrentValidators(blockHash common.Hash) ([]common.Address, 
 	}
 	// call
 	msgData := (hexutil.Bytes)(data)
-	toAddress := common.HexToAddress(ValidatorContract)
+	toAddress := common.HexToAddress(systemcontract.ValidatorContract)
 	gas := (hexutil.Uint64)(uint64(math.MaxUint64 / 2))
 	result, err := p.ethAPI.Call(ctx, ethapi.CallArgs{
 		Gas:  &gas,
@@ -1062,7 +1063,7 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 	state.SetBalance(consensus.SystemAddress, big.NewInt(0))
 	state.AddBalance(coinbase, balance)
 
-	doDistributeSysReward := state.GetBalance(common.HexToAddress(SystemRewardContract)).Cmp(maxSystemBalance) < 0
+	doDistributeSysReward := state.GetBalance(common.HexToAddress(systemcontract.SystemRewardContract)).Cmp(maxSystemBalance) < 0
 	if doDistributeSysReward {
 		var rewards = new(big.Int)
 		rewards = rewards.Rsh(balance, systemRewardPercent)
@@ -1094,7 +1095,7 @@ func (p *Parlia) slash(spoiledVal common.Address, state *state.StateDB, header *
 		return err
 	}
 	// get system message
-	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(SlashContract), data, common.Big0)
+	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(systemcontract.SlashContract), data, common.Big0)
 	// apply message
 	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 }
@@ -1111,14 +1112,14 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 		return err
 	}
 	contracts := []common.Address{
-		common.HexToAddress(ValidatorContract),
-		common.HexToAddress(SlashContract),
-		common.HexToAddress(SystemRewardContract),
-		common.HexToAddress(StakingPoolContract),
-		common.HexToAddress(GovernanceContract),
-		common.HexToAddress(ChainConfigContract),
-		common.HexToAddress(RuntimeUpgradeContract),
-		common.HexToAddress(DeployerProxyContract),
+		common.HexToAddress(systemcontract.ValidatorContract),
+		common.HexToAddress(systemcontract.SlashContract),
+		common.HexToAddress(systemcontract.SystemRewardContract),
+		common.HexToAddress(systemcontract.StakingPoolContract),
+		common.HexToAddress(systemcontract.GovernanceContract),
+		common.HexToAddress(systemcontract.ChainConfigContract),
+		common.HexToAddress(systemcontract.RuntimeUpgradeContract),
+		common.HexToAddress(systemcontract.DeployerProxyContract),
 	}
 	for _, c := range contracts {
 		msg := p.getSystemMessage(header.Coinbase, c, data, common.Big0)
@@ -1135,7 +1136,7 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 func (p *Parlia) distributeToSystem(amount *big.Int, state *state.StateDB, header *types.Header, chain core.ChainContext,
 	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
 	// get system message
-	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(SystemRewardContract), nil, amount)
+	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(systemcontract.SystemRewardContract), nil, amount)
 	// apply message
 	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 }
@@ -1156,7 +1157,7 @@ func (p *Parlia) distributeToValidator(amount *big.Int, validator common.Address
 		return err
 	}
 	// get system message
-	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(ValidatorContract), data, amount)
+	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(systemcontract.ValidatorContract), data, amount)
 	// apply message
 	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 }
@@ -1345,7 +1346,7 @@ func applyMessage(
 		msg.Gas(),
 		msg.Value(),
 	)
-	if err != nil {
+	if err != nil && len(ret) > 64+4 {
 		log.Error("apply message failed", "msg", string(ret[64+4:]), "err", err)
 	}
 	return msg.Gas() - returnGas, err

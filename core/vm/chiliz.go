@@ -4,11 +4,12 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/systemcontract"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
 )
 
 func applyChilizInvocationEvmHook(evm *EVM, addr common.Address, gas uint64) (leftOverGas uint64, err error) {
-	if systemcontracts.IsSystemContract(addr) {
+	if systemcontract.IsSystemContract(addr) {
 		return gas, nil
 	}
 	input, err := systemcontracts.EvmHooksAbi.Pack("checkContractActive", addr)
