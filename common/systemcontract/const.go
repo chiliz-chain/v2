@@ -29,6 +29,14 @@ const (
 	DeployerProxyContract  = "0x0000000000000000000000000000000000007005"
 )
 
+var (
+	StakingPoolContractAddress    = common.HexToAddress(StakingPoolContract)
+	GovernanceContractAddress     = common.HexToAddress(GovernanceContract)
+	ChainConfigContractAddress    = common.HexToAddress(ChainConfigContract)
+	RuntimeUpgradeContractAddress = common.HexToAddress(RuntimeUpgradeContract)
+	DeployerProxyContractAddress  = common.HexToAddress(DeployerProxyContract)
+)
+
 var systemContracts = map[common.Address]bool{
 	common.HexToAddress(ValidatorContract):    true,
 	common.HexToAddress(SlashContract):        true,
