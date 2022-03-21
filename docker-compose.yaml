@@ -2,7 +2,7 @@ version: "3"
 services:
 
   bootnode:
-    image: ankrnetwork/bas-template-bsc:devel
+    image: ankrnetwork/chiliz-devel:latest
     command:
       - "--datadir=/datadir"
       - "--genesis=/datadir/testnet.json"
@@ -23,7 +23,7 @@ services:
     restart: always
 
   validator_1:
-    image: ankrnetwork/bas-template-bsc:devel
+    image: ankrnetwork/chiliz-devel:latest
     command:
       - "--datadir=/datadir"
       - "--genesis=/datadir/testnet.json"
@@ -42,7 +42,7 @@ services:
       - "./genesis/password.txt:/datadir/password.txt"
     restart: always
   validator_2:
-    image: ankrnetwork/bas-template-bsc:devel
+    image: ankrnetwork/chiliz-devel:latest
     command:
       - "--datadir=/datadir"
       - "--genesis=/datadir/testnet.json"
@@ -61,7 +61,7 @@ services:
       - "./genesis/password.txt:/datadir/password.txt"
     restart: always
   validator_3:
-    image: ankrnetwork/bas-template-bsc:devel
+    image: ankrnetwork/chiliz-devel:latest
     command:
       - "--datadir=/datadir"
       - "--genesis=/datadir/testnet.json"
@@ -80,7 +80,7 @@ services:
       - "./genesis/password.txt:/datadir/password.txt"
     restart: always
   validator_4:
-    image: ankrnetwork/bas-template-bsc:devel
+    image: ankrnetwork/chiliz-devel:latest
     command:
       - "--datadir=/datadir"
       - "--genesis=/datadir/testnet.json"
@@ -99,7 +99,7 @@ services:
       - "./genesis/password.txt:/datadir/password.txt"
     restart: always
   validator_5:
-    image: ankrnetwork/bas-template-bsc:devel
+    image: ankrnetwork/chiliz-devel:latest
     command:
       - "--datadir=/datadir"
       - "--genesis=/datadir/testnet.json"
