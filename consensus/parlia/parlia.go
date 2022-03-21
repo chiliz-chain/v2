@@ -29,7 +29,6 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -68,23 +67,6 @@ var (
 	diffNoTurn = big.NewInt(1)            // Block difficulty for out-of-turn signatures
 	// 100 native token
 	maxSystemBalance = new(big.Int).Mul(big.NewInt(100), big.NewInt(params.Ether))
-
-	systemContracts = map[common.Address]bool{
-		common.HexToAddress(systemcontracts.ValidatorContract):    true,
-		common.HexToAddress(systemcontracts.SlashContract):        true,
-		common.HexToAddress(systemcontracts.SystemRewardContract): true,
-		// we don't have these smart contract for CCv2, it's not strictly required to disable them since they're not deployed
-		common.HexToAddress(systemcontracts.LightClientContract):        false,
-		common.HexToAddress(systemcontracts.RelayerHubContract):         false,
-		common.HexToAddress(systemcontracts.GovHubContract):             false,
-		common.HexToAddress(systemcontracts.TokenHubContract):           false,
-		common.HexToAddress(systemcontracts.RelayerIncentivizeContract): false,
-		common.HexToAddress(systemcontracts.CrossChainContract):         false,
-		// chiliz smart contracts
-		common.HexToAddress(systemcontracts.ContractDeployerContract): true,
-		common.HexToAddress(systemcontracts.GovernanceContract):       true,
-		common.HexToAddress(systemcontracts.ChainConfigContract):      true,
-	}
 )
 
 // Various error messages to mark blocks invalid. These should be private to
@@ -1042,7 +1024,7 @@ func (p *Parlia) getCurrentValidators(blockHash common.Hash) ([]common.Address, 
 	}
 	// call
 	msgData := (hexutil.Bytes)(data)
-	toAddress := common.HexToAddress(systemcontracts.ValidatorContract)
+	toAddress := common.HexToAddress(ValidatorContract)
 	gas := (hexutil.Uint64)(uint64(math.MaxUint64 / 2))
 	result, err := p.ethAPI.Call(ctx, ethapi.CallArgs{
 		Gas:  &gas,
@@ -1080,7 +1062,7 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 	state.SetBalance(consensus.SystemAddress, big.NewInt(0))
 	state.AddBalance(coinbase, balance)
 
-	doDistributeSysReward := state.GetBalance(common.HexToAddress(systemcontracts.SystemRewardContract)).Cmp(maxSystemBalance) < 0
+	doDistributeSysReward := state.GetBalance(common.HexToAddress(SystemRewardContract)).Cmp(maxSystemBalance) < 0
 	if doDistributeSysReward {
 		var rewards = new(big.Int)
 		rewards = rewards.Rsh(balance, systemRewardPercent)
@@ -1112,7 +1094,7 @@ func (p *Parlia) slash(spoiledVal common.Address, state *state.StateDB, header *
 		return err
 	}
 	// get system message
-	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(systemcontracts.SlashContract), data, common.Big0)
+	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(SlashContract), data, common.Big0)
 	// apply message
 	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 }
@@ -1129,12 +1111,14 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 		return err
 	}
 	contracts := []common.Address{
-		common.HexToAddress(systemcontracts.ValidatorContract),
-		common.HexToAddress(systemcontracts.SlashContract),
-		common.HexToAddress(systemcontracts.SystemRewardContract),
-		common.HexToAddress(systemcontracts.ContractDeployerContract),
-		common.HexToAddress(systemcontracts.GovernanceContract),
-		common.HexToAddress(systemcontracts.ChainConfigContract),
+		common.HexToAddress(ValidatorContract),
+		common.HexToAddress(SlashContract),
+		common.HexToAddress(SystemRewardContract),
+		common.HexToAddress(StakingPoolContract),
+		common.HexToAddress(GovernanceContract),
+		common.HexToAddress(ChainConfigContract),
+		common.HexToAddress(RuntimeUpgradeContract),
+		common.HexToAddress(DeployerProxyContract),
 	}
 	for _, c := range contracts {
 		msg := p.getSystemMessage(header.Coinbase, c, data, common.Big0)
@@ -1151,7 +1135,7 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 func (p *Parlia) distributeToSystem(amount *big.Int, state *state.StateDB, header *types.Header, chain core.ChainContext,
 	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
 	// get system message
-	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(systemcontracts.SystemRewardContract), nil, amount)
+	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(SystemRewardContract), nil, amount)
 	// apply message
 	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 }
@@ -1172,7 +1156,7 @@ func (p *Parlia) distributeToValidator(amount *big.Int, validator common.Address
 		return err
 	}
 	// get system message
-	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(systemcontracts.ValidatorContract), data, amount)
+	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(ValidatorContract), data, amount)
 	// apply message
 	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 }
@@ -1362,7 +1346,7 @@ func applyMessage(
 		msg.Value(),
 	)
 	if err != nil {
-		log.Error("apply message failed", "msg", string(ret), "err", err)
+		log.Error("apply message failed", "msg", string(ret[64+4:]), "err", err)
 	}
 	return msg.Gas() - returnGas, err
 }

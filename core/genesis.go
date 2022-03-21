@@ -30,7 +30,6 @@ import (
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -87,7 +86,6 @@ type GenesisAccount struct {
 	Balance    *big.Int                    `json:"balance" gencodec:"required"`
 	Nonce      uint64                      `json:"nonce,omitempty"`
 	PrivateKey []byte                      `json:"secretKey,omitempty"` // for tests
-	Logs       []*types.Log                `json:"logs,omitempty"`
 }
 
 // field type overrides for gencodec
@@ -102,18 +100,11 @@ type genesisSpecMarshaling struct {
 	Alloc      map[common.UnprefixedAddress]GenesisAccount
 }
 
-type logJSON struct {
-	Address common.Address `json:"address" gencodec:"required"`
-	Topics  []common.Hash  `json:"topics" gencodec:"required"`
-	Data    hexutil.Bytes  `json:"data" gencodec:"required"`
-}
-
 type genesisAccountMarshaling struct {
 	Code       hexutil.Bytes
 	Balance    *math.HexOrDecimal256
 	Nonce      math.HexOrDecimal64
 	Storage    map[storageJSON]storageJSON
-	Logs       []logJSON
 	PrivateKey hexutil.Bytes
 }
 
@@ -171,7 +162,6 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, override
 	}
 	// Just commit the new block if there is no stored genesis block.
 	stored := rawdb.ReadCanonicalHash(db, 0)
-	systemcontracts.GenesisHash = stored
 	if (stored == common.Hash{}) {
 		if genesis == nil {
 			log.Info("Writing default main-net genesis block")
@@ -284,9 +274,6 @@ func (g *Genesis) ToBlock(db ethdb.Database) *types.Block {
 		statedb.SetNonce(addr, account.Nonce)
 		for key, value := range account.Storage {
 			statedb.SetState(addr, key, value)
-		}
-		for _, value := range account.Logs {
-			statedb.AddLog(value)
 		}
 	}
 	root := statedb.IntermediateRoot(false)
