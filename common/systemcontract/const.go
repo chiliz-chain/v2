@@ -59,3 +59,6 @@ var systemContracts = map[common.Address]bool{
 func IsSystemContract(address common.Address) bool {
 	return systemContracts[address]
 }
+
+var EvmHookRuntimeUpgradeAddress = common.HexToAddress("0x0000000000000000000000000000000000007f01")
+var EvmHookDeployerProxyAddress = common.HexToAddress("0x0000000000000000000000000000000000007f02")
