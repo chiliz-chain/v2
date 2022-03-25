@@ -17,7 +17,7 @@
 // faucet is an Ether faucet backed by a light client.
 package main
 
-//go:generate go-bindata -nometadata -o website.go faucet.html
+//go:generate go-bindata -nometadata -o website.go faucet.html CircularStd-Book.otf
 //go:generate gofmt -w -s website.go
 
 import (
@@ -115,7 +115,7 @@ func main() {
 	for i := 0; i < *tiersFlag; i++ {
 		// Calculate the amount for the next tier and format it
 		amount := float64(*payoutFlag) * math.Pow(2.5, float64(i))
-		amounts[i] = fmt.Sprintf("%s BNBs", strconv.FormatFloat(amount, 'f', -1, 64))
+		amounts[i] = fmt.Sprintf("%s CHZs", strconv.FormatFloat(amount, 'f', -1, 64))
 		if amount == 1 {
 			amounts[i] = strings.TrimSuffix(amounts[i], "s")
 		}
@@ -201,8 +201,12 @@ func main() {
 	if err := ks.Unlock(acc, pass); err != nil {
 		log.Crit("Failed to unlock faucet signer account", "err", err)
 	}
+	font, err := Asset("CircularStd-Book.otf")
+	if err != nil {
+		log.Crit("Failed to load the font", "err", err)
+	}
 	// Assemble and start the faucet light service
-	faucet, err := newFaucet(genesis, *ethPortFlag, enodes, *netFlag, *statsFlag, ks, website.Bytes(), bep2eInfos)
+	faucet, err := newFaucet(genesis, *ethPortFlag, enodes, *netFlag, *statsFlag, ks, website.Bytes(), font, bep2eInfos)
 	if err != nil {
 		log.Crit("Failed to start faucet", "err", err)
 	}
@@ -233,6 +237,7 @@ type faucet struct {
 	stack  *node.Node          // Ethereum protocol stack
 	client *ethclient.Client   // Client connection to the Ethereum chain
 	index  []byte              // Index page to serve up on the web
+	font  []byte               // Font to serve up on the web
 
 	keystore *keystore.KeyStore // Keystore containing the single signer
 	account  accounts.Account   // Account funding user faucet requests
@@ -259,7 +264,7 @@ type wsConn struct {
 	wlock sync.Mutex
 }
 
-func newFaucet(genesis *core.Genesis, port int, enodes []*enode.Node, network uint64, stats string, ks *keystore.KeyStore, index []byte, bep2eInfos map[string]bep2eInfo) (*faucet, error) {
+func newFaucet(genesis *core.Genesis, port int, enodes []*enode.Node, network uint64, stats string, ks *keystore.KeyStore, index []byte, font []byte, bep2eInfos map[string]bep2eInfo) (*faucet, error) {
 	// Assemble the raw devp2p protocol stack
 	stack, err := node.New(&node.Config{
 		Name:    "geth",
@@ -323,6 +328,7 @@ func newFaucet(genesis *core.Genesis, port int, enodes []*enode.Node, network ui
 		stack:      stack,
 		client:     client,
 		index:      index,
+		font:       font,
 		keystore:   ks,
 		account:    ks.Accounts()[0],
 		timeouts:   make(map[string]time.Time),
@@ -343,6 +349,7 @@ func (f *faucet) listenAndServe(port int) error {
 	go f.loop()
 
 	http.HandleFunc("/", f.webHandler)
+	http.HandleFunc("/font", f.fontHandler)
 	http.HandleFunc("/api", f.apiHandler)
 	http.HandleFunc("/faucet-smart/api", f.apiHandler)
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
@@ -352,6 +359,12 @@ func (f *faucet) listenAndServe(port int) error {
 // faucet website.
 func (f *faucet) webHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(f.index)
+}
+
+// webHandler handles all non-api requests, simply flattening and returning the
+// faucet website.
+func (f *faucet) fontHandler(w http.ResponseWriter, r *http.Request) {
+	w.Write(f.font)
 }
 
 // apiHandler handles requests for Ether grants and transaction statuses.
@@ -528,7 +541,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 		)
 		if timeout = f.timeouts[id]; time.Now().After(timeout) {
 			var tx *types.Transaction
-			if msg.Symbol == "BNB" {
+			if msg.Symbol == "CHZ" {
 				// User wasn't funded recently, create the funding transaction
 				amount := new(big.Int).Mul(big.NewInt(int64(*payoutFlag)), ether)
 				amount = new(big.Int).Mul(amount, new(big.Int).Exp(big.NewInt(5), big.NewInt(int64(msg.Tier)), nil))
