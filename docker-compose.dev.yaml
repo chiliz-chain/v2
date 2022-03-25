@@ -14,6 +14,8 @@ services:
       - "--http.port=8545"
       - "--http.corsdomain=*"
       - "--http.vhosts=*"
+      - "--light.serve=50"
+      - "--light.maxpeers=2"
     volumes:
       - "./genesis/devnet.json:/datadir/devnet.json"
     ports:
@@ -39,3 +41,25 @@ services:
       - "./genesis/keystore:/datadir/keystore"
       - "./genesis/password.txt:/datadir/password.txt"
     restart: always
+  faucet:
+    build:
+      context: "./"
+      dockerfile: Dockerfile.faucet
+    command:
+      - "--genesis=/datadir/devnet.json"
+      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      - "--network=17243"
+      - "--faucet.name='Chiliz Testnet'"
+      - "--faucet.amount=1"
+      - "--account.json=/datadir/keystore/UTC--2021-04-15T12-00-01.000Z--00a601f45688dba8a070722073b015277cf36725"
+      - "--account.pass=/datadir/password.txt"
+      - "--noauth=true"
+      - "--faucet.minutes=1"
+      - "--faucet.fixedprice=7000000000"
+    volumes:
+      - "./genesis/devnet.json:/datadir/devnet.json"
+      - "./genesis/keystore:/datadir/keystore"
+      - "./genesis/password.txt:/datadir/password.txt"
+    restart: always
+    ports:
+      - "8087:8080"
