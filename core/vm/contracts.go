@@ -76,9 +76,6 @@ var PrecompiledContractsIstanbul = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{7}): &bn256ScalarMulIstanbul{},
 	common.BytesToAddress([]byte{8}): &bn256PairingIstanbul{},
 	common.BytesToAddress([]byte{9}): &blake2F{},
-
-	common.BytesToAddress([]byte{100}): &tmHeaderValidate{},
-	common.BytesToAddress([]byte{101}): &iavlMerkleProofValidate{},
 }
 
 // PrecompiledContractsBerlin contains the default set of pre-compiled Ethereum
@@ -156,6 +153,12 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 		return nil, 0, ErrOutOfGas
 	}
 	suppliedGas -= gasCost
+	// special case for EVM hooks (they consume 0 gas), and we should be 100% sure that we use copy of the input
+	if gasCost == 0 {
+		newInput := make([]byte, len(input))
+		copy(newInput, input)
+		input = newInput
+	}
 	output, err := p.Run(input)
 	return output, suppliedGas, err
 }

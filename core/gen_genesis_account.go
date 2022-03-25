@@ -10,11 +10,11 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
-	"github.com/ethereum/go-ethereum/core/types"
 )
 
 var _ = (*genesisAccountMarshaling)(nil)
 
+// MarshalJSON marshals as JSON.
 func (g GenesisAccount) MarshalJSON() ([]byte, error) {
 	type GenesisAccount struct {
 		Code       hexutil.Bytes               `json:"code,omitempty"`
@@ -22,7 +22,6 @@ func (g GenesisAccount) MarshalJSON() ([]byte, error) {
 		Balance    *math.HexOrDecimal256       `json:"balance" gencodec:"required"`
 		Nonce      math.HexOrDecimal64         `json:"nonce,omitempty"`
 		PrivateKey hexutil.Bytes               `json:"secretKey,omitempty"`
-		Logs       []logJSON                   `json:"logs,omitempty"`
 	}
 	var enc GenesisAccount
 	enc.Code = g.Code
@@ -35,12 +34,10 @@ func (g GenesisAccount) MarshalJSON() ([]byte, error) {
 	enc.Balance = (*math.HexOrDecimal256)(g.Balance)
 	enc.Nonce = math.HexOrDecimal64(g.Nonce)
 	enc.PrivateKey = g.PrivateKey
-	for _, l := range g.Logs {
-		enc.Logs = append(enc.Logs, logJSON{Address: l.Address, Topics: l.Topics, Data: l.Data})
-	}
 	return json.Marshal(&enc)
 }
 
+// UnmarshalJSON unmarshals from JSON.
 func (g *GenesisAccount) UnmarshalJSON(input []byte) error {
 	type GenesisAccount struct {
 		Code       *hexutil.Bytes              `json:"code,omitempty"`
@@ -48,7 +45,6 @@ func (g *GenesisAccount) UnmarshalJSON(input []byte) error {
 		Balance    *math.HexOrDecimal256       `json:"balance" gencodec:"required"`
 		Nonce      *math.HexOrDecimal64        `json:"nonce,omitempty"`
 		PrivateKey *hexutil.Bytes              `json:"secretKey,omitempty"`
-		Logs       []logJSON                   `json:"logs,omitempty"`
 	}
 	var dec GenesisAccount
 	if err := json.Unmarshal(input, &dec); err != nil {
@@ -72,9 +68,6 @@ func (g *GenesisAccount) UnmarshalJSON(input []byte) error {
 	}
 	if dec.PrivateKey != nil {
 		g.PrivateKey = *dec.PrivateKey
-	}
-	for _, value := range dec.Logs {
-		g.Logs = append(g.Logs, &types.Log{Address: value.Address, Topics: value.Topics, Data: value.Data})
 	}
 	return nil
 }

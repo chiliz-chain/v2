@@ -113,10 +113,6 @@ const (
 	MaxCodeSize = 24576 // Maximum bytecode to permit for a contract
 
 	// Precompiled contract gas prices
-
-	TendermintHeaderValidateGas uint64 = 3000 // Gas for validate tendermiint consensus state
-	IAVLMerkleProofValidateGas  uint64 = 3000 // Gas for validate merkle proof
-
 	EcrecoverGas        uint64 = 3000 // Elliptic curve sender recovery gas price
 	Sha256BaseGas       uint64 = 60   // Base price for a SHA256 operation
 	Sha256PerWordGas    uint64 = 12   // Per-word price for a SHA256 operation

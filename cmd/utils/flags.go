@@ -108,6 +108,13 @@ func printHelp(out io.Writer, templ string, data interface{}) {
 // are the same for all commands.
 
 var (
+	// Genesis settings
+	GenesisFlag = cli.StringFlag{
+		Name:  "genesis",
+		Usage: "Path to genesis JSON file",
+		Value: "./genesis/devnet.json",
+	}
+
 	// General settings
 	DataDirFlag = DirectoryFlag{
 		Name:  "datadir",
