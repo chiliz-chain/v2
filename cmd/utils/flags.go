@@ -1774,12 +1774,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.Genesis = core.DefaultYoloV3GenesisBlock()
 	case ctx.GlobalBool(ChilizMainnetFlag.Name):
 		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 17243
+			cfg.NetworkId = 88888
 		}
 		cfg.Genesis = core.DefaultChilizMainnetGenesisBlock()
 	case ctx.GlobalBool(ChilizTestnetFlag.Name):
 		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
-			cfg.NetworkId = 17242
+			cfg.NetworkId = 88880
 		}
 		cfg.Genesis = core.DefaultChilizTestnetGenesisBlock()
 	case ctx.GlobalBool(DeveloperFlag.Name):

@@ -58,7 +58,7 @@ const (
 	initialBackOffTime   = uint64(1) // second
 	processBackOffTime   = uint64(1) // second
 
-	systemRewardPercent = 4 // it means 1/2^4 = 1/16 percentage of gas fee incoming will be distributed to system
+	systemRewardPercent = 3 // it means 1/3  percentage of gas fee incoming will be distributed to system
 
 )
 
@@ -1066,7 +1066,7 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 	doDistributeSysReward := state.GetBalance(common.HexToAddress(systemcontract.SystemRewardContract)).Cmp(maxSystemBalance) < 0
 	if doDistributeSysReward {
 		var rewards = new(big.Int)
-		rewards = rewards.Rsh(balance, systemRewardPercent)
+		rewards = rewards.Div(balance, big.NewInt(systemRewardPercent))
 		if rewards.Cmp(common.Big0) > 0 {
 			err := p.distributeToSystem(rewards, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 			if err != nil {
