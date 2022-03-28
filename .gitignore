@@ -56,3 +56,4 @@ geth
 /datadir
 build.cmd
 build.bash
+.deps

@@ -330,7 +330,7 @@ var (
 	}
 
 	ChilizMainnetChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(17243),
+		ChainID:             big.NewInt(88888),
 		HomesteadBlock:      big.NewInt(0),
 		EIP150Block:         big.NewInt(0),
 		EIP155Block:         big.NewInt(0),
@@ -351,7 +351,7 @@ var (
 	}
 
 	ChilizTestnetChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(17242),
+		ChainID:             big.NewInt(88880),
 		HomesteadBlock:      big.NewInt(0),
 		EIP150Block:         big.NewInt(0),
 		EIP155Block:         big.NewInt(0),
