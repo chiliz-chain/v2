@@ -39,6 +39,16 @@
 		* {
 			font-family: 'Circular Std Book', sans-serif;
 		}
+		a {
+			text-decoration: none;
+			color: #90caf9;
+			font-weight: 400;
+			cursor: pointer;
+		}
+		.footer-anchor {
+			font-size: 1.5rem;
+			line-height: 1.5;
+		}
 	</style>
 
 	<style>
@@ -79,6 +89,17 @@
 				<h1 style="text-align: center;">Testnet Faucet</h1>
 			</div>
 		</div>
+        <div class="row" style="margin-bottom: 16px; color: #fff">
+            <div class="col-lg-12">
+                <h3 style="text-align:center; font-weight: 500;">How does this work?</h3>
+                <h4 style="text-align:center; font-weight: 500;">To request test funds from the faucet</h4>
+                <ul style="font-size: 1.5rem;">
+                    <li>Paste your account in the text input below.</li>
+                    <li>To request CHZ, press the "Give me CHZ" button and click on the desired option.</li>
+                     <li>To request a fan token, press the "Fan tokens" button and click on the desired option. In order to see the token balance in Metamask you will have to import the token, for the instructions <a data-toggle="modal" data-target="#metamaskInstructionsModal" href="">click here.</a></li>
+                </ul>
+            </div>
+        </div>
 		<div class="row">
 			<div class="col-lg-8 col-lg-offset-2">
 				<div class="input-group">
@@ -92,7 +113,7 @@
 					<span class="input-group-btn">
 								<button class="btn btn-danger dropdown-toggle" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Fan tokens<i class="fa fa-caret-down" aria-hidden="true"></i></button>
 				        <ul class="dropdown-menu dropdown-menu-right"> {{range $symbol, $bep2eInfo := .Bep2eInfos}}
-								<li><a style="text-align: center;" onclick="symbol={{$symbol}}; {{if $.Recaptcha}}grecaptcha.execute(){{else}}submitBep2e({{$symbol}}){{end}}">{{$bep2eInfo.AmountStr}} {{$symbol}}</a></li>{{end}}
+								<li><a style="text-align: center;" onclick="symbol={{$symbol}}; {{if $.Recaptcha}}grecaptcha.execute(){{else}}submit({{$symbol}}){{end}}">{{$bep2eInfo.AmountStr}} {{$bep2eInfo.Name}} ({{$symbol}})</a></li>{{end}}
 				        </ul>
 							</span>
 				</div>{{if .Recaptcha}}
@@ -116,6 +137,13 @@
 				</div>
 			</div>
 		</div>
+		<div class="row" style="margin-top: 32px;">
+            <div class="col-lg-12" style="text-align:center;">
+                <ul style="list-style-type: none;">
+                    <li><a href="https://example.com" target="_blank" class="footer-anchor" style="">Mint NFTs</a></li>
+                </ul>
+            </div>
+        </div>
 	</div>
 </div>
 
@@ -250,4 +278,36 @@
 </script>{{if .Recaptcha}}
 <script src="https://www.google.com/recaptcha/api.js" async defer></script>{{end}}
 </body>
+
+<div class="modal fade" id="metamaskInstructionsModal" tabindex="-1" role="dialog">
+	<div class="modal-dialog" role="document">
+	  <div class="modal-content">
+		<div class="modal-header">
+		  <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+		  <h4 class="modal-title">How to Import Fan Token in Metamask</h4>
+		</div>
+		<div class="modal-body">
+		  <ul>
+            <li>Click the Metamask add-on icon.</li>
+            <li>Click "Import tokens" at the bottom of the assets list.</li>
+            <li>Switch to "Custom Token" tab.</li>
+            <li>
+                Fill the form with one of these parameters (Note: Only address is required, the rest should be populated automatically):
+                <ul>
+					{{range $symbol, $bep2eInfo := .Bep2eInfos}}
+						<li>
+							<strong>Symbol:</strong> {{$symbol}} <br/>
+							<strong>Address:</strong> {{$bep2eInfo.Contract}}
+						</li>
+					{{end}}
+                </ul>
+            </li>
+            <li>Click "Add Custom Token" to proceed.</li>
+            <li>Click "Import Tokens" and the token type will be added to your wallet.</li>
+		  </ul>
+		</div>
+	  </div><!-- /.modal-content -->
+	</div><!-- /.modal-dialog -->
+  </div><!-- /.modal -->
+
 </html>
