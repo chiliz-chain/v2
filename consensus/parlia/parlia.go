@@ -58,7 +58,7 @@ const (
 	initialBackOffTime   = uint64(1) // second
 	processBackOffTime   = uint64(1) // second
 
-	systemRewardPercent = 3 // it means 1/3  percentage of gas fee incoming will be distributed to system
+	systemRewardPercent = 5 // it means 1/3  percentage of gas fee incoming will be distributed to system
 
 )
 
