@@ -60,6 +60,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/nat"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/gorilla/websocket"
+	"github.com/joho/godotenv"
 )
 
 var (
@@ -111,6 +112,12 @@ func main() {
 	flag.Parse()
 	log.Root().SetHandler(log.LvlFilterHandler(log.Lvl(*logFlag), log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 
+	// Load .env
+	err := godotenv.Load()
+	if err != nil {
+		log.Crit("Error loading .env file", err)
+	}
+
 	// Construct the payout tiers
 	amounts := make([]string, *tiersFlag)
 	for i := 0; i < *tiersFlag; i++ {
@@ -122,23 +129,27 @@ func main() {
 		}
 	}
 	bep2eNumAmounts := make([]string, 0)
-	if bep2eAmounts != nil && len(*bep2eAmounts) > 0 {
-		bep2eNumAmounts = strings.Split(*bep2eAmounts, ",")
+	contractAmounts := os.Getenv("VOTE_TOKEN_AMOUNTS")
+	if len(contractAmounts) > 0 {
+		bep2eNumAmounts = strings.Split(contractAmounts, ",")
 	}
 
 	symbols := make([]string, 0)
-	if bep2eSymbols != nil && len(*bep2eSymbols) > 0 {
-		symbols = strings.Split(*bep2eSymbols, ",")
+	contractSymbols := os.Getenv("VOTE_TOKEN_SYMBOLS")
+	if len(contractSymbols) > 0 {
+		symbols = strings.Split(contractSymbols, ",")
 	}
 
 	names := make([]string, 0)
-	if bep2eNames != nil && len(*bep2eNames) > 0 {
-		names = strings.Split(*bep2eNames, ",")
+	contractNames := os.Getenv("VOTE_TOKEN_NAMES")
+	if len(contractNames) > 0 {
+		names = strings.Split(contractNames, ",")
 	}
 
 	contracts := make([]string, 0)
-	if bep2eContracts != nil && len(*bep2eContracts) > 0 {
-		contracts = strings.Split(*bep2eContracts, ",")
+	contractAddresses := os.Getenv("VOTE_TOKEN_CONTRACTS_ADDRESSES")
+	if len(contractAddresses) > 0 {
+		contracts = strings.Split(contractAddresses, ",")
 	}
 
 	if len(bep2eNumAmounts) != len(symbols) || len(symbols) != len(contracts) || len(contracts) != len(names) {
