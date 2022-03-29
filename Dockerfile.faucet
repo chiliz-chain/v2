@@ -10,6 +10,7 @@ FROM alpine:latest
 
 RUN apk add --no-cache ca-certificates curl jq tini
 COPY --from=builder /go-ethereum/build/bin/faucet /usr/local/bin/
+COPY --from=builder /go-ethereum/.env.faucet /.env
 
 WORKDIR /
 EXPOSE 8080
