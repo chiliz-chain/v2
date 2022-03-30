@@ -175,6 +175,7 @@ func main() {
 	faucetName := os.Getenv("FAUCET_NAME")
 	mintNftsUrl := os.Getenv("MINT_NFTS_URL")
 	devLandingUrl := os.Getenv("DEV_LANDING_URL")
+	chainName := os.Getenv("CHAIN_NAME")
 
 	// Load up and render the faucet website
 	tmpl, err := Asset("faucet.html")
@@ -191,6 +192,7 @@ func main() {
 		"FaucetName":    faucetName,
 		"MintNftsUrl":   mintNftsUrl,
 		"DevLandingUrl": devLandingUrl,
+		"ChainName":     chainName,
 	})
 	if err != nil {
 		log.Crit("Failed to render the faucet template", "err", err)

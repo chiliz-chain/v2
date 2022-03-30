@@ -86,7 +86,7 @@
 		</div>
 		<div class="row" style="margin-bottom: 16px;">
 			<div class="col-lg-12">
-				<h1 style="text-align: center;">Testnet Faucet</h1>
+				<h1 style="text-align: center;">{{.FaucetName}}</h1>
 			</div>
 		</div>
         <div class="row" style="margin-bottom: 16px; color: #fff">
@@ -94,7 +94,7 @@
                 <h3 style="text-align:center; font-weight: 500;">How does this work?</h3>
                 <h4 style="text-align:center; font-weight: 500;">To request test funds from the faucet</h4>
                 <ul style="font-size: 1.5rem;">
-                    <li>Paste your account in the text input below.</li>
+                    <li>Paste your address in the text input below.</li>
                     <li>To request CHZ, press the "Give me CHZ" button and click on the desired option.</li>
                      <li>To request a fan token, press the "Fan tokens" button and click on the desired option. In order to see the token balance in Metamask you will have to import the token, for the instructions <a data-toggle="modal" data-target="#metamaskInstructionsModal" href="">click here.</a></li>
                 </ul>
@@ -103,7 +103,7 @@
 		<div class="row">
 			<div class="col-lg-8 col-lg-offset-2">
 				<div class="input-group">
-					<input id="url" name="url" type="text" class="form-control" placeholder="Your Chiliz Chain 2.0 address...">
+					<input id="url" name="url" type="text" class="form-control" placeholder="Your Chiliz {{.ChainName}} address...">
 					<span class="input-group-btn">
 								<button class="btn btn-danger dropdown-toggle" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Give me CHZ	<i class="fa fa-caret-down" aria-hidden="true"></i></button>
 				        <ul class="dropdown-menu dropdown-menu-right">{{range $idx, $amount := .Amounts}}
@@ -140,7 +140,8 @@
 		<div class="row" style="margin-top: 32px;">
             <div class="col-lg-12" style="text-align:center;">
                 <ul style="list-style-type: none;">
-                    <li><a href="https://example.com" target="_blank" class="footer-anchor" style="">Mint NFTs</a></li>
+					<li style="display: inline; margin-right: 20px;"><a href="{{.DevLandingUrl}}" target="_blank" class="footer-anchor">Chiliz Chain 2.0</a></li>
+					<li style="display: inline;"><a href="{{.MintNftsUrl}}" target="_blank" class="footer-anchor">Mint NFTs</a></li>
                 </ul>
             </div>
         </div>
