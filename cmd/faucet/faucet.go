@@ -17,7 +17,7 @@
 // faucet is an Ether faucet backed by a light client.
 package main
 
-//go:generate go-bindata -nometadata -o website.go faucet.html
+//go:generate go-bindata -nometadata -o website.go faucet.html CircularStd-Book.otf
 //go:generate gofmt -w -s website.go
 
 import (
@@ -60,6 +60,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/nat"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/gorilla/websocket"
+	"github.com/joho/godotenv"
 )
 
 var (
@@ -86,6 +87,7 @@ var (
 
 	bep2eContracts     = flag.String("bep2eContracts", "", "the list of bep2p contracts")
 	bep2eSymbols       = flag.String("bep2eSymbols", "", "the symbol of bep2p tokens")
+	bep2eNames         = flag.String("bep2eNames", "", "the names of bep2p tokens")
 	bep2eAmounts       = flag.String("bep2eAmounts", "", "the amount of bep2p tokens")
 	fixGasPrice        = flag.Int64("faucet.fixedprice", 0, "Will use fixed gas price if specified")
 	twitterTokenFlag   = flag.String("twitter.token", "", "Bearer token to authenticate with the v2 Twitter API")
@@ -97,7 +99,7 @@ var (
 
 var (
 	ether        = new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
-	bep2eAbiJson = `[ { "anonymous": false, "inputs": [ { "indexed": true, "internalType": "address", "name": "owner", "type": "address" }, { "indexed": true, "internalType": "address", "name": "spender", "type": "address" }, { "indexed": false, "internalType": "uint256", "name": "value", "type": "uint256" } ], "name": "Approval", "type": "event" }, { "anonymous": false, "inputs": [ { "indexed": true, "internalType": "address", "name": "from", "type": "address" }, { "indexed": true, "internalType": "address", "name": "to", "type": "address" }, { "indexed": false, "internalType": "uint256", "name": "value", "type": "uint256" } ], "name": "Transfer", "type": "event" }, { "inputs": [], "name": "totalSupply", "outputs": [ { "internalType": "uint256", "name": "", "type": "uint256" } ], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "decimals", "outputs": [ { "internalType": "uint256", "name": "", "type": "uint256" } ], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "symbol", "outputs": [ { "internalType": "string", "name": "", "type": "string" } ], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "getOwner", "outputs": [ { "internalType": "address", "name": "", "type": "address" } ], "stateMutability": "view", "type": "function" }, { "inputs": [ { "internalType": "address", "name": "account", "type": "address" } ], "name": "balanceOf", "outputs": [ { "internalType": "uint256", "name": "", "type": "uint256" } ], "stateMutability": "view", "type": "function" }, { "inputs": [ { "internalType": "address", "name": "recipient", "type": "address" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "name": "transfer", "outputs": [ { "internalType": "bool", "name": "", "type": "bool" } ], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [ { "internalType": "address", "name": "_owner", "type": "address" }, { "internalType": "address", "name": "spender", "type": "address" } ], "name": "allowance", "outputs": [ { "internalType": "uint256", "name": "", "type": "uint256" } ], "stateMutability": "view", "type": "function" }, { "inputs": [ { "internalType": "address", "name": "spender", "type": "address" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "name": "approve", "outputs": [ { "internalType": "bool", "name": "", "type": "bool" } ], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [ { "internalType": "address", "name": "sender", "type": "address" }, { "internalType": "address", "name": "recipient", "type": "address" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "name": "transferFrom", "outputs": [ { "internalType": "bool", "name": "", "type": "bool" } ], "stateMutability": "nonpayable", "type": "function" } ]`
+	bep2eAbiJson = `[{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_from","type":"address"},{"name":"_to","type":"address[]"},{"name":"_values","type":"uint256[]"}],"name":"batchTransfer","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"name","type":"string"},{"name":"symbol","type":"string"},{"name":"decimals","type":"uint8"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"totalSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"sender","type":"address"},{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"name","type":"string"},{"name":"symbol","type":"string"},{"name":"decimals","type":"uint8"},{"name":"minters","type":"address[]"},{"name":"pausers","type":"address[]"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"addedValue","type":"uint256"}],"name":"increaseAllowance","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"unpause","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_survey","type":"address"}],"name":"unregisterSurvey","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"isPauser","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"name","type":"string"},{"name":"symbol","type":"string"},{"name":"decimals","type":"uint8"},{"name":"initialSupply","type":"uint256"},{"name":"initialHolder","type":"address"},{"name":"minters","type":"address[]"},{"name":"pausers","type":"address[]"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"offset","type":"uint256"},{"name":"count","type":"uint256"},{"name":"cap","type":"uint256"}],"name":"getCirculatingSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"version","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"pure","type":"function"},{"constant":true,"inputs":[],"name":"paused","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[],"name":"renouncePauser","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"getOwnersCount","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_survey","type":"address"}],"name":"registerSurvey","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"}],"name":"addPauser","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"pause","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"getOwner","outputs":[{"name":"tokenOwner","type":"address"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"}],"name":"addMinter","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"renounceMinter","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"},{"name":"value","type":"uint256"}],"name":"burn","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"subtractedValue","type":"uint256"}],"name":"decreaseAllowance","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"isMinter","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[{"name":"_survey","type":"address"}],"name":"isSurveyRegistered","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"sender","type":"address"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"anonymous":false,"inputs":[{"indexed":false,"name":"account","type":"address"}],"name":"Paused","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"account","type":"address"}],"name":"Unpaused","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"PauserAdded","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"PauserRemoved","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"MinterAdded","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"MinterRemoved","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Transfer","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"owner","type":"address"},{"indexed":true,"name":"spender","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Approval","type":"event"}]`
 )
 
 var (
@@ -110,33 +112,48 @@ func main() {
 	flag.Parse()
 	log.Root().SetHandler(log.LvlFilterHandler(log.Lvl(*logFlag), log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
 
+	// Load .env
+	err := godotenv.Load()
+	if err != nil {
+		log.Crit("Error loading .env file", err)
+	}
+
 	// Construct the payout tiers
 	amounts := make([]string, *tiersFlag)
 	for i := 0; i < *tiersFlag; i++ {
 		// Calculate the amount for the next tier and format it
 		amount := float64(*payoutFlag) * math.Pow(2.5, float64(i))
-		amounts[i] = fmt.Sprintf("%s BNBs", strconv.FormatFloat(amount, 'f', -1, 64))
+		amounts[i] = fmt.Sprintf("%s CHZs", strconv.FormatFloat(amount, 'f', -1, 64))
 		if amount == 1 {
 			amounts[i] = strings.TrimSuffix(amounts[i], "s")
 		}
 	}
 	bep2eNumAmounts := make([]string, 0)
-	if bep2eAmounts != nil && len(*bep2eAmounts) > 0 {
-		bep2eNumAmounts = strings.Split(*bep2eAmounts, ",")
+	contractAmounts := os.Getenv("VOTE_TOKEN_AMOUNTS")
+	if len(contractAmounts) > 0 {
+		bep2eNumAmounts = strings.Split(contractAmounts, ",")
 	}
 
 	symbols := make([]string, 0)
-	if bep2eSymbols != nil && len(*bep2eSymbols) > 0 {
-		symbols = strings.Split(*bep2eSymbols, ",")
+	contractSymbols := os.Getenv("VOTE_TOKEN_SYMBOLS")
+	if len(contractSymbols) > 0 {
+		symbols = strings.Split(contractSymbols, ",")
+	}
+
+	names := make([]string, 0)
+	contractNames := os.Getenv("VOTE_TOKEN_NAMES")
+	if len(contractNames) > 0 {
+		names = strings.Split(contractNames, ",")
 	}
 
 	contracts := make([]string, 0)
-	if bep2eContracts != nil && len(*bep2eContracts) > 0 {
-		contracts = strings.Split(*bep2eContracts, ",")
+	contractAddresses := os.Getenv("VOTE_TOKEN_CONTRACTS_ADDRESSES")
+	if len(contractAddresses) > 0 {
+		contracts = strings.Split(contractAddresses, ",")
 	}
 
-	if len(bep2eNumAmounts) != len(symbols) || len(symbols) != len(contracts) {
-		log.Crit("Length of bep2eContracts, bep2eSymbols, bep2eAmounts mismatch")
+	if len(bep2eNumAmounts) != len(symbols) || len(symbols) != len(contracts) || len(contracts) != len(names) {
+		log.Crit("Length of bep2eContracts, bep2eSymbols, bep2eAmounts, bep2eNames mismatch")
 	}
 
 	bep2eInfos := make(map[string]bep2eInfo, len(symbols))
@@ -145,14 +162,21 @@ func main() {
 		if !ok {
 			log.Crit("failed to parse bep2eAmounts")
 		}
-		amountStr := big.NewFloat(0).Quo(big.NewFloat(0).SetInt(n), big.NewFloat(0).SetInt64(params.Ether)).String()
+		amountStr := n.String()
 
 		bep2eInfos[s] = bep2eInfo{
 			Contract:  common.HexToAddress(contracts[idx]),
 			Amount:    *n,
 			AmountStr: amountStr,
+			Name:      names[idx],
 		}
 	}
+
+	faucetName := os.Getenv("FAUCET_NAME")
+	mintNftsUrl := os.Getenv("MINT_NFTS_URL")
+	devLandingUrl := os.Getenv("DEV_LANDING_URL")
+	chainName := os.Getenv("CHAIN_NAME")
+
 	// Load up and render the faucet website
 	tmpl, err := Asset("faucet.html")
 	if err != nil {
@@ -160,11 +184,15 @@ func main() {
 	}
 	website := new(bytes.Buffer)
 	err = template.Must(template.New("").Parse(string(tmpl))).Execute(website, map[string]interface{}{
-		"Network":    *netnameFlag,
-		"Amounts":    amounts,
-		"Recaptcha":  *captchaToken,
-		"NoAuth":     *noauthFlag,
-		"Bep2eInfos": bep2eInfos,
+		"Network":       *netnameFlag,
+		"Amounts":       amounts,
+		"Recaptcha":     *captchaToken,
+		"NoAuth":        *noauthFlag,
+		"Bep2eInfos":    bep2eInfos,
+		"FaucetName":    faucetName,
+		"MintNftsUrl":   mintNftsUrl,
+		"DevLandingUrl": devLandingUrl,
+		"ChainName":     chainName,
 	})
 	if err != nil {
 		log.Crit("Failed to render the faucet template", "err", err)
@@ -201,8 +229,12 @@ func main() {
 	if err := ks.Unlock(acc, pass); err != nil {
 		log.Crit("Failed to unlock faucet signer account", "err", err)
 	}
+	font, err := Asset("CircularStd-Book.otf")
+	if err != nil {
+		log.Crit("Failed to load the font", "err", err)
+	}
 	// Assemble and start the faucet light service
-	faucet, err := newFaucet(genesis, *ethPortFlag, enodes, *netFlag, *statsFlag, ks, website.Bytes(), bep2eInfos)
+	faucet, err := newFaucet(genesis, *ethPortFlag, enodes, *netFlag, *statsFlag, ks, website.Bytes(), font, bep2eInfos)
 	if err != nil {
 		log.Crit("Failed to start faucet", "err", err)
 	}
@@ -225,6 +257,7 @@ type bep2eInfo struct {
 	Contract  common.Address
 	Amount    big.Int
 	AmountStr string
+	Name      string
 }
 
 // faucet represents a crypto faucet backed by an Ethereum light client.
@@ -233,6 +266,7 @@ type faucet struct {
 	stack  *node.Node          // Ethereum protocol stack
 	client *ethclient.Client   // Client connection to the Ethereum chain
 	index  []byte              // Index page to serve up on the web
+	font   []byte              // Font to serve up on the web
 
 	keystore *keystore.KeyStore // Keystore containing the single signer
 	account  accounts.Account   // Account funding user faucet requests
@@ -259,7 +293,7 @@ type wsConn struct {
 	wlock sync.Mutex
 }
 
-func newFaucet(genesis *core.Genesis, port int, enodes []*enode.Node, network uint64, stats string, ks *keystore.KeyStore, index []byte, bep2eInfos map[string]bep2eInfo) (*faucet, error) {
+func newFaucet(genesis *core.Genesis, port int, enodes []*enode.Node, network uint64, stats string, ks *keystore.KeyStore, index []byte, font []byte, bep2eInfos map[string]bep2eInfo) (*faucet, error) {
 	// Assemble the raw devp2p protocol stack
 	stack, err := node.New(&node.Config{
 		Name:    "geth",
@@ -323,6 +357,7 @@ func newFaucet(genesis *core.Genesis, port int, enodes []*enode.Node, network ui
 		stack:      stack,
 		client:     client,
 		index:      index,
+		font:       font,
 		keystore:   ks,
 		account:    ks.Accounts()[0],
 		timeouts:   make(map[string]time.Time),
@@ -343,6 +378,7 @@ func (f *faucet) listenAndServe(port int) error {
 	go f.loop()
 
 	http.HandleFunc("/", f.webHandler)
+	http.HandleFunc("/font", f.fontHandler)
 	http.HandleFunc("/api", f.apiHandler)
 	http.HandleFunc("/faucet-smart/api", f.apiHandler)
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
@@ -352,6 +388,12 @@ func (f *faucet) listenAndServe(port int) error {
 // faucet website.
 func (f *faucet) webHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(f.index)
+}
+
+// webHandler handles all non-api requests, simply flattening and returning the
+// faucet website.
+func (f *faucet) fontHandler(w http.ResponseWriter, r *http.Request) {
+	w.Write(f.font)
 }
 
 // apiHandler handles requests for Ether grants and transaction statuses.
@@ -528,7 +570,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 		)
 		if timeout = f.timeouts[id]; time.Now().After(timeout) {
 			var tx *types.Transaction
-			if msg.Symbol == "BNB" {
+			if msg.Symbol == "CHZ" {
 				// User wasn't funded recently, create the funding transaction
 				amount := new(big.Int).Mul(big.NewInt(int64(*payoutFlag)), ether)
 				amount = new(big.Int).Mul(amount, new(big.Int).Exp(big.NewInt(5), big.NewInt(int64(msg.Tier)), nil))
