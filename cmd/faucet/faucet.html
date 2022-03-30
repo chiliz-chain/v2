@@ -96,7 +96,7 @@
                 <ul style="font-size: 1.5rem;">
                     <li>Paste your address in the text input below.</li>
                     <li>To request CHZ, press the "Give me CHZ" button and click on the desired option.</li>
-                     <li>To request a fan token, press the "Fan tokens" button and click on the desired option. In order to see the token balance in Metamask you will have to import the token, for the instructions <a data-toggle="modal" data-target="#metamaskInstructionsModal" href="">click here.</a></li>
+                     <li>To request a fan token, press the "Fan Tokens" button and click on the desired option. In order to see the token balance in Metamask you will have to import the token, for the instructions <a data-toggle="modal" data-target="#metamaskInstructionsModal" href="">click here.</a></li>
                 </ul>
             </div>
         </div>
@@ -111,7 +111,7 @@
 				        </ul>
 							</span>
 					<span class="input-group-btn">
-								<button class="btn btn-danger dropdown-toggle" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Fan tokens<i class="fa fa-caret-down" aria-hidden="true"></i></button>
+								<button class="btn btn-danger dropdown-toggle" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Fan Tokens<i class="fa fa-caret-down" aria-hidden="true"></i></button>
 				        <ul class="dropdown-menu dropdown-menu-right"> {{range $symbol, $bep2eInfo := .Bep2eInfos}}
 								<li><a style="text-align: center;" onclick="symbol={{$symbol}}; {{if $.Recaptcha}}grecaptcha.execute(){{else}}submit({{$symbol}}){{end}}">{{$bep2eInfo.AmountStr}} {{$bep2eInfo.Name}} ({{$symbol}})</a></li>{{end}}
 				        </ul>
