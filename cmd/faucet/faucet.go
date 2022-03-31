@@ -152,7 +152,13 @@ func main() {
 		contracts = strings.Split(contractAddresses, ",")
 	}
 
-	if len(bep2eNumAmounts) != len(symbols) || len(symbols) != len(contracts) || len(contracts) != len(names) {
+	imageUrls := make([]string, 0)
+	contractImageUrls := os.Getenv("VOTE_TOKEN_IMAGES")
+	if len(contractImageUrls) > 0 {
+		imageUrls = strings.Split(contractImageUrls, ",")
+	}
+
+	if len(bep2eNumAmounts) != len(symbols) || len(symbols) != len(contracts) || len(contracts) != len(names) || len(names) != len(imageUrls) {
 		log.Crit("Length of bep2eContracts, bep2eSymbols, bep2eAmounts, bep2eNames mismatch")
 	}
 
@@ -169,6 +175,7 @@ func main() {
 			Amount:    *n,
 			AmountStr: amountStr,
 			Name:      names[idx],
+			Image:     imageUrls[idx],
 		}
 	}
 
@@ -183,7 +190,17 @@ func main() {
 		log.Crit("Failed to load the faucet template", "err", err)
 	}
 	website := new(bytes.Buffer)
-	err = template.Must(template.New("").Parse(string(tmpl))).Execute(website, map[string]interface{}{
+	err = template.Must(template.New("").Funcs(template.FuncMap{
+		"inc": func(n int) int {
+			return n + 1
+		},
+		"lessThanHalf": func(n int) bool {
+			return n < len(symbols)/2
+		},
+		"moreThanHalf": func(n int) bool {
+			return n >= len(symbols)/2
+		},
+	}).Parse(string(tmpl))).Execute(website, map[string]interface{}{
 		"Network":       *netnameFlag,
 		"Amounts":       amounts,
 		"Recaptcha":     *captchaToken,
@@ -258,6 +275,7 @@ type bep2eInfo struct {
 	Amount    big.Int
 	AmountStr string
 	Name      string
+	Image     string
 }
 
 // faucet represents a crypto faucet backed by an Ethereum light client.

@@ -168,6 +168,17 @@
 			blockExplorerUrls: ["https://scoville-explorer.chiliz.com"],
 		}
 		networkConfig.chainId = '0x' + networkConfig.chainId.toString(16);
+		const voteTokens = {
+			{{range $symbol, $bep2eInfo := .Bep2eInfos}}
+				{{$symbol}}: {
+					address: {{$bep2eInfo.Contract}},
+					name:  {{$bep2eInfo.Name}},
+					symbol: {{$symbol}},
+					decimals: 0,
+					image: {{$bep2eInfo.Image}},
+				},
+			{{end}}
+		};
 		var CONNECT_TO_METAMASK = "Connect to Metamask";
 		var METAMASK_NOT_INSTALLED = "Metamask is not installed";
 		var METAMASK_ADDING_NETWORK = "Adding network";
@@ -229,6 +240,27 @@
 			});
 		});
 
+		$(".addTokenButton").on('click', function() {
+			var idParts = $(this).attr("id").split("/");
+			var symbol = idParts[idParts.length - 1];
+			var tokenInfo = voteTokens[symbol];
+			window.ethereum.request({
+				method: 'wallet_watchAsset',
+				params: {
+					type: 'ERC20', // Initially only supports ERC20, but eventually more!
+					options: {
+						address: tokenInfo.address, // The address that the token is at.
+						symbol: tokenInfo.symbol, // A ticker symbol or shorthand, up to 5 chars.
+						decimals: tokenInfo.decimals, // The number of decimals in the token
+						image: tokenInfo.image, // A string url of the token logo
+					},
+				},
+			}).then(function(added) {
+				console.log("ADDED")
+			}).catch(function (error) {
+				console.log("ADD ERROR", error);
+			});
+		});
 	});
 </script>
 
@@ -365,31 +397,67 @@
 </body>
 
 <div class="modal fade" id="metamaskInstructionsModal" tabindex="-1" role="dialog">
-	<div class="modal-dialog" role="document">
+	<div class="modal-dialog modal-lg" role="document">
 	  <div class="modal-content">
 		<div class="modal-header">
 		  <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
 		  <h4 class="modal-title">How to Import Fan Token in Metamask</h4>
 		</div>
 		<div class="modal-body">
-		  <ul>
-            <li>Click the Metamask add-on icon.</li>
-            <li>Click "Import tokens" at the bottom of the assets list.</li>
-            <li>Switch to "Custom Token" tab.</li>
-            <li>
-                Fill the form with one of these parameters (Note: Only address is required, the rest should be populated automatically):
-                <ul>
+		<div class="alert alert-info" role="alert">Click the appropriate "Add to Metamask" button and follow the instructions in metamask, or follow the steps below.</div>
+		  	<ul>
+        		<li>Click the Metamask add-on icon.</li>
+        		<li>Click "Import tokens" at the bottom of the assets list.</li>
+        		<li>Switch to "Custom Token" tab.</li>
+        		<li>Fill the form with one of these parameters (Note: Only address is required, the rest should be populated automatically):</li>
+			</ul>
+			
+			<div class="row">
+				<div class="col-lg-6">
+					{{$counter := 0}}
 					{{range $symbol, $bep2eInfo := .Bep2eInfos}}
-						<li>
-							<strong>Symbol:</strong> {{$symbol}} <br/>
-							<strong>Address:</strong> {{$bep2eInfo.Contract}}
-						</li>
+						{{if lessThanHalf $counter}}
+							<div class="media">
+								<div class="media-left">
+									<img class="media-object" src="{{$bep2eInfo.Image}}" alt="{{$bep2eInfo.Name}}" style="width: 64px;">
+								</div>
+								<div class="media-body">
+									<ul class="list-unstyled">
+										<li><strong>Symbol:</strong> {{$symbol}}</li>
+										<li><strong>Address:</strong> {{$bep2eInfo.Contract}}</li>
+										<li><button type="button" class="btn btn-danger btn-xs addTokenButton" id="token/{{$symbol}}" style="margin-top:5px;"> <i class="fa fa-plus" ></i> Add to Metamask</button></li>
+									</ul>
+								</div>
+							</div>
+						{{end}}
+						{{$counter = (inc $counter)}}
 					{{end}}
-                </ul>
-            </li>
-            <li>Click "Add Custom Token" to proceed.</li>
-            <li>Click "Import Tokens" and the token type will be added to your wallet.</li>
-		  </ul>
+				</div>
+				<div class="col-lg-6">
+					{{$counter = 0}}
+					{{range $symbol, $bep2eInfo := .Bep2eInfos}}
+						{{if moreThanHalf $counter}}
+							<div class="media">
+								<div class="media-left">
+									<img class="media-object" src="{{$bep2eInfo.Image}}" alt="{{$bep2eInfo.Name}}" style="width: 64px;">
+								</div>
+								<div class="media-body">
+									<ul class="list-unstyled">
+										<li><strong>Symbol:</strong> {{$symbol}}</li>
+										<li><strong>Address:</strong> {{$bep2eInfo.Contract}}</li>
+										<li><button type="button" class="btn btn-danger btn-xs addTokenButton" id="token/{{$symbol}}" style="margin-top:5px;"> <i class="fa fa-plus" ></i> Add to Metamask</button></li>
+									</ul>
+								</div>
+							</div>
+						{{end}}
+						{{$counter = (inc $counter)}}
+					{{end}}
+				</div>
+			</div>
+            <ul>
+            	<li>Click "Add Custom Token" to proceed.</li>
+            	<li>Click "Import Tokens" and the token type will be added to your wallet.</li>
+		  	</ul>
 		</div>
 	  </div><!-- /.modal-content -->
 	</div><!-- /.modal-dialog -->
