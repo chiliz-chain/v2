@@ -90,6 +90,11 @@
 				<h1 style="text-align: center;">{{.FaucetName}}</h1>
 			</div>
 		</div>
+		<div class="row" style="margin-bottom: 16px;">
+			<div class="col-lg-12">
+				<button type="button" class="btn btn-danger" style="display: block; margin-left: auto; margin-right: auto;" id="connectMetamaskButton"> <i class="fa fa-circle-o" ></i> Connect to Metamask</button>
+			</div>
+		</div>
         <div class="row" style="margin-bottom: 16px; color: #fff">
             <div class="col-lg-12">
                 <h3 style="text-align:center; font-weight: 500;">How does this work?</h3>
@@ -148,6 +153,84 @@
         </div>
 	</div>
 </div>
+
+<script>
+	$(document).ready(function() {
+		var networkConfig = {
+			chainName: "Scoville",
+			chainId: 88880,
+			nativeCurrency: {
+				name: "Chiliz",
+				symbol: "CHZ",
+				decimals: 18
+			},
+			rpcUrls: ["https://scoville-rpc.chiliz.com"],
+			blockExplorerUrls: ["https://scoville-explorer.chiliz.com"],
+		}
+		networkConfig.chainId = '0x' + networkConfig.chainId.toString(16);
+		var CONNECT_TO_METAMASK = "Connect to Metamask";
+		var METAMASK_NOT_INSTALLED = "Metamask is not installed";
+		var METAMASK_ADDING_NETWORK = "Adding network";
+		var METAMASK_CONNECTED = "Connected";
+
+		function _getAddressForDisplay(address) {
+    		return address.slice(0, 5) + '...' + address.slice(address.length - 4);
+		}
+
+		function getMetamaskButtonHTML(text, status, address) {
+			var icon = '';
+			if (status === 'DISCONNECTED') {
+				icon = '<i class="fa fa-circle-o"></i>';
+			} else if (status === 'CONNECTING') {
+				icon = '<i class="fa fa-circle" style="color: rgb(255, 167, 38);"></i>';
+			} else if (status === 'CONNECTED') {
+				icon = '<i class="fa fa-circle text-success" style="color: rgb(102, 187, 106);"></i>';
+			}
+			var result = icon + ' ' + text;
+			if (address && address.length > 0) {
+				result += ' (' + _getAddressForDisplay(address) + ')';
+			}
+
+			return result;
+		}
+
+    	if (typeof window.ethereum === 'undefined') {
+			const connectMetamaskButton = $("#connectMetamaskButton");
+			connectMetamaskButton.html(getMetamaskButtonHTML(METAMASK_NOT_INSTALLED, 'DISCONNECTED'));
+			connectMetamaskButton.toggleClass("disabled");
+			console.log('MetaMask is not installed!');
+			return;
+		}
+
+		function handleChainChange() {
+			window.ethereum.request({ method: 'eth_requestAccounts' }).then(function (accounts) {
+				$("#connectMetamaskButton").html(getMetamaskButtonHTML(METAMASK_CONNECTED, 'CONNECTED', accounts[0]));
+				console.log("CONNECTED", accounts[0]);
+			});
+		}
+
+		$("#connectMetamaskButton").on('click', function() {
+			// try to switch to ccv2
+			window.ethereum.request({
+				method: 'wallet_switchEthereumChain',
+				params: [{ chainId: networkConfig.chainId }],
+			}).then(handleChainChange)
+			.catch(function (error) {
+				if (error.code === 4902) {
+					$("#connectMetamaskButton").html(getMetamaskButtonHTML(METAMASK_ADDING_NETWORK, 'CONNECTING'));
+					window.ethereum.request({
+						method: 'wallet_addEthereumChain',
+						params: [networkConfig],
+					}).then(handleChainChange)
+					.catch(function (error) {
+						console.log('An error has occured!', error);
+					});
+				}
+			});
+		});
+
+	});
+</script>
 
 <script>
 	// Global variables to hold the current status of the faucet
