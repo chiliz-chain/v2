@@ -213,7 +213,11 @@
 			});
 		}
 
-		function requestSwitchNetwork() {
+		function requestChainId() {
+			return window.ethereum.request({ method: 'eth_chainId' });
+		}
+
+		function requestSwitchNetwork() {			
 			// try to switch to ccv2
 			return window.ethereum.request({
 				method: 'wallet_switchEthereumChain',
@@ -266,8 +270,25 @@
 		}
 
 		$("#connectMetamaskButton").on('click', function() {
-			return requestSwitchNetwork()
+			// console.log('click', currentChainId, networkConfig.chainId)
+
+			if(!currentChainId) {
+				return requestChainId().then(chainId => {
+					currentChainId = chainId;
+					if (currentChainId === networkConfig.chainId) {
+						updateAddTokenButtonHTML("CONNECTED");
+						return requestAccounts().then(handleAccountsResponse);
+					} else {
+						return requestSwitchNetwork();
+					}
+				})
 				.catch(handleError);
+			} else if (currentChainId === networkConfig.chainId) {
+				updateAddTokenButtonHTML("CONNECTED");
+				return requestAccounts().then(handleAccountsResponse).catch(handleError);
+			} else {
+				return requestSwitchNetwork().catch(handleError);
+			}
 		});
 
 		$(".addTokenButton").on('click', function() {
@@ -277,10 +298,12 @@
 			return requestAddToken(tokenInfo).catch(handleError);
 		});
 
+		
+
 		window.ethereum.on('connect', (connectInfo) => {
-			console.log(connectInfo)
 			currentChainId = connectInfo.chainId;
-			if (connectInfo.chainId === networkConfig.chainId) {
+			// console.log('connect:', connectInfo, currentChainId)
+			if (currentChainId === networkConfig.chainId) {
 				updateAddTokenButtonHTML("CONNECTED");
 				return requestAccounts()
 					.then(handleAccountsResponse)
@@ -301,7 +324,7 @@
 			if (chainId === currentChainId) {
 				return;
 			}
-			console.log('current', currentChainId, 'new', chainId)
+			// console.log('chainChanged ', 'current', currentChainId, 'new', chainId)
 			currentChainId = chainId;
 
 			if (chainId !== networkConfig.chainId) {
