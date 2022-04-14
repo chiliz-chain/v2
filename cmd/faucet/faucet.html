@@ -53,12 +53,6 @@
 	</style>
 
 	<style>
-		.vertical-center {
-			min-height: 100%;
-			min-height: 100vh;
-			display: flex;
-			align-items: center;
-		}
 		.progress {
 			position: relative;
 		}
@@ -76,8 +70,7 @@
 </head>
 
 <body>
-<div class="vertical-center">
-	<div class="container">
+	<div class="container" style="margin-top:40px;">
 		<div class="row" style="margin-bottom: 32px;">
 			<div class="col-lg-4"></div>
 			<div class="col-lg-4">
@@ -147,7 +140,205 @@
             </div>
         </div>
 	</div>
-</div>
+
+<script>
+	$(document).ready(function() {
+		var networkConfig = {
+			chainName: "Scoville",
+			chainId: 88880,
+			nativeCurrency: {
+				name: "Chiliz",
+				symbol: "CHZ",
+				decimals: 18
+			},
+			rpcUrls: ["https://scoville-rpc.chiliz.com"],
+			blockExplorerUrls: ["https://scoville-explorer.chiliz.com"],
+		}
+		networkConfig.chainId = '0x' + networkConfig.chainId.toString(16);
+		const voteTokens = {
+			{{range $symbol, $bep2eInfo := .Bep2eInfos}}
+				{{$symbol}}: {
+					address: {{$bep2eInfo.Contract}},
+					name:  {{$bep2eInfo.Name}},
+					symbol: {{$symbol}},
+					decimals: 0,
+					image: {{$bep2eInfo.Image}},
+				},
+			{{end}}
+		};
+		var currentChainId;
+		var CONNECT_TO_METAMASK = "Connect to Metamask";
+		var METAMASK_NOT_INSTALLED = "Metamask is not installed";
+		var METAMASK_ADDING_NETWORK = "Adding network";
+		var METAMASK_CONNECTED = "Connected";
+
+		function _getAddressForDisplay(address) {
+    		return address.slice(0, 5) + '...' + address.slice(address.length - 4);
+		}
+
+		function getMetamaskButtonHTML(text, status, address) {
+			var icon = '';
+			if (status === 'DISCONNECTED') {
+				icon = '<i class="fa fa-circle-o"></i>';
+			} else if (status === 'CONNECTING') {
+				icon = '<i class="fa fa-circle" style="color: rgb(255, 167, 38);"></i>';
+			} else if (status === 'CONNECTED') {
+				icon = '<i class="fa fa-circle text-success" style="color: rgb(102, 187, 106);"></i>';
+			}
+			var result = icon + ' ' + text;
+			if (address && address.length > 0) {
+				result += ' (' + _getAddressForDisplay(address) + ')';
+			}
+
+			return result;
+		}
+
+		function updateAddTokenButtonHTML(status) {
+			var icon = '<i class="fa fa-plus" ></i>';
+			var text = '';
+			if (status === 'DISCONNECTED' || status === 'CONNECTING') {
+				text = 'Please, connect to Metamask';
+				$('.addTokenButton').addClass('disabled');	
+			} else if (status === 'CONNECTED') {
+				text = 'Add to Metamask'; 
+				$('.addTokenButton').removeClass('disabled');
+			}
+			$(".addTokenButton").html(icon + ' ' + text);
+		}
+
+		function requestAddChain() {
+			return window.ethereum.request({
+				method: 'wallet_addEthereumChain',
+				params: [networkConfig],
+			});
+		}
+
+		function requestChainId() {
+			return window.ethereum.request({ method: 'eth_chainId' });
+		}
+
+		function requestSwitchNetwork() {			
+			// try to switch to ccv2
+			return window.ethereum.request({
+				method: 'wallet_switchEthereumChain',
+				params: [{ chainId: networkConfig.chainId }],
+			});
+		}
+
+		function requestAddToken(tokenInfo) {
+			return window.ethereum.request({
+				method: 'wallet_watchAsset',
+				params: {
+					type: 'ERC20', // Initially only supports ERC20, but eventually more!
+					options: {
+						address: tokenInfo.address, // The address that the token is at.
+						symbol: tokenInfo.symbol, // A ticker symbol or shorthand, up to 5 chars.
+						decimals: tokenInfo.decimals, // The number of decimals in the token
+						image: tokenInfo.image, // A string url of the token logo
+					},
+				},
+			});
+		}
+
+		function requestAccounts() {
+			return window.ethereum.request({ method: 'eth_requestAccounts' });
+		}
+
+		function handleAccountsResponse(accounts) {
+			$("#connectMetamaskButton").html(getMetamaskButtonHTML(METAMASK_CONNECTED, 'CONNECTED', accounts[0]));
+		}
+
+		function handleError(error) {
+			if (error.code === 4902) {
+				// Network switch error
+				$("#connectMetamaskButton").html(getMetamaskButtonHTML(METAMASK_ADDING_NETWORK, 'CONNECTING'));
+				return requestAddChain().then(requestAccounts).then(handleAccountsResponse).catch(handleError);
+			} else if (error.code === 4001) {
+				// User rejected operation
+				$("#connectMetamaskButton").html(getMetamaskButtonHTML(CONNECT_TO_METAMASK, 'DISCONNECTED'));
+			} else {
+				console.log('An error has occured:', error);
+			}
+		}
+
+    	if (typeof window.ethereum === 'undefined') {
+			const connectMetamaskButton = $("#connectMetamaskButton");
+			connectMetamaskButton.html(getMetamaskButtonHTML(METAMASK_NOT_INSTALLED, 'DISCONNECTED'));
+			connectMetamaskButton.toggleClass("disabled");
+			console.log('MetaMask is not installed!');
+			return;
+		}
+
+		$("#connectMetamaskButton").on('click', function() {
+			// console.log('click', currentChainId, networkConfig.chainId)
+
+			if(!currentChainId) {
+				return requestChainId().then(chainId => {
+					currentChainId = chainId;
+					if (currentChainId === networkConfig.chainId) {
+						updateAddTokenButtonHTML("CONNECTED");
+						return requestAccounts().then(handleAccountsResponse);
+					} else {
+						return requestSwitchNetwork();
+					}
+				})
+				.catch(handleError);
+			} else if (currentChainId === networkConfig.chainId) {
+				updateAddTokenButtonHTML("CONNECTED");
+				return requestAccounts().then(handleAccountsResponse).catch(handleError);
+			} else {
+				return requestSwitchNetwork().catch(handleError);
+			}
+		});
+
+		$(".addTokenButton").on('click', function() {
+			var idParts = $(this).attr("id").split("/");
+			var symbol = idParts[idParts.length - 1];
+			var tokenInfo = voteTokens[symbol];
+			return requestAddToken(tokenInfo).catch(handleError);
+		});
+
+		
+
+		window.ethereum.on('connect', (connectInfo) => {
+			currentChainId = connectInfo.chainId;
+			// console.log('connect:', connectInfo, currentChainId)
+			if (currentChainId === networkConfig.chainId) {
+				updateAddTokenButtonHTML("CONNECTED");
+				return requestAccounts()
+					.then(handleAccountsResponse)
+					.catch(handleError);
+			}
+		});
+
+		window.ethereum.on('accountsChanged', (accounts) => {
+			if (currentChainId !== networkConfig.chainId) {
+				updateAddTokenButtonHTML("DISCONNECTED");
+				return;
+			}
+			updateAddTokenButtonHTML("CONNECTED");
+			return handleAccountsResponse(accounts);
+		});
+
+		window.ethereum.on('chainChanged', (chainId) => {
+			if (chainId === currentChainId) {
+				return;
+			}
+			// console.log('chainChanged ', 'current', currentChainId, 'new', chainId)
+			currentChainId = chainId;
+
+			if (chainId !== networkConfig.chainId) {
+				updateAddTokenButtonHTML("DISCONNECTED");
+				$("#connectMetamaskButton").html(getMetamaskButtonHTML(CONNECT_TO_METAMASK, 'DISCONNECTED'));
+			} else {
+				updateAddTokenButtonHTML("CONNECTED");
+				return requestAccounts()
+					.then(handleAccountsResponse)
+					.catch(handleError);
+			}
+		});
+	});
+</script>
 
 <script>
 	// Global variables to hold the current status of the faucet
@@ -282,31 +473,72 @@
 </body>
 
 <div class="modal fade" id="metamaskInstructionsModal" tabindex="-1" role="dialog">
-	<div class="modal-dialog" role="document">
+	<div class="modal-dialog modal-lg" role="document">
 	  <div class="modal-content">
 		<div class="modal-header">
 		  <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
 		  <h4 class="modal-title">How to Import Fan Token in Metamask</h4>
 		</div>
 		<div class="modal-body">
-		  <ul>
-            <li>Click the Metamask add-on icon.</li>
-            <li>Click "Import tokens" at the bottom of the assets list.</li>
-            <li>Switch to "Custom Token" tab.</li>
-            <li>
-                Fill the form with one of these parameters (Note: Only address is required, the rest should be populated automatically):
-                <ul>
+		<div class="alert alert-info" role="alert">Connect to Metamask and click the appropriate "Add to Metamask" button and follow the instructions in metamask, or follow the steps below.</div>
+			<div class="row" style="margin-bottom: 16px;">
+				<div class="col-lg-12">
+					<button type="button" class="btn btn-danger" style="display: block; margin-left: auto; margin-right: auto;" id="connectMetamaskButton"> <i class="fa fa-circle-o" ></i> Connect to Metamask</button>
+				</div>
+			</div>
+		  	<ul>
+        		<li>Click the Metamask add-on icon.</li>
+        		<li>Click "Import tokens" at the bottom of the assets list.</li>
+        		<li>Switch to "Custom Token" tab.</li>
+        		<li>Fill the form with one of these parameters (Note: Only address is required, the rest should be populated automatically):</li>
+			</ul>
+			
+			<div class="row">
+				<div class="col-lg-6">
+					{{$counter := 0}}
 					{{range $symbol, $bep2eInfo := .Bep2eInfos}}
-						<li>
-							<strong>Symbol:</strong> {{$symbol}} <br/>
-							<strong>Address:</strong> {{$bep2eInfo.Contract}}
-						</li>
+						{{if lessThanHalf $counter}}
+							<div class="media">
+								<div class="media-left">
+									<img class="media-object" src="{{$bep2eInfo.Image}}" alt="{{$bep2eInfo.Name}}" style="width: 64px;">
+								</div>
+								<div class="media-body">
+									<ul class="list-unstyled">
+										<li><strong>Symbol:</strong> {{$symbol}}</li>
+										<li><strong>Address:</strong> {{$bep2eInfo.Contract}}</li>
+										<li><button type="button" class="btn btn-danger btn-xs disabled addTokenButton" id="token/{{$symbol}}" style="margin-top:5px;"> <i class="fa fa-plus" ></i> Please, connect to Metamask</button></li>
+									</ul>
+								</div>
+							</div>
+						{{end}}
+						{{$counter = (inc $counter)}}
 					{{end}}
-                </ul>
-            </li>
-            <li>Click "Add Custom Token" to proceed.</li>
-            <li>Click "Import Tokens" and the token type will be added to your wallet.</li>
-		  </ul>
+				</div>
+				<div class="col-lg-6">
+					{{$counter = 0}}
+					{{range $symbol, $bep2eInfo := .Bep2eInfos}}
+						{{if moreThanHalf $counter}}
+							<div class="media">
+								<div class="media-left">
+									<img class="media-object" src="{{$bep2eInfo.Image}}" alt="{{$bep2eInfo.Name}}" style="width: 64px;">
+								</div>
+								<div class="media-body">
+									<ul class="list-unstyled">
+										<li><strong>Symbol:</strong> {{$symbol}}</li>
+										<li><strong>Address:</strong> {{$bep2eInfo.Contract}}</li>
+										<li><button type="button" class="btn btn-danger btn-xs disabled addTokenButton" id="token/{{$symbol}}" style="margin-top:5px;"> <i class="fa fa-plus" ></i> Please, connect to Metamask</button></li>
+									</ul>
+								</div>
+							</div>
+						{{end}}
+						{{$counter = (inc $counter)}}
+					{{end}}
+				</div>
+			</div>
+            <ul>
+            	<li>Click "Add Custom Token" to proceed.</li>
+            	<li>Click "Import Tokens" and the token type will be added to your wallet.</li>
+		  	</ul>
 		</div>
 	  </div><!-- /.modal-content -->
 	</div><!-- /.modal-dialog -->
