@@ -81,7 +81,7 @@ var (
 
 	captchaToken  = flag.String("captcha.token", "", "Recaptcha site key to authenticate client side")
 	captchaSecret = flag.String("captcha.secret", "", "Recaptcha secret key to authenticate server side")
-	captchaThreshold = flag.Float64("captcha.threshold", 0.5, "Recaptcha min threshhold to pass")
+	captchaThreshold = flag.Float64("captcha.threshold", 0.5, "Recaptcha min threshold to pass")
 
 	noauthFlag = flag.Bool("noauth", false, "Enables funding requests without authentication")
 	logFlag    = flag.Int("loglevel", 3, "Log level to use for Ethereum and the faucet")
