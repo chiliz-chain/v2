@@ -81,6 +81,7 @@ var (
 
 	captchaToken  = flag.String("captcha.token", "", "Recaptcha site key to authenticate client side")
 	captchaSecret = flag.String("captcha.secret", "", "Recaptcha secret key to authenticate server side")
+	captchaThreshold = flag.Float64("captcha.threshold", 0.5, "Recaptcha min threshold to pass")
 
 	noauthFlag = flag.Bool("noauth", false, "Enables funding requests without authentication")
 	logFlag    = flag.Int("loglevel", 3, "Log level to use for Ethereum and the faucet")
@@ -530,6 +531,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			var result struct {
 				Success bool            `json:"success"`
+				Score float64           `json:"score"`
 				Errors  json.RawMessage `json:"error-codes"`
 			}
 			err = json.NewDecoder(res.Body).Decode(&result)
@@ -541,7 +543,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			}
-			if !result.Success {
+			if !result.Success || result.Score < *captchaThreshold {
 				log.Warn("Captcha verification failed", "err", string(result.Errors))
 				//lint:ignore ST1005 it's funny and the robot won't mind
 				if err = sendError(wsconn, errors.New("Beep-bop, you're a robot!")); err != nil {
@@ -549,6 +551,8 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				continue
+			} else {
+			    log.Info("Captcha score received", "score", result.Score)
 			}
 		}
 		// Retrieve the Ethereum address to fund, the requesting user and a profile picture
