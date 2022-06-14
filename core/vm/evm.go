@@ -492,7 +492,7 @@ func (evm *EVM) create(caller ContractRef, codeAndHash *codeAndHash, gas uint64,
 
 	// Make sure it's allowed to deploy smart contracts
 	var err error
-	gas, err = applyChilizDeploymentEvmHook(evm, address, gas)
+	gas, err = applyChilizDeploymentEvmHook(evm, caller, address, gas)
 	if err != nil {
 		return nil, common.Address{}, gas, err
 	}
