@@ -60,6 +60,8 @@ var (
 	// flags that configure the node
 	nodeFlags = []cli.Flag{
 		utils.GenesisFlag,
+		utils.ChilizTestnetFlag,
+		utils.ChilizMainnetFlag,
 		utils.IdentityFlag,
 		utils.UnlockedAccountFlag,
 		utils.PasswordFileFlag,

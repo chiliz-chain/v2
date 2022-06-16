@@ -27,7 +27,12 @@ func applyChilizDeploymentEvmHook(evm *EVM, caller ContractRef, addr common.Addr
 	if systemcontract.IsSystemContract(addr) {
 		return gas, nil
 	}
-	input, err := systemcontract.EvmHooksAbi.Pack("registerDeployedContract", caller.Address(), addr)
+	var input []byte
+	if evm.chainRules.HasDeployOrigin {
+		input, err = systemcontract.EvmHooksAbi.Pack("registerDeployedContract", evm.TxContext.Origin, addr)
+	} else {
+		input, err = systemcontract.EvmHooksAbi.Pack("registerDeployedContract", caller.Address(), addr)
+	}
 	if err != nil {
 		return gas, ErrNotAllowed
 	}

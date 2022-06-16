@@ -38,8 +38,8 @@ var (
 	RialtoGenesisHash = common.HexToHash("0xaabe549bfa85c84f7aee9da7010b97453ad686f2c2d8ce00503d1a00c72cad54")
 	YoloV3GenesisHash = common.HexToHash("0xf1f2876e8500c77afcc03228757b39477eceffccf645b734967fe3c7e16967b7")
 
-	ChilizMainnetGenesisHash = common.HexToHash("0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b")
-	ChilizTestnetGenesisHash = common.HexToHash("0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b")
+	ChilizScovilleGenesisHash = common.HexToHash("0xa148378fbfd7562cd43c8622d20ad056b735fdc0f968f56d0033294c33ededf2")
+	ChilizMainnetGenesisHash  = common.HexToHash("")
 )
 
 // TrustedCheckpoints associates each known checkpoint with the genesis hash of
@@ -329,48 +329,6 @@ var (
 		},
 	}
 
-	ChilizMainnetChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(88888),
-		HomesteadBlock:      big.NewInt(0),
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		MuirGlacierBlock:    big.NewInt(0),
-		RamanujanBlock:      big.NewInt(0),
-		NielsBlock:          big.NewInt(0),
-		MirrorSyncBlock:     big.NewInt(0),
-		BrunoBlock:          big.NewInt(0),
-		Parlia: &ParliaConfig{
-			Period: 3,
-			Epoch:  200,
-		},
-	}
-
-	ChilizTestnetChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(88880),
-		HomesteadBlock:      big.NewInt(0),
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		MuirGlacierBlock:    big.NewInt(0),
-		RamanujanBlock:      big.NewInt(0),
-		NielsBlock:          big.NewInt(0),
-		MirrorSyncBlock:     big.NewInt(0),
-		BrunoBlock:          big.NewInt(0),
-		Parlia: &ParliaConfig{
-			Period: 3,
-			Epoch:  200,
-		},
-	}
-
 	// AllEthashProtocolChanges contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers into the Ethash consensus.
 	//
@@ -532,8 +490,9 @@ type ChainConfig struct {
 	MuirGlacierBlock    *big.Int `json:"muirGlacierBlock,omitempty"`    // Eip-2384 (bomb delay) switch block (nil = no fork, 0 = already activated)
 	BerlinBlock         *big.Int `json:"berlinBlock,omitempty"`         // Berlin switch block (nil = no fork, 0 = already on berlin)
 
-	RuntimeUpgradeBlock *big.Int `json:"RuntimeUpgradeBlock,omitempty"`
-	DeployerProxyBlock  *big.Int `json:"DeployerProxyBlock,omitempty"`
+	// Chiliz V2 forks
+	RuntimeUpgradeBlock *big.Int `json:"runtimeUpgradeBlock,omitempty"`
+	DeployOriginBlock   *big.Int `json:"deployOriginBlock,omitempty"`
 
 	YoloV3Block   *big.Int `json:"yoloV3Block,omitempty"`   // YOLO v3: Gas repricings TODO @holiman add EIP references
 	EWASMBlock    *big.Int `json:"ewasmBlock,omitempty"`    // EWASM switch block (nil = no fork, 0 = already activated)	RamanujanBlock      *big.Int `json:"ramanujanBlock,omitempty" toml:",omitempty"`      // ramanujanBlock switch block (nil = no fork, 0 = already activated)
@@ -723,14 +682,6 @@ func (c *ChainConfig) IsEWASM(num *big.Int) bool {
 	return isForked(c.EWASMBlock, num)
 }
 
-func (c *ChainConfig) HasRuntimeUpgrade(num *big.Int) bool {
-	return isForked(c.RuntimeUpgradeBlock, num)
-}
-
-func (c *ChainConfig) HasDeployerProxy(num *big.Int) bool {
-	return isForked(c.DeployerProxyBlock, num)
-}
-
 // CheckCompatible checks whether scheduled fork transitions have been imported
 // with a mismatching chain configuration.
 func (c *ChainConfig) CheckCompatible(newcfg *ChainConfig, height uint64) *ConfigCompatError {
@@ -911,7 +862,9 @@ type Rules struct {
 	IsHomestead, IsEIP150, IsEIP155, IsEIP158               bool
 	IsByzantium, IsConstantinople, IsPetersburg, IsIstanbul bool
 	IsBerlin, IsCatalyst                                    bool
-	HasRuntimeUpgrade, HasDeployerProxy                     bool
+	// features
+	HasRuntimeUpgrade bool
+	HasDeployOrigin   bool
 }
 
 // Rules ensures c's ChainID is not nil.
@@ -921,18 +874,19 @@ func (c *ChainConfig) Rules(num *big.Int) Rules {
 		chainID = new(big.Int)
 	}
 	return Rules{
-		ChainID:           new(big.Int).Set(chainID),
-		IsHomestead:       c.IsHomestead(num),
-		IsEIP150:          c.IsEIP150(num),
-		IsEIP155:          c.IsEIP155(num),
-		IsEIP158:          c.IsEIP158(num),
-		IsByzantium:       c.IsByzantium(num),
-		IsConstantinople:  c.IsConstantinople(num),
-		IsPetersburg:      c.IsPetersburg(num),
-		IsIstanbul:        c.IsIstanbul(num),
-		IsBerlin:          c.IsBerlin(num),
-		IsCatalyst:        c.IsCatalyst(num),
-		HasRuntimeUpgrade: c.HasRuntimeUpgrade(num),
-		HasDeployerProxy:  c.HasDeployerProxy(num),
+		ChainID:          new(big.Int).Set(chainID),
+		IsHomestead:      c.IsHomestead(num),
+		IsEIP150:         c.IsEIP150(num),
+		IsEIP155:         c.IsEIP155(num),
+		IsEIP158:         c.IsEIP158(num),
+		IsByzantium:      c.IsByzantium(num),
+		IsConstantinople: c.IsConstantinople(num),
+		IsPetersburg:     c.IsPetersburg(num),
+		IsIstanbul:       c.IsIstanbul(num),
+		IsBerlin:         c.IsBerlin(num),
+		IsCatalyst:       c.IsCatalyst(num),
+		// features
+		HasRuntimeUpgrade: isForked(c.RuntimeUpgradeBlock, num),
+		HasDeployOrigin:   isForked(c.DeployOriginBlock, num),
 	}
 }
