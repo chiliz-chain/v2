@@ -112,7 +112,6 @@ var (
 	GenesisFlag = cli.StringFlag{
 		Name:  "genesis",
 		Usage: "Path to genesis JSON file",
-		Value: "./genesis/devnet.json",
 	}
 
 	// General settings
@@ -201,8 +200,8 @@ var (
 		Usage: "Chiliz network: pre-configured proof-of-work test network",
 	}
 	ChilizTestnetFlag = cli.BoolFlag{
-		Name:  "chiliztestnet",
-		Usage: "Chiliz network: pre-configured proof-of-work test network",
+		Name:  "scoville",
+		Usage: "Chiliz testnet network",
 	}
 	DeveloperFlag = cli.BoolFlag{
 		Name:  "dev",
@@ -939,7 +938,7 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 	case ctx.GlobalBool(ChilizMainnetFlag.Name):
 		urls = params.ChilizMainnetBootnodes
 	case ctx.GlobalBool(ChilizTestnetFlag.Name):
-		urls = params.ChilizTestnetBootnodes
+		urls = params.ChilizScovilleBootnodes
 	case cfg.BootstrapNodes != nil:
 		return // already set, don't apply defaults.
 	}
@@ -1776,12 +1775,10 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 88888
 		}
-		cfg.Genesis = core.DefaultChilizMainnetGenesisBlock()
 	case ctx.GlobalBool(ChilizTestnetFlag.Name):
 		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 88880
 		}
-		cfg.Genesis = core.DefaultChilizTestnetGenesisBlock()
 	case ctx.GlobalBool(DeveloperFlag.Name):
 		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 1337
