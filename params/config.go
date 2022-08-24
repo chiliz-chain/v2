@@ -349,7 +349,9 @@ var (
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
-		nil, nil, nil, nil,
+		nil,
+		big.NewInt(0),
+		nil, nil, nil,
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
@@ -378,7 +380,9 @@ var (
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
-		nil, nil, nil, nil,
+		nil,
+		big.NewInt(0),
+		nil, nil, nil,
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
@@ -403,7 +407,9 @@ var (
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
-		nil, nil, nil, nil,
+		nil,
+		big.NewInt(0),
+		nil, nil, nil,
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
@@ -491,8 +497,9 @@ type ChainConfig struct {
 	BerlinBlock         *big.Int `json:"berlinBlock,omitempty"`         // Berlin switch block (nil = no fork, 0 = already on berlin)
 
 	// Chiliz V2 forks
-	RuntimeUpgradeBlock *big.Int `json:"runtimeUpgradeBlock,omitempty"`
-	DeployOriginBlock   *big.Int `json:"deployOriginBlock,omitempty"`
+	RuntimeUpgradeBlock    *big.Int `json:"runtimeUpgradeBlock,omitempty"`
+	DeployOriginBlock      *big.Int `json:"deployOriginBlock,omitempty"`
+	DeploymentHookFixBlock *big.Int `json:"deploymentHookFixBlock,omitempty"`
 
 	YoloV3Block   *big.Int `json:"yoloV3Block,omitempty"`   // YOLO v3: Gas repricings TODO @holiman add EIP references
 	EWASMBlock    *big.Int `json:"ewasmBlock,omitempty"`    // EWASM switch block (nil = no fork, 0 = already activated)	RamanujanBlock      *big.Int `json:"ramanujanBlock,omitempty" toml:",omitempty"`      // ramanujanBlock switch block (nil = no fork, 0 = already activated)
@@ -863,8 +870,9 @@ type Rules struct {
 	IsByzantium, IsConstantinople, IsPetersburg, IsIstanbul bool
 	IsBerlin, IsCatalyst                                    bool
 	// features
-	HasRuntimeUpgrade bool
-	HasDeployOrigin   bool
+	HasRuntimeUpgrade    bool
+	HasDeployOrigin      bool
+	HasDeploymentHookFix bool
 }
 
 // Rules ensures c's ChainID is not nil.
@@ -886,7 +894,8 @@ func (c *ChainConfig) Rules(num *big.Int) Rules {
 		IsBerlin:         c.IsBerlin(num),
 		IsCatalyst:       c.IsCatalyst(num),
 		// features
-		HasRuntimeUpgrade: isForked(c.RuntimeUpgradeBlock, num),
-		HasDeployOrigin:   isForked(c.DeployOriginBlock, num),
+		HasRuntimeUpgrade:    isForked(c.RuntimeUpgradeBlock, num),
+		HasDeployOrigin:      isForked(c.DeployOriginBlock, num),
+		HasDeploymentHookFix: isForked(c.DeploymentHookFixBlock, num),
 	}
 }
