@@ -109,6 +109,7 @@ var (
 )
 
 var isDebug = os.Getenv("DEBUG") != ""
+var pprofPort = 8089
 
 func main() {
 	// Parse the flags and set up the logger to print everything requested
@@ -265,7 +266,7 @@ func main() {
 	}
 
 	if isDebug {
-		debugServer := NewDebugServer(fmt.Sprintf("%s:%d", "localhost", 8089))
+		debugServer := NewDebugServer(fmt.Sprintf("%s:%d", "localhost", pprofPort))
 
 		go func() {
 			log.Crit("Failed to launch faucet API", "err", debugServer.ListenAndServe())
