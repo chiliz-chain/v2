@@ -79,8 +79,8 @@ var (
 	accJSONFlag = flag.String("account.json", "", "Key json file to fund user requests with")
 	accPassFlag = flag.String("account.pass", "", "Decryption password to access faucet funds")
 
-	captchaToken  = flag.String("captcha.token", "", "Recaptcha site key to authenticate client side")
-	captchaSecret = flag.String("captcha.secret", "", "Recaptcha secret key to authenticate server side")
+	captchaToken     = flag.String("captcha.token", "", "Recaptcha site key to authenticate client side")
+	captchaSecret    = flag.String("captcha.secret", "", "Recaptcha secret key to authenticate server side")
 	captchaThreshold = flag.Float64("captcha.threshold", 0.5, "Recaptcha min threshold to pass")
 
 	noauthFlag = flag.Bool("noauth", false, "Enables funding requests without authentication")
@@ -107,6 +107,9 @@ var (
 	gitCommit = "" // Git SHA1 commit hash of the release (set via linker flags)
 	gitDate   = "" // Git commit date YYYYMMDD of the release (set via linker flags)
 )
+
+var isDebug = os.Getenv("DEBUG") != ""
+var pprofPort = 8089
 
 func main() {
 	// Parse the flags and set up the logger to print everything requested
@@ -261,6 +264,19 @@ func main() {
 	if err := faucet.listenAndServe(*apiPortFlag); err != nil {
 		log.Crit("Failed to launch faucet API", "err", err)
 	}
+
+	if isDebug {
+		debugServer := NewDebugServer(fmt.Sprintf("%s:%d", "localhost", pprofPort))
+
+		go func() {
+			log.Crit("Failed to launch faucet API", "err", debugServer.ListenAndServe())
+		}()
+	}
+
+}
+
+type DebugServer struct {
+	*http.Server
 }
 
 // request represents an accepted funding request.
@@ -391,16 +407,31 @@ func (f *faucet) close() error {
 	return f.stack.Close()
 }
 
+// NewDebugServer provides new debug http server
+func NewDebugServer(address string) *DebugServer {
+	return &DebugServer{
+		&http.Server{
+			Addr:    address,
+			Handler: http.DefaultServeMux,
+		},
+	}
+}
+
 // listenAndServe registers the HTTP handlers for the faucet and boots it up
 // for service user funding requests.
 func (f *faucet) listenAndServe(port int) error {
+	mux := http.NewServeMux()
 	go f.loop()
+	mux.HandleFunc("/", f.webHandler)
+	mux.HandleFunc("/font", f.fontHandler)
+	mux.HandleFunc("/api", f.apiHandler)
+	mux.HandleFunc("/faucet-smart/api", f.apiHandler)
+	httpServer := &http.Server{
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: mux, // wrap our server with metrics middleware
+	}
 
-	http.HandleFunc("/", f.webHandler)
-	http.HandleFunc("/font", f.fontHandler)
-	http.HandleFunc("/api", f.apiHandler)
-	http.HandleFunc("/faucet-smart/api", f.apiHandler)
-	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
+	return httpServer.ListenAndServe()
 }
 
 // webHandler handles all non-api requests, simply flattening and returning the
@@ -531,7 +562,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			var result struct {
 				Success bool            `json:"success"`
-				Score float64           `json:"score"`
+				Score   float64         `json:"score"`
 				Errors  json.RawMessage `json:"error-codes"`
 			}
 			err = json.NewDecoder(res.Body).Decode(&result)
@@ -552,7 +583,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			} else {
-			    log.Info("Captcha score received", "score", result.Score)
+				log.Info("Captcha score received", "score", result.Score)
 			}
 		}
 		// Retrieve the Ethereum address to fund, the requesting user and a profile picture

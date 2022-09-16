@@ -65,3 +65,4 @@ services:
     restart: always
     ports:
       - "8087:8080"
+      - "8089:8089"
