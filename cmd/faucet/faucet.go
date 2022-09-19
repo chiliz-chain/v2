@@ -260,17 +260,14 @@ func main() {
 		log.Crit("Failed to start faucet", "err", err)
 	}
 	defer faucet.close()
-
+	go func() {
+		if isDebug {
+			debugServer := NewDebugServer(fmt.Sprintf(":%d", pprofPort))
+			log.Crit("Failed to launch faucet API", "err", debugServer.ListenAndServe())
+		}
+	}()
 	if err := faucet.listenAndServe(*apiPortFlag); err != nil {
 		log.Crit("Failed to launch faucet API", "err", err)
-	}
-
-	if isDebug {
-		debugServer := NewDebugServer(fmt.Sprintf("%s:%d", "localhost", pprofPort))
-
-		go func() {
-			log.Crit("Failed to launch faucet API", "err", debugServer.ListenAndServe())
-		}()
 	}
 
 }
