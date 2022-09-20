@@ -79,8 +79,8 @@ var (
 	accJSONFlag = flag.String("account.json", "", "Key json file to fund user requests with")
 	accPassFlag = flag.String("account.pass", "", "Decryption password to access faucet funds")
 
-	captchaToken  = flag.String("captcha.token", "", "Recaptcha site key to authenticate client side")
-	captchaSecret = flag.String("captcha.secret", "", "Recaptcha secret key to authenticate server side")
+	captchaToken     = flag.String("captcha.token", "", "Recaptcha site key to authenticate client side")
+	captchaSecret    = flag.String("captcha.secret", "", "Recaptcha secret key to authenticate server side")
 	captchaThreshold = flag.Float64("captcha.threshold", 0.5, "Recaptcha min threshold to pass")
 
 	noauthFlag = flag.Bool("noauth", false, "Enables funding requests without authentication")
@@ -96,8 +96,11 @@ var (
 
 	goerliFlag  = flag.Bool("goerli", false, "Initializes the faucet with Görli network config")
 	rinkebyFlag = flag.Bool("rinkeby", false, "Initializes the faucet with Rinkeby network config")
-)
 
+	pprofIsEnabled = flag.Bool("pprof", false, "Enable the pprof HTTP server")
+	pprofAddr      = flag.String("pprof.addr", "127.0.0.1", "pprof HTTP server listening interface (default: \"127.0.0.1\")")
+	pprofPort      = flag.Int("pprof.port", 6060, "pprof HTTP server listening port (default: 6060)")
+)
 var (
 	ether        = new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
 	bep2eAbiJson = `[{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_from","type":"address"},{"name":"_to","type":"address[]"},{"name":"_values","type":"uint256[]"}],"name":"batchTransfer","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"name","type":"string"},{"name":"symbol","type":"string"},{"name":"decimals","type":"uint8"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"totalSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"sender","type":"address"},{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"name","type":"string"},{"name":"symbol","type":"string"},{"name":"decimals","type":"uint8"},{"name":"minters","type":"address[]"},{"name":"pausers","type":"address[]"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"addedValue","type":"uint256"}],"name":"increaseAllowance","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"unpause","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_survey","type":"address"}],"name":"unregisterSurvey","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"isPauser","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"name","type":"string"},{"name":"symbol","type":"string"},{"name":"decimals","type":"uint8"},{"name":"initialSupply","type":"uint256"},{"name":"initialHolder","type":"address"},{"name":"minters","type":"address[]"},{"name":"pausers","type":"address[]"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"offset","type":"uint256"},{"name":"count","type":"uint256"},{"name":"cap","type":"uint256"}],"name":"getCirculatingSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"version","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"pure","type":"function"},{"constant":true,"inputs":[],"name":"paused","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[],"name":"renouncePauser","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"getOwnersCount","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_survey","type":"address"}],"name":"registerSurvey","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"}],"name":"addPauser","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"pause","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"getOwner","outputs":[{"name":"tokenOwner","type":"address"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"}],"name":"addMinter","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"renounceMinter","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"},{"name":"value","type":"uint256"}],"name":"burn","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"subtractedValue","type":"uint256"}],"name":"decreaseAllowance","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"isMinter","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[{"name":"_survey","type":"address"}],"name":"isSurveyRegistered","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"sender","type":"address"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"anonymous":false,"inputs":[{"indexed":false,"name":"account","type":"address"}],"name":"Paused","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"account","type":"address"}],"name":"Unpaused","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"PauserAdded","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"PauserRemoved","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"MinterAdded","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"MinterRemoved","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Transfer","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"owner","type":"address"},{"indexed":true,"name":"spender","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Approval","type":"event"}]`
@@ -257,10 +260,18 @@ func main() {
 		log.Crit("Failed to start faucet", "err", err)
 	}
 	defer faucet.close()
-
+	go func() {
+		if *pprofIsEnabled {
+			address := fmt.Sprintf("%s:%d", *pprofAddr, *pprofPort)
+			debugServer := newDebugServer(address)
+			log.Info("Starting pprof server", "addr", fmt.Sprintf("%s/debug/pprof", address))
+			log.Crit("Failed to launch pprof server", "err", debugServer.ListenAndServe())
+		}
+	}()
 	if err := faucet.listenAndServe(*apiPortFlag); err != nil {
 		log.Crit("Failed to launch faucet API", "err", err)
 	}
+
 }
 
 // request represents an accepted funding request.
@@ -391,16 +402,29 @@ func (f *faucet) close() error {
 	return f.stack.Close()
 }
 
+// NewDebugServer provides new debug http server
+func newDebugServer(address string) *http.Server {
+	return &http.Server{
+		Addr:    address,
+		Handler: http.DefaultServeMux,
+	}
+}
+
 // listenAndServe registers the HTTP handlers for the faucet and boots it up
 // for service user funding requests.
 func (f *faucet) listenAndServe(port int) error {
+	mux := http.NewServeMux()
 	go f.loop()
+	mux.HandleFunc("/", f.webHandler)
+	mux.HandleFunc("/font", f.fontHandler)
+	mux.HandleFunc("/api", f.apiHandler)
+	mux.HandleFunc("/faucet-smart/api", f.apiHandler)
+	httpServer := &http.Server{
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: mux,
+	}
 
-	http.HandleFunc("/", f.webHandler)
-	http.HandleFunc("/font", f.fontHandler)
-	http.HandleFunc("/api", f.apiHandler)
-	http.HandleFunc("/faucet-smart/api", f.apiHandler)
-	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
+	return httpServer.ListenAndServe()
 }
 
 // webHandler handles all non-api requests, simply flattening and returning the
@@ -531,7 +555,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			var result struct {
 				Success bool            `json:"success"`
-				Score float64           `json:"score"`
+				Score   float64         `json:"score"`
 				Errors  json.RawMessage `json:"error-codes"`
 			}
 			err = json.NewDecoder(res.Body).Decode(&result)
@@ -552,7 +576,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			} else {
-			    log.Info("Captcha score received", "score", result.Score)
+				log.Info("Captcha score received", "score", result.Score)
 			}
 		}
 		// Retrieve the Ethereum address to fund, the requesting user and a profile picture
