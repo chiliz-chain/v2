@@ -54,7 +54,7 @@ CHZ being the native token of CCv2 it will run on Chiliz Chain 2.0 the same way 
 Documentation 
 --------------
 
-Latest docs are here [link to our gitbook]
+Latest docs are here: https://docs.chiliz.com/
 
 Contribution
 ------------
