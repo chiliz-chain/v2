@@ -88,7 +88,11 @@
                 <h3 style="text-align:center; font-weight: 500;">How does this work?</h3>
                 <h4 style="text-align:center; font-weight: 500;">To request test funds from the faucet</h4>
                 <ul style="font-size: 1.5rem;">
-                    <li>Paste your address in the text input below.</li>
+					{{if .NoAuth }}
+                    	<li>Paste your address in the text input below.</li>
+					{{else}}
+						<li>Make a <a href="https://twitter.com/intent/tweet?text=Requesting%20faucet%20funds%20into%200x0000000000000000000000000000000000000000%20on%20the%20%23CC2%20%23Scoville%20test%20network" target="_blank">tweet</a> with your address pasted into the contents (surrounding text doesn't matter). Copy-paste the <a href="https://support.twitter.com/articles/80586" target="_blank">tweets URL</a> into the above input box and fire away.</li>
+					{{end}}
                     <li>To request CHZ, press the "Give me CHZ" button and click on the desired option.</li>
                      <li>To request a fan token, press the "Fan Tokens" button and click on the desired option. In order to see the token balance in Metamask you will have to import the token, for the instructions <a data-toggle="modal" data-target="#metamaskInstructionsModal" href="">click here.</a></li>
                 </ul>
@@ -97,7 +101,7 @@
 		<div class="row">
 			<div class="col-lg-8 col-lg-offset-2">
 				<div class="input-group">
-					<input id="url" name="url" type="text" class="form-control" placeholder="Your Chiliz {{.ChainName}} address...">
+					<input id="url" name="url" type="text" class="form-control" placeholder="{{if .NoAuth }}Your Chiliz {{.ChainName}} address{{else}}Tweet URL containing your Chiliz {{.ChainName}} address{{end}}...">
 					<span class="input-group-btn">
 								<button class="btn btn-danger dropdown-toggle" type="button" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">Give me CHZ	<i class="fa fa-caret-down" aria-hidden="true"></i></button>
 				        <ul class="dropdown-menu dropdown-menu-right">{{range $idx, $amount := .Amounts}}
