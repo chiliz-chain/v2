@@ -305,10 +305,10 @@ type faucet struct {
 	nonce    uint64             // Current pending nonce of the faucet
 	price    *big.Int           // Current gas price to issue funds with
 
-	conns    []*wsConn            // Currently live websocket connections
-	timeouts map[string]time.Time // History of users and their funding timeouts
-	reqs     []*request           // Currently pending funding requests
-	update   chan struct{}        // Channel to signal request updates
+	conns    []*wsConn                       // Currently live websocket connections
+	timeouts map[string]map[string]time.Time // History of users and their funding timeouts
+	reqs     []*request                      // Currently pending funding requests
+	update   chan struct{}                   // Channel to signal request updates
 
 	lock sync.RWMutex // Lock protecting the faucet's internals
 
@@ -391,7 +391,7 @@ func newFaucet(genesis *core.Genesis, port int, enodes []*enode.Node, network ui
 		font:       font,
 		keystore:   ks,
 		account:    ks.Accounts()[0],
-		timeouts:   make(map[string]time.Time),
+		timeouts:   make(map[string]map[string]time.Time),
 		update:     make(chan struct{}, 1),
 		bep2eInfos: bep2eInfos,
 		bep2eAbi:   bep2eAbi,
@@ -615,7 +615,10 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 			fund    bool
 			timeout time.Time
 		)
-		if timeout = f.timeouts[id]; time.Now().After(timeout) {
+		if _, ok := f.timeouts[id]; !ok {
+			f.timeouts[id] = make(map[string]time.Time)
+		}
+		if timeout = f.timeouts[id][msg.Symbol]; time.Now().After(timeout) {
 			var tx *types.Transaction
 			if msg.Symbol == "CHZ" {
 				// User wasn't funded recently, create the funding transaction
@@ -666,7 +669,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 			timeout := time.Duration(*minutesFlag*int(math.Pow(3, float64(msg.Tier)))) * time.Minute
 			grace := timeout / 288 // 24h timeout => 5m grace
 
-			f.timeouts[id] = time.Now().Add(timeout - grace)
+			f.timeouts[id][msg.Symbol] = time.Now().Add(timeout - grace)
 			fund = true
 		}
 		f.lock.Unlock()
