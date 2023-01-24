@@ -39,6 +39,7 @@ var (
 	YoloV3GenesisHash = common.HexToHash("0xf1f2876e8500c77afcc03228757b39477eceffccf645b734967fe3c7e16967b7")
 
 	ChilizScovilleGenesisHash = common.HexToHash("0xa148378fbfd7562cd43c8622d20ad056b735fdc0f968f56d0033294c33ededf2")
+	ChilizSpicyGenesisHash  = common.HexToHash("0x9e0e07ae4ee9b0ef66a4206656677020306259d0b0b845ad3bb6b09fb91485ff")
 	ChilizMainnetGenesisHash  = common.HexToHash("")
 )
 
