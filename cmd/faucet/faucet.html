@@ -150,15 +150,15 @@
 <script>
 	$(document).ready(function() {
 		var networkConfig = {
-			chainName: "Spicy",
+			chainName: "{{.ChainName}}",
 			chainId: 88882,
 			nativeCurrency: {
 				name: "Chiliz",
 				symbol: "CHZ",
 				decimals: 18
 			},
-			rpcUrls: ["https://spicy-rpc.chiliz.com"],
-			blockExplorerUrls: ["http://spicy-explorer.chiliz.com"],
+			rpcUrls: ["{{.MetamaskRpcUrl}}"],
+			blockExplorerUrls: ["{{.MetamaskExplorerUrl}}"],
 		}
 		networkConfig.chainId = '0x' + networkConfig.chainId.toString(16);
 		const voteTokens = {
