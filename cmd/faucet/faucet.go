@@ -216,6 +216,7 @@ func main() {
 		"MintNftsUrl":         mintNftsUrl,
 		"DevLandingUrl":       devLandingUrl,
 		"ChainName":           chainName,
+		"ChainId":             netFlag,
 		"MetamaskRpcUrl":      metamaskRpcUrl,
 		"MetamaskExplorerUrl": metamaskExplorerUrl,
 	})
