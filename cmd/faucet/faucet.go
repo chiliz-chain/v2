@@ -187,6 +187,8 @@ func main() {
 	mintNftsUrl := os.Getenv("MINT_NFTS_URL")
 	devLandingUrl := os.Getenv("DEV_LANDING_URL")
 	chainName := os.Getenv("CHAIN_NAME")
+	metamaskRpcUrl := os.Getenv("METAMASK_RPC_URL")
+	metamaskExplorerUrl := os.Getenv("METAMASK_EXPLORER_URL")
 
 	// Load up and render the faucet website
 	tmpl, err := Asset("faucet.html")
@@ -205,15 +207,18 @@ func main() {
 			return n >= len(symbols)/2
 		},
 	}).Parse(string(tmpl))).Execute(website, map[string]interface{}{
-		"Network":       *netnameFlag,
-		"Amounts":       amounts,
-		"Recaptcha":     *captchaToken,
-		"NoAuth":        *noauthFlag,
-		"Bep2eInfos":    bep2eInfos,
-		"FaucetName":    faucetName,
-		"MintNftsUrl":   mintNftsUrl,
-		"DevLandingUrl": devLandingUrl,
-		"ChainName":     chainName,
+		"Network":             *netnameFlag,
+		"Amounts":             amounts,
+		"Recaptcha":           *captchaToken,
+		"NoAuth":              *noauthFlag,
+		"Bep2eInfos":          bep2eInfos,
+		"FaucetName":          faucetName,
+		"MintNftsUrl":         mintNftsUrl,
+		"DevLandingUrl":       devLandingUrl,
+		"ChainName":           chainName,
+		"ChainId":             netFlag,
+		"MetamaskRpcUrl":      metamaskRpcUrl,
+		"MetamaskExplorerUrl": metamaskExplorerUrl,
 	})
 	if err != nil {
 		log.Crit("Failed to render the faucet template", "err", err)
