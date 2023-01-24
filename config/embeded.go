@@ -20,7 +20,7 @@ var scovilleRawGenesisConfig []byte
 
 var ScovilleGenesisConfig = mustParseGenesisConfigFromJson(scovilleRawGenesisConfig)
 
-//go:embed embedded/scoville.json
+//go:embed embedded/spicy.json
 var spicyRawGenesisConfig []byte
 
 var SpicyGenesisConfig = mustParseGenesisConfigFromJson(spicyRawGenesisConfig)

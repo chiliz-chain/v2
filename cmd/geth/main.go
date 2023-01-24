@@ -61,6 +61,7 @@ var (
 	nodeFlags = []cli.Flag{
 		utils.GenesisFlag,
 		utils.ChilizTestnetFlag,
+		utils.ChilizSpicyFlag,
 		utils.ChilizMainnetFlag,
 		utils.IdentityFlag,
 		utils.UnlockedAccountFlag,
