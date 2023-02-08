@@ -113,6 +113,10 @@ func defaultNodeConfig() node.Config {
 }
 
 func readGenesisConfig(ctx *cli.Context) *core.Genesis {
+	// for spicy just return already stored genesis config
+	if ctx.GlobalBool(utils.ChilizSpicyFlag.Name) {
+		return config.SpicyGenesisConfig
+	}
 	// for scoville just return already stored genesis config
 	if ctx.GlobalBool(utils.ChilizTestnetFlag.Name) {
 		return config.ScovilleGenesisConfig

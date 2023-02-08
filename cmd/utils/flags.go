@@ -203,6 +203,10 @@ var (
 		Name:  "scoville",
 		Usage: "Chiliz testnet network",
 	}
+	ChilizSpicyFlag = cli.BoolFlag{
+		Name:  "spicy",
+		Usage: "Chiliz testnet network",
+	}
 	DeveloperFlag = cli.BoolFlag{
 		Name:  "dev",
 		Usage: "Ephemeral proof-of-authority network with a pre-funded developer account, mining enabled",
@@ -939,6 +943,8 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 		urls = params.ChilizMainnetBootnodes
 	case ctx.GlobalBool(ChilizTestnetFlag.Name):
 		urls = params.ChilizScovilleBootnodes
+	case ctx.GlobalBool(ChilizSpicyFlag.Name):
+		urls = params.ChilizSpicyBootnodes
 	case cfg.BootstrapNodes != nil:
 		return // already set, don't apply defaults.
 	}
@@ -1394,6 +1400,8 @@ func setDataDir(ctx *cli.Context, cfg *node.Config) {
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "chiliz")
 	case ctx.GlobalBool(ChilizTestnetFlag.Name) && cfg.DataDir == node.DefaultDataDir():
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "chiliz")
+	case ctx.GlobalBool(ChilizSpicyFlag.Name) && cfg.DataDir == node.DefaultDataDir():
+		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "chiliz")
 	}
 }
 
@@ -1583,7 +1591,7 @@ func CheckExclusive(ctx *cli.Context, args ...interface{}) {
 // SetEthConfig applies eth-related command line flags to the config.
 func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Avoid conflicting network flags
-	CheckExclusive(ctx, MainnetFlag, DeveloperFlag, RopstenFlag, RinkebyFlag, GoerliFlag, YoloV3Flag, ChilizMainnetFlag, ChilizTestnetFlag)
+	CheckExclusive(ctx, MainnetFlag, DeveloperFlag, RopstenFlag, RinkebyFlag, GoerliFlag, YoloV3Flag, ChilizMainnetFlag, ChilizTestnetFlag, ChilizSpicyFlag)
 	CheckExclusive(ctx, LightServeFlag, SyncModeFlag, "light")
 	CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
 	if ctx.GlobalString(GCModeFlag.Name) == "archive" && ctx.GlobalUint64(TxLookupLimitFlag.Name) != 0 {
@@ -1779,6 +1787,10 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 88880
 		}
+	case ctx.GlobalBool(ChilizSpicyFlag.Name):
+		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = 88882
+		}
 	case ctx.GlobalBool(DeveloperFlag.Name):
 		if !ctx.GlobalIsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 1337
@@ -1973,6 +1985,8 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 		genesis = core.DefaultChilizMainnetGenesisBlock()
 	case ctx.GlobalBool(ChilizTestnetFlag.Name):
 		genesis = core.DefaultChilizTestnetGenesisBlock()
+	case ctx.GlobalBool(ChilizSpicyFlag.Name):
+		genesis = core.DefaultChilizSpicyGenesisBlock()
 	case ctx.GlobalBool(DeveloperFlag.Name):
 		Fatalf("Developer chains are ephemeral")
 	}

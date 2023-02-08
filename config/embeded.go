@@ -19,3 +19,8 @@ func mustParseGenesisConfigFromJson(rawJson []byte) *core.Genesis {
 var scovilleRawGenesisConfig []byte
 
 var ScovilleGenesisConfig = mustParseGenesisConfigFromJson(scovilleRawGenesisConfig)
+
+//go:embed embedded/spicy.json
+var spicyRawGenesisConfig []byte
+
+var SpicyGenesisConfig = mustParseGenesisConfigFromJson(spicyRawGenesisConfig)
