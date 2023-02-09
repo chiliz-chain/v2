@@ -112,7 +112,7 @@ func defaultNodeConfig() node.Config {
 	return cfg
 }
 
-func readGenesisConfig(ctx *cli.Context) *core.Genesis {sdddsss
+func readGenesisConfig(ctx *cli.Context) *core.Genesis {
 	// Chiliz Scoville just return already stored genesis config
 	if ctx.GlobalBool(utils.ChilizTestnetFlag.Name) {
 		return config.ScovilleGenesisConfig
