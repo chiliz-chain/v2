@@ -197,15 +197,15 @@ var (
 	}
 	ChilizMainnetFlag = cli.BoolFlag{
 		Name:  "chiliz",
-		Usage: "Chiliz network: pre-configured proof-of-work test network",
+		Usage: "Chiliz Chain 2 network: pre-configured proof-of-stake network",
 	}
 	ChilizTestnetFlag = cli.BoolFlag{
 		Name:  "scoville",
-		Usage: "Chiliz testnet network",
+		Usage: "Chiliz Scoville testnet network",
 	}
 	ChilizSpicyFlag = cli.BoolFlag{
 		Name:  "spicy",
-		Usage: "Chiliz testnet network",
+		Usage: "Chiliz Spicy testnet network",
 	}
 	DeveloperFlag = cli.BoolFlag{
 		Name:  "dev",
