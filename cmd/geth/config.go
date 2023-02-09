@@ -112,11 +112,11 @@ func defaultNodeConfig() node.Config {
 	return cfg
 }
 
-func readGenesisConfig(ctx *cli.Context) *core.Genesis {
-    // Chiliz Scoville just return already stored genesis config
-    if ctx.GlobalBool(utils.ChilizTestnetFlag.Name) {
-        return config.ScovilleGenesisConfig
-    }
+func readGenesisConfig(ctx *cli.Context) *core.Genesis {sdddsss
+	// Chiliz Scoville just return already stored genesis config
+	if ctx.GlobalBool(utils.ChilizTestnetFlag.Name) {
+		return config.ScovilleGenesisConfig
+	}
 	// Chiliz Spicy just return already stored genesis config
 	if ctx.GlobalBool(utils.ChilizSpicyFlag.Name) {
 		return config.SpicyGenesisConfig
