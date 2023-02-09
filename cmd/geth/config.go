@@ -113,13 +113,17 @@ func defaultNodeConfig() node.Config {
 }
 
 func readGenesisConfig(ctx *cli.Context) *core.Genesis {
-	// for spicy just return already stored genesis config
+    // Chiliz Scoville just return already stored genesis config
+    if ctx.GlobalBool(utils.ChilizTestnetFlag.Name) {
+        return config.ScovilleGenesisConfig
+    }
+	// Chiliz Spicy just return already stored genesis config
 	if ctx.GlobalBool(utils.ChilizSpicyFlag.Name) {
 		return config.SpicyGenesisConfig
 	}
-	// for scoville just return already stored genesis config
-	if ctx.GlobalBool(utils.ChilizTestnetFlag.Name) {
-		return config.ScovilleGenesisConfig
+	// Chiliz Mainnet just return already stored genesis config
+	if ctx.GlobalBool(utils.ChilizMainnetFlag.Name) {
+		return config.ChilizMainnetGenesisConfig
 	}
 	// Make sure we have a valid genesis JSON
 	genesisPath := ctx.GlobalString(utils.GenesisFlag.Name)
