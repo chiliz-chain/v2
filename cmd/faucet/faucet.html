@@ -249,6 +249,7 @@
 			blockExplorerUrls: ["{{.MetamaskExplorerUrl}}"],
 		}
 		networkConfig.chainId = '0x' + networkConfig.chainId.toString(16);
+
 		const voteTokens = {
 			{{range $symbol, $bep2eInfo := .Bep2eInfos}}
 				{{$symbol}}: {
@@ -260,6 +261,15 @@
 				},
 			{{end}}
 		};
+
+		if({{.ChainId}} === 88880) {
+			$(".popUp-container_con").show()
+		};
+
+		$(".popUp_toggle").on('click', function() { 
+			$(".popUp-container_con").hide()
+		});
+
 		var currentChainId;
 		var CONNECT_TO_METAMASK = "Connect to Metamask";
 		var METAMASK_NOT_INSTALLED = "Metamask is not installed";
@@ -392,15 +402,8 @@
 			return requestAddToken(tokenInfo).catch(handleError);
 		});
 
-		$(".popUp_toggle").on('click', function() { 
-			$(".popUp-container_con").hide()
-		});
-
 		window.ethereum.on('connect', (connectInfo) => {
 			currentChainId = connectInfo.chainId;
-			if(currentChainId === "0x15b30"){
-				$(".popUp-container_con").show()
-			}
 
 			if (currentChainId === networkConfig.chainId) {
 				updateAddTokenButtonHTML("CONNECTED");
