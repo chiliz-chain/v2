@@ -73,10 +73,92 @@
 			margin: 0;
 		}
 	</style>
+
+	<style>
+		.popUp {
+			display: flex;
+			flex-direction: row;
+			align-items: center;
+			justify-content: center;
+		}
+
+		.popUp-container_con{
+			display: none;
+			position: absolute;
+			z-Index: 1;
+			margin-top: 120px;
+			top: 0;
+			height: 100px;
+			overflow: scroll;
+			font-size: 18px;
+			background-color: #1D0238;
+			border: 0.1px solid white;
+			border-radius: 8px;
+			opacity: 0.85
+		}
+
+		.popUp-container{
+			padding: 0rem 10rem;
+			transform: translateY(-30px);
+		}
+
+		.popUp_toggle{
+			display: flex;
+			justify-content: end;
+		}
+
+		.popUp-span {
+			color: #f9f8f8;
+			font-size: 28px;
+			font-weight: bold;
+			margin-right: 20px;
+			margin-top: 5px;
+			cursor: pointer;
+		}
+
+		.popUp-content {
+			font-size: 17px;
+			color: #f9f8f8;
+		}
+
+		.popUp-link {
+			margin-left: 5px;
+		}
+
+		@media screen and (max-width: 768px) {
+			.popUp-container_con {
+				padding: 0rem 2rem;
+				margin: 15rem 2rem;
+			}
+
+			.popUp-container{
+				padding: 0rem 1rem;
+				transform: translateY(-20px);
+			}
+
+			.popUp-span{
+				margin-top: 2px;
+				margin-right: 5px;
+			}
+		}
+	</style>
 </head>
 
 <body>
 	<div class="container" style="margin-top:40px;">
+		<div class="popUp">
+			<div class="popUp-container_con">
+				<div class="popUp_toggle">
+					<span class="popUp-span" >&times;</span>
+				</div>
+				<div class="popUp-container">
+					<h6 class="popUp-content" >You are using an outdated version of the faucet which would be deprecated soon...</h6>
+					<h6 class="popUp-content" >It is recommended to use the latest version of the faucet :-
+						<a class="popUp-link" rel="noopener noreferrer" target="_blank" href="https://spicy-faucet.chiliz.com/">https://spicy-faucet.chiliz.com</a>
+					</h6>
+				</div>
+			</div>
+		</div>
 		<div class="row" style="margin-bottom: 32px;">
 			<div class="col-lg-4"></div>
 			<div class="col-lg-4">
@@ -167,6 +249,7 @@
 			blockExplorerUrls: ["{{.MetamaskExplorerUrl}}"],
 		}
 		networkConfig.chainId = '0x' + networkConfig.chainId.toString(16);
+
 		const voteTokens = {
 			{{range $symbol, $bep2eInfo := .Bep2eInfos}}
 				{{$symbol}}: {
@@ -178,11 +261,20 @@
 				},
 			{{end}}
 		};
+
+		if({{.ChainId}} && {{.ChainId}} === 88880) {
+			$(".popUp-container_con").show()
+		};
+
+		$(".popUp_toggle").on('click', function() { 
+			$(".popUp-container_con").hide()
+		});
+
 		var currentChainId;
 		var CONNECT_TO_METAMASK = "Connect to Metamask";
 		var METAMASK_NOT_INSTALLED = "Metamask is not installed";
 		var METAMASK_ADDING_NETWORK = "Adding network";
-		var METAMASK_CONNECTED = "Connected";
+		var METAMASK_CONNECTED = "Connected"; 
 
 		function _getAddressForDisplay(address) {
     		return address.slice(0, 5) + '...' + address.slice(address.length - 4);
@@ -310,11 +402,9 @@
 			return requestAddToken(tokenInfo).catch(handleError);
 		});
 
-		
-
 		window.ethereum.on('connect', (connectInfo) => {
 			currentChainId = connectInfo.chainId;
-			// console.log('connect:', connectInfo, currentChainId)
+
 			if (currentChainId === networkConfig.chainId) {
 				updateAddTokenButtonHTML("CONNECTED");
 				return requestAccounts()
@@ -336,7 +426,7 @@
 			if (chainId === currentChainId) {
 				return;
 			}
-			// console.log('chainChanged ', 'current', currentChainId, 'new', chainId)
+			//console.log('chainChanged ', 'current', currentChainId, 'new', chainId)
 			currentChainId = chainId;
 
 			if (chainId !== networkConfig.chainId) {
