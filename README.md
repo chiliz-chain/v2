@@ -1,15 +1,15 @@
-Chiliz Chain 2.0
+Chiliz Chain
 ----------------
 
-Chiliz Chain 2.0 will become a more open & interoperable successor of the current Chiliz Chain. The goal of Chiliz Chain 2.0 is to be the leading blockchain for the enterprise-level sports and entertainment brands who want to create a Web3 ecosystem where stakeholders can build Web3 experiences within a secure network-effect-driven community. Any developers interested in exploring the potential of Chiliz Fan Tokens have the chance to utilise the existing massive network of over 150+ leading sports IPs. As an EVM-compatible chain, Chiliz Chain 2.0 will stay compatible with the Ethereum tooling, making it simple and easy to build in the CC2.0 environment.
+Chiliz Chain will become a more open & interoperable successor of the current Chiliz Legacy Chain. The goal of Chiliz Chain is to be the leading blockchain for the enterprise-level sports and entertainment brands who want to create a Web3 ecosystem where stakeholders can build Web3 experiences within a secure network-effect-driven community. Any developers interested in exploring the potential of Chiliz Fan Tokens have the chance to utilise the existing massive network of over 150+ leading sports IPs. As an EVM-compatible chain, Chiliz Chain will stay compatible with the Ethereum tooling, making it simple and easy to build in the Chiliz Chain environment.
 
-Chiliz Chain 2.0 is a fork of BSC (which is a go-ethereum fork). Hence, it is needless to say that most of the tooling mechanisms, concepts, binaries, and also the documentation  are hugely derived from the BSC and Ethereum. Using Geth as a CLI being one of them.
+Chiliz Chain is a fork of BSC (which is a go-ethereum fork). Hence, it is needless to say that most of the tooling mechanisms, concepts, binaries, and also the documentation  are hugely derived from the BSC and Ethereum. Using Geth as a CLI being one of them.
 
-From that baseline of the EVM compatibility, Chiliz Chain 2.0 introduces a system of 11 validators with the Proof of Staked Authority (PoSA) consensus that supports shorter block time and lower fees. The most bonded validator candidates of staking then become validators and start producing blocks. Moreover, the double-sign detection and other slashing logic further guarantees security, stability, and the chain finality.
+From that baseline of the EVM compatibility, Chiliz Chain introduces a system of 11 validators with the Proof of Staked Authority (PoSA) consensus that supports shorter block time and lower fees. The most bonded validator candidates of staking then become validators and start producing blocks. Moreover, the double-sign detection and other slashing logic further guarantees security, stability, and the chain finality.
 
-Chiliz Chain 2.0 in a nutshell is:
+Chiliz Chain in a nutshell is:
 
--   a successor of the Chiliz Chain.
+-   a successor of the Chiliz Legacy Chain.
 
 -   a self-sovereign blockchain. It provides security and safety to the elected validators.
 
@@ -30,7 +30,7 @@ Proof-of-Authority (PoA) provides some defense to 51% attack with an improved ef
 
 Other blockchains, such as EOS and Cosmos both have introduced different types of Deputy Proof of Stake (DPoS) to allow token holders to vote and elect the validator set. It encourages decentralization and favors community governance.
 
-To combine DPoS and PoA for consensus, Chiliz Chain 2.0 heavily inherits the following from the BSC consensus mechanism, Parlia:
+To combine DPoS and PoA for consensus, Chiliz Chain heavily inherits the following from the BSC consensus mechanism, Parlia:
 
 1.  Blocks are produced by a limited set of validators.
 
@@ -43,11 +43,11 @@ To combine DPoS and PoA for consensus, Chiliz Chain 2.0 heavily inherits the fol
 Native Token
 ------------
 
-CHZ being the native token of CCv2 it will run on Chiliz Chain 2.0 the same way ETH runs on Ethereum. This means, CHZ will be used to:
+CHZ being the native token of Chiliz Chain it will run on Chiliz Chain the same way ETH runs on Ethereum. This means, CHZ will be used to:
 
 1.  pay gas to deploy or invoke Smart Contract
 
-2.  perform cross-chain operations, such as transfer token assets across Chiliz Chain 2.0 and Ethereum
+2.  perform cross-chain operations, such as transfer token assets across Chiliz Chain and Ethereum
 
 3.  secure the network by staking/delegate it
 
@@ -63,7 +63,7 @@ Your contribution to our reference material and source code means a lot. Thank y
 
 We welcome and encourage contributions from the brightest minds like yourself and will be grateful to even the smallest of fixes you'd suggest.
 
-So, it's time to mark your contribution to the CCv2 in 4 easy steps:
+So, it's time to mark your contribution to Chiliz Chain in 4 easy steps:
 
 Fork > Fix > Commit > Send a pull request
 
@@ -86,6 +86,6 @@ See the Developer Guide to get more insights on the topics such as Environment s
 License
 -------
 
-The CC2 library (i.e. all code outside of the cmd directory) is licensed under the [GNU Lesser General Public License v3.0](https://www.gnu.org/licenses/lgpl-3.0.en.html), also included in our repository in the COPYING.LESSER file.
+The Chiliz Chain library (i.e. all code outside of the cmd directory) is licensed under the [GNU Lesser General Public License v3.0](https://www.gnu.org/licenses/lgpl-3.0.en.html), also included in our repository in the COPYING.LESSER file.
 
-The CC2 binaries (i.e. all code inside of the cmd directory) is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html), also included in our repository in the COPYING file.
+The Chiliz Chain binaries (i.e. all code inside of the cmd directory) is licensed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.en.html), also included in our repository in the COPYING file.
