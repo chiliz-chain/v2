@@ -14,6 +14,7 @@
     "runtimeUpgradeBlock": 0,
     "deployOriginBlock": 2849000,
     "deploymentHookFixBlock": 6067300,
+    "deployerFactoryBlock": 0,
     "ramanujanBlock": 0,
     "nielsBlock": 0,
     "mirrorSyncBlock": 0,
