@@ -528,7 +528,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 		if err = conn.ReadJSON(&msg); err != nil {
 			return
 		}
-		if !*noauthFlag && !strings.HasPrefix(msg.URL, "https://twitter.com/") && !strings.HasPrefix(msg.URL, "https://www.facebook.com/") {
+		if !*noauthFlag && !strings.HasPrefix(msg.URL, "https://twitter.com/") && !strings.HasPrefix(msg.URL, "https://x.com/") && !strings.HasPrefix(msg.URL, "https://www.facebook.com/") {
 			if err = sendError(wsconn, errors.New("URL doesn't link to supported services")); err != nil {
 				log.Warn("Failed to send URL error to client", "err", err)
 				return
@@ -593,7 +593,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 			address  common.Address
 		)
 		switch {
-		case strings.HasPrefix(msg.URL, "https://twitter.com/"):
+		case strings.HasPrefix(msg.URL, "https://twitter.com/"), strings.HasPrefix(msg.URL, "https://x.com/"):
 			id, username, avatar, address, err = authTwitter(msg.URL, *twitterTokenV1Flag, *twitterTokenFlag)
 		case strings.HasPrefix(msg.URL, "https://www.facebook.com/"):
 			username, avatar, address, err = authFacebook(msg.URL)
@@ -939,7 +939,7 @@ func authTwitterWithTokenV1(tweetID string, token string) (string, string, strin
 		//lint:ignore ST1005 This error is to be displayed in the browser
 		return "", "", "", common.Address{}, errors.New("No Ethereum address found to fund")
 	}
-	return result.User.ID + "@twitter", result.User.Username, result.User.Avatar, address, nil
+	return result.User.ID + "@x", result.User.Username, result.User.Avatar, address, nil
 }
 
 // authTwitterWithTokenV2 tries to authenticate a faucet request using Twitter's v2
@@ -983,7 +983,7 @@ func authTwitterWithTokenV2(tweetID string, token string) (string, string, strin
 		//lint:ignore ST1005 This error is to be displayed in the browser
 		return "", "", "", common.Address{}, errors.New("No Ethereum address found to fund")
 	}
-	return result.Data.AuthorID + "@twitter", result.Includes.Users[0].Username, result.Includes.Users[0].Avatar, address, nil
+	return result.Data.AuthorID + "@x", result.Includes.Users[0].Username, result.Includes.Users[0].Avatar, address, nil
 }
 
 // authFacebook tries to authenticate a faucet request using Facebook posts,
