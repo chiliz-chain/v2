@@ -1076,6 +1076,23 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 			balance = balance.Sub(balance, rewards)
 		}
 	}
+
+	if rules := p.chainConfig.Rules(header.Number); rules.HasFieryDribble {
+		// number of new tokens to mint every block with TXs
+		toMint := new(big.Int).Mul(big.NewInt(3), big.NewInt(params.Ether)) // 10 CHZ as an example
+
+		treasuryShare := new(big.Int).Div(toMint, big.NewInt(3)) // 33%
+		stakersShare := new(big.Int).Sub(toMint, treasuryShare)  // 67%
+
+		log.Info("MINT NEW TOKENS", "toMint", toMint, "stakers", stakersShare, "treasury", treasuryShare)
+
+		balance = balance.Add(balance, stakersShare)
+
+		state.AddBalance(common.HexToAddress(systemcontract.SystemRewardContract), treasuryShare)
+
+		log.Info("TREASURY ADDRESS", "address", common.HexToAddress(systemcontract.SystemRewardContract))
+	}
+
 	log.Trace("distribute to validator contract", "block hash", header.Hash(), "amount", balance)
 	return p.distributeToValidator(balance, val, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 }

@@ -353,7 +353,7 @@ var (
 		nil,
 		big.NewInt(0),
 		nil,
-		nil, nil, nil,
+		nil, nil, nil, nil,
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
@@ -385,7 +385,7 @@ var (
 		nil,
 		big.NewInt(0),
 		nil,
-		nil, nil, nil,
+		nil, nil, nil, nil,
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
@@ -413,7 +413,7 @@ var (
 		nil,
 		big.NewInt(0),
 		nil,
-		nil, nil, nil,
+		nil, nil, nil, nil,
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
@@ -505,6 +505,7 @@ type ChainConfig struct {
 	DeployOriginBlock      *big.Int `json:"deployOriginBlock,omitempty"`
 	DeploymentHookFixBlock *big.Int `json:"deploymentHookFixBlock,omitempty"`
 	DeployerFactoryBlock   *big.Int `json:"deployerFactoryBlock,omitempty"`
+	FieryDribbleBlock      *big.Int `json:"FieryDribbleBlock,omitempty"`
 
 	YoloV3Block   *big.Int `json:"yoloV3Block,omitempty"`   // YOLO v3: Gas repricings TODO @holiman add EIP references
 	EWASMBlock    *big.Int `json:"ewasmBlock,omitempty"`    // EWASM switch block (nil = no fork, 0 = already activated)	RamanujanBlock      *big.Int `json:"ramanujanBlock,omitempty" toml:",omitempty"`      // ramanujanBlock switch block (nil = no fork, 0 = already activated)
@@ -878,6 +879,7 @@ type Rules struct {
 	HasRuntimeUpgrade    bool
 	HasDeployOrigin      bool
 	HasDeploymentHookFix bool
+	HasFieryDribble      bool
 	DeployerFactory      bool
 }
 
@@ -903,6 +905,7 @@ func (c *ChainConfig) Rules(num *big.Int) Rules {
 		HasRuntimeUpgrade:    isForked(c.RuntimeUpgradeBlock, num),
 		HasDeployOrigin:      isForked(c.DeployOriginBlock, num),
 		HasDeploymentHookFix: isForked(c.DeploymentHookFixBlock, num),
+		HasFieryDribble:      isForked(c.FieryDribbleBlock, num),
 		DeployerFactory:      isForked(c.DeployerFactoryBlock, num),
 	}
 }
