@@ -121,6 +121,9 @@ func (ct *clientTree) syncNextLink(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if len(ct.links.missing) == 0 {
+		return nil
+	}
 	ct.links.missing = ct.links.missing[1:]
 
 	if dest, ok := e.(*linkEntry); ok {

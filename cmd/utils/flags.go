@@ -88,6 +88,12 @@ import (
 // are the same for all commands.
 
 var (
+	// Genesis settings
+	GenesisFlag = cli.StringFlag{
+		Name:  "genesis",
+		Usage: "Path to genesis JSON file",
+	}
+
 	// General settings
 	DataDirFlag = &flags.DirectoryFlag{
 		Name:     "datadir",
@@ -193,6 +199,18 @@ var (
 		Usage:    "Initial block gas limit",
 		Value:    11500000,
 		Category: flags.DevCategory,
+	}
+	ChilizMainnetFlag = cli.BoolFlag{
+		Name:  "chiliz",
+		Usage: "Chiliz Chain 2 network: pre-configured proof-of-stake network",
+	}
+	ChilizTestnetFlag = cli.BoolFlag{
+		Name:  "scoville",
+		Usage: "Chiliz Scoville testnet network",
+	}
+	ChilizSpicyFlag = cli.BoolFlag{
+		Name:  "spicy",
+		Usage: "Chiliz Spicy testnet network",
 	}
 
 	IdentityFlag = &cli.StringFlag{
@@ -1162,6 +1180,12 @@ func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 	switch {
 	case ctx.IsSet(BootnodesFlag.Name):
 		urls = SplitAndTrim(ctx.String(BootnodesFlag.Name))
+	case ctx.Bool(ChilizMainnetFlag.Name):
+		urls = params.ChilizMainnetBootnodes
+	case ctx.Bool(ChilizTestnetFlag.Name):
+		urls = params.ChilizScovilleBootnodes
+	case ctx.Bool(ChilizSpicyFlag.Name):
+		urls = params.ChilizSpicyBootnodes
 	case cfg.BootstrapNodes != nil:
 		return // already set, don't apply defaults.
 	}
@@ -1608,6 +1632,12 @@ func SetDataDir(ctx *cli.Context, cfg *node.Config) {
 	switch {
 	case ctx.IsSet(DataDirFlag.Name):
 		cfg.DataDir = ctx.String(DataDirFlag.Name)
+	case ctx.Bool(ChilizMainnetFlag.Name) && cfg.DataDir == node.DefaultDataDir():
+		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "chiliz")
+	case ctx.Bool(ChilizTestnetFlag.Name) && cfg.DataDir == node.DefaultDataDir():
+		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "chiliz")
+	case ctx.Bool(ChilizSpicyFlag.Name) && cfg.DataDir == node.DefaultDataDir():
+		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "chiliz")
 	case ctx.Bool(DeveloperFlag.Name):
 		cfg.DataDir = "" // unless explicitly requested, use memory databases
 	}
@@ -1791,7 +1821,7 @@ func CheckExclusive(ctx *cli.Context, args ...interface{}) {
 // SetEthConfig applies eth-related command line flags to the config.
 func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Avoid conflicting network flags
-	CheckExclusive(ctx, BSCMainnetFlag, DeveloperFlag)
+	CheckExclusive(ctx, BSCMainnetFlag, DeveloperFlag, ChilizMainnetFlag, ChilizTestnetFlag, ChilizSpicyFlag)
 	CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
 
 	// Set configurations from CLI flags
@@ -1984,6 +2014,18 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		}
 		cfg.Genesis = core.DefaultChapelGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.ChapelGenesisHash)
+	case ctx.Bool(ChilizMainnetFlag.Name):
+		if !ctx.IsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = 88888
+		}
+	case ctx.Bool(ChilizTestnetFlag.Name):
+		if !ctx.IsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = 88880
+		}
+	case ctx.Bool(ChilizSpicyFlag.Name):
+		if !ctx.IsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = 88882
+		}
 	case ctx.Bool(DeveloperFlag.Name):
 		if !ctx.IsSet(NetworkIdFlag.Name) {
 			cfg.NetworkId = 1337
@@ -2330,6 +2372,12 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 		genesis = core.DefaultBSCGenesisBlock()
 	case ctx.Bool(ChapelFlag.Name):
 		genesis = core.DefaultChapelGenesisBlock()
+	case ctx.Bool(ChilizMainnetFlag.Name):
+		genesis = core.DefaultChilizMainnetGenesisBlock()
+	case ctx.Bool(ChilizTestnetFlag.Name):
+		genesis = core.DefaultChilizTestnetGenesisBlock()
+	case ctx.Bool(ChilizSpicyFlag.Name):
+		genesis = core.DefaultChilizSpicyGenesisBlock()
 	case ctx.Bool(DeveloperFlag.Name):
 		Fatalf("Developer chains are ephemeral")
 	}

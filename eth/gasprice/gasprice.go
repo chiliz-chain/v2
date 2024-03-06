@@ -35,7 +35,7 @@ import (
 const sampleNumber = 3 // Number of transactions sampled in a block
 
 var (
-	DefaultMaxPrice    = big.NewInt(100 * params.GWei)
+	DefaultMaxPrice    = big.NewInt(20000 * params.GWei)
 	DefaultIgnorePrice = big.NewInt(4 * params.Wei)
 )
 

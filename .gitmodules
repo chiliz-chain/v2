@@ -6,3 +6,6 @@
 	path = tests/evm-benchmarks
 	url = https://github.com/ipsilon/evm-benchmarks
 	shallow = true
+[submodule "genesis"]
+	path = genesis
+	url = git@github.com:chiliz-chain/v2-genesis-config.git

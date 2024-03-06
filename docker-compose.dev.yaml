@@ -1,0 +1,68 @@
+version: "3"
+services:
+  bootnode:
+    build: "./"
+    command:
+      - "--datadir=/datadir"
+      - "--genesis=/datadir/localnet.json"
+      - "--networkid=17243"
+      - "--nodekeyhex=633ab917d09441de38ae9251e79ced41df39a1c338842b826c18fb1773246e18"
+      - "--syncmode=full"
+      - "--http"
+      - "--http.addr=0.0.0.0"
+      - "--http.api=eth,net,web3,debug,trace,txpool"
+      - "--http.port=8545"
+      - "--http.corsdomain=*"
+      - "--http.vhosts=*"
+      - "--light.serve=50"
+      - "--light.maxpeers=2"
+    volumes:
+      - "./genesis/localnet.json:/datadir/localnet.json"
+    ports:
+      - "8545:8545"
+      - "8546:8546"
+    restart: always
+  validator:
+    build: "./"
+    command:
+      - "--datadir=/datadir"
+      - "--genesis=/datadir/localnet.json"
+      - "--mine"
+      - "--password=/datadir/password.txt"
+      - "--allow-insecure-unlock"
+      - "--unlock=0x00a601f45688dba8a070722073b015277cf36725"
+      - "--miner.etherbase=0x00a601f45688dba8a070722073b015277cf36725"
+      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      - "--gcmode=archive"
+      - "--syncmode=full"
+      - "--networkid=17243"
+    volumes:
+      - "./genesis/localnet.json:/datadir/localnet.json"
+      - "./genesis/keystore:/datadir/keystore"
+      - "./genesis/password.txt:/datadir/password.txt"
+    restart: always
+  faucet:
+    build:
+      context: "./"
+      dockerfile: Dockerfile.faucet
+    command:
+      - "--genesis=/datadir/localnet.json"
+      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      - "--network=17243"
+      - "--faucet.name='Chiliz Testnet'"
+      - "--faucet.amount=1"
+      - "--account.json=/datadir/keystore/UTC--2021-04-15T12-00-01.000Z--00a601f45688dba8a070722073b015277cf36725"
+      - "--account.pass=/datadir/password.txt"
+      - "--noauth=true"
+      - "--faucet.minutes=1"
+      - "--faucet.fixedprice=7000000000"
+    env_file:
+      - ".env.faucet"
+    volumes:
+      - "./genesis/localnet.json:/datadir/localnet.json"
+      - "./genesis/keystore:/datadir/keystore"
+      - "./genesis/password.txt:/datadir/password.txt"
+    restart: always
+    ports:
+      - "8087:8080"
+      - "6060:6060"

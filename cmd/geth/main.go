@@ -54,6 +54,9 @@ const (
 var (
 	// flags that configure the node
 	nodeFlags = flags.Merge([]cli.Flag{
+		utils.ChilizTestnetFlag,
+		utils.ChilizSpicyFlag,
+		utils.ChilizMainnetFlag,
 		utils.IdentityFlag,
 		utils.UnlockedAccountFlag,
 		utils.PasswordFileFlag,

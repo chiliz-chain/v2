@@ -1,0 +1,131 @@
+version: "3"
+services:
+
+  bootnode:
+    build: "./"
+    command:
+      - "--datadir=/datadir"
+      - "--genesis=/datadir/devnet.json"
+      - "--networkid=17243"
+      - "--nodekeyhex=633ab917d09441de38ae9251e79ced41df39a1c338842b826c18fb1773246e18"
+      - "--syncmode=full"
+      - "--http"
+      - "--http.addr=0.0.0.0"
+      - "--http.api=eth,net,web3,debug,trace,txpool"
+      - "--http.port=8545"
+      - "--http.corsdomain=*"
+      - "--http.vhosts=*"
+    volumes:
+      - "./genesis/devnet.json:/datadir/devnet.json"
+    ports:
+      - "8545:8545"
+      - "8546:8546"
+    restart: always
+
+  validator_1:
+    build: "./"
+    command:
+      - "--datadir=/datadir"
+      - "--genesis=/datadir/devnet.json"
+      - "--mine"
+      - "--password=/datadir/password.txt"
+      - "--allow-insecure-unlock"
+      - "--unlock=0x08fae3885e299c24ff9841478eb946f41023ac69"
+      - "--miner.etherbase=0x08fae3885e299c24ff9841478eb946f41023ac69"
+      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      - "--gcmode=archive"
+      - "--syncmode=full"
+      - "--networkid=17243"
+    volumes:
+      - "./genesis/devnet.json:/datadir/devnet.json"
+      - "./genesis/keystore:/datadir/keystore"
+      - "./genesis/password.txt:/datadir/password.txt"
+    restart: always
+  validator_2:
+    build: "./"
+    command:
+      - "--datadir=/datadir"
+      - "--genesis=/datadir/devnet.json"
+      - "--mine"
+      - "--password=/datadir/password.txt"
+      - "--allow-insecure-unlock"
+      - "--unlock=0x751aaca849b09a3e347bbfe125cf18423cc24b40"
+      - "--miner.etherbase=0x751aaca849b09a3e347bbfe125cf18423cc24b40"
+      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      - "--gcmode=archive"
+      - "--syncmode=full"
+      - "--networkid=17243"
+    volumes:
+      - "./genesis/devnet.json:/datadir/devnet.json"
+      - "./genesis/keystore:/datadir/keystore"
+      - "./genesis/password.txt:/datadir/password.txt"
+    restart: always
+  validator_3:
+    build: "./"
+    command:
+      - "--datadir=/datadir"
+      - "--genesis=/datadir/devnet.json"
+      - "--mine"
+      - "--password=/datadir/password.txt"
+      - "--allow-insecure-unlock"
+      - "--unlock=0xa6ff33e3250cc765052ac9d7f7dfebda183c4b9b"
+      - "--miner.etherbase=0xa6ff33e3250cc765052ac9d7f7dfebda183c4b9b"
+      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      - "--gcmode=archive"
+      - "--syncmode=full"
+      - "--networkid=17243"
+    volumes:
+      - "./genesis/devnet.json:/datadir/devnet.json"
+      - "./genesis/keystore:/datadir/keystore"
+      - "./genesis/password.txt:/datadir/password.txt"
+    restart: always
+  validator_4:
+    build: "./"
+    command:
+      - "--datadir=/datadir"
+      - "--genesis=/datadir/devnet.json"
+      - "--mine"
+      - "--password=/datadir/password.txt"
+      - "--allow-insecure-unlock"
+      - "--unlock=0x49c0f7c8c11a4c80dc6449efe1010bb166818da8"
+      - "--miner.etherbase=0x49c0f7c8c11a4c80dc6449efe1010bb166818da8"
+      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      - "--gcmode=archive"
+      - "--syncmode=full"
+      - "--networkid=17243"
+    volumes:
+      - "./genesis/devnet.json:/datadir/devnet.json"
+      - "./genesis/keystore:/datadir/keystore"
+      - "./genesis/password.txt:/datadir/password.txt"
+    restart: always
+  validator_5:
+    build: "./"
+    command:
+      - "--datadir=/datadir"
+      - "--genesis=/datadir/devnet.json"
+      - "--mine"
+      - "--password=/datadir/password.txt"
+      - "--allow-insecure-unlock"
+      - "--unlock=0x8e1ea6eaa09c3b40f4a51fcd056a031870a0549a"
+      - "--miner.etherbase=0x8e1ea6eaa09c3b40f4a51fcd056a031870a0549a"
+      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      - "--gcmode=archive"
+      - "--syncmode=full"
+      - "--networkid=17243"
+    volumes:
+      - "./genesis/devnet.json:/datadir/devnet.json"
+      - "./genesis/keystore:/datadir/keystore"
+      - "./genesis/password.txt:/datadir/password.txt"
+    restart: always
+
+  # nginx:
+  #   image: nginx
+  #   volumes:
+  #     - /root/.acme.sh/:/root/.acme.sh/
+  #     - ./nginx.conf:/etc/nginx/conf.d/00-default.conf
+  #   ports:
+  #     - "443:443"
+  #   restart: always
+
+volumes:
+  postgresql_data: { }

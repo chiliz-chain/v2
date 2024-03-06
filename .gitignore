@@ -52,3 +52,10 @@ cmd/geth/__debug_bin
 cmd/bootnode/bootnode
 graphql/__debug_bin
 logs/
+
+geth.exe
+geth
+/datadir
+build.cmd
+build.bash
+.deps
