@@ -89,9 +89,10 @@ import (
 
 var (
 	// Genesis settings
-	GenesisFlag = cli.StringFlag{
-		Name:  "genesis",
-		Usage: "Path to genesis JSON file",
+	GenesisFlag = &cli.StringFlag{
+		Name:     "genesis",
+		Usage:    "Path to genesis JSON file",
+		Category: flags.EthCategory,
 	}
 
 	// General settings
@@ -200,17 +201,20 @@ var (
 		Value:    11500000,
 		Category: flags.DevCategory,
 	}
-	ChilizMainnetFlag = cli.BoolFlag{
-		Name:  "chiliz",
-		Usage: "Chiliz Chain 2 network: pre-configured proof-of-stake network",
+	ChilizMainnetFlag = &cli.BoolFlag{
+		Name:     "chiliz",
+		Usage:    "Chiliz Chain 2 network: pre-configured proof-of-stake network",
+		Category: flags.EthCategory,
 	}
-	ChilizTestnetFlag = cli.BoolFlag{
-		Name:  "scoville",
-		Usage: "Chiliz Scoville testnet network",
+	ChilizTestnetFlag = &cli.BoolFlag{
+		Name:     "scoville",
+		Usage:    "Chiliz Scoville testnet network",
+		Category: flags.EthCategory,
 	}
-	ChilizSpicyFlag = cli.BoolFlag{
-		Name:  "spicy",
-		Usage: "Chiliz Spicy testnet network",
+	ChilizSpicyFlag = &cli.BoolFlag{
+		Name:     "spicy",
+		Usage:    "Chiliz Spicy testnet network",
+		Category: flags.EthCategory,
 	}
 
 	IdentityFlag = &cli.StringFlag{
@@ -1114,10 +1118,10 @@ Please note that --` + MetricsHTTPFlag.Name + ` must be set to start the server.
 var (
 	// TestnetFlags is the flag group of all built-in supported testnets.
 	TestnetFlags = []cli.Flag{
-		ChapelFlag,
+		ChilizSpicyFlag,
 	}
 	// NetworkFlags is the flag group of all built-in supported networks.
-	NetworkFlags = append([]cli.Flag{BSCMainnetFlag}, TestnetFlags...)
+	NetworkFlags = append([]cli.Flag{ChilizMainnetFlag}, TestnetFlags...)
 
 	// DatabasePathFlags is the flag group of all database path flags.
 	DatabasePathFlags = []cli.Flag{

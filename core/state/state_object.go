@@ -93,6 +93,9 @@ type stateObject struct {
 	created bool
 }
 
+// exporting it to be backward compatible
+type StateObject = stateObject
+
 // empty returns whether the account is considered empty.
 func (s *stateObject) empty() bool {
 	return s.data.Nonce == 0 && s.data.Balance.Sign() == 0 && bytes.Equal(s.data.CodeHash, types.EmptyCodeHash.Bytes())

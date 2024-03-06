@@ -54,9 +54,7 @@ const (
 var (
 	// flags that configure the node
 	nodeFlags = flags.Merge([]cli.Flag{
-		utils.ChilizTestnetFlag,
-		utils.ChilizSpicyFlag,
-		utils.ChilizMainnetFlag,
+		utils.GenesisFlag,
 		utils.IdentityFlag,
 		utils.UnlockedAccountFlag,
 		utils.PasswordFileFlag,
@@ -319,6 +317,8 @@ func prepare(ctx *cli.Context) {
   5. Networking is disabled; there is no listen-address, the maximum number of peers is set
      to 0, and discovery is disabled.
 `)
+	case ctx.IsSet(utils.ChilizSpicyFlag.Name):
+		log.Info("Starting Chiliz Chain on Spicy testnet...")
 
 	case !ctx.IsSet(utils.NetworkIdFlag.Name):
 		log.Info("Starting Geth on BSC mainnet...")

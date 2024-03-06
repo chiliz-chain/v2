@@ -56,4 +56,4 @@ devtools:
 	@type "protoc" 2> /dev/null || echo 'Please install protoc'
 
 docker:
-	docker build --pull -t bnb-chain/bsc:latest -f Dockerfile .
+	docker build --pull -t chilizchain/ccv2-geth:latest -f Dockerfile .

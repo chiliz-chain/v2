@@ -23,7 +23,7 @@ import (
 
 	"github.com/holiman/uint256"
 
-	systemcontract2 "github.com/ethereum/go-ethereum/core/vm/systemcontract"
+	"github.com/ethereum/go-ethereum/core/vm/systemcontract"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -48,7 +48,7 @@ type (
 )
 
 func (evm *EVM) precompile(addr, caller common.Address) (PrecompiledContract, bool) {
-	evmHook := systemcontract2.CreateEvmHook(addr, systemcontract2.EvmHookContext{
+	evmHook := systemcontract.CreateEvmHook(addr, systemcontract.EvmHookContext{
 		CallerAddress: caller,
 		StateDb:       evm.StateDB,
 		ChainConfig:   evm.chainConfig,

@@ -27,7 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	cmath "github.com/ethereum/go-ethereum/common/math"
-	systemcontract "github.com/ethereum/go-ethereum/common/systemcontracts"
+	"github.com/ethereum/go-ethereum/common/systemcontract"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
@@ -975,7 +975,6 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 
 	// Mix digest is reserved for now, set to empty
 	header.MixDigest = common.Hash{}
-
 	return nil
 }
 

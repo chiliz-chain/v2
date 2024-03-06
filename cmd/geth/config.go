@@ -18,6 +18,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -34,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/usbwallet"
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/config"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
@@ -122,6 +124,37 @@ func defaultNodeConfig() node.Config {
 	return cfg
 }
 
+func readGenesisConfig(ctx *cli.Context) *core.Genesis {
+	// Chiliz Scoville just return already stored genesis config
+	if ctx.Bool(utils.ChilizTestnetFlag.Name) {
+		return config.ScovilleGenesisConfig
+	}
+	// Chiliz Spicy just return already stored genesis config
+	if ctx.Bool(utils.ChilizSpicyFlag.Name) {
+		return config.SpicyGenesisConfig
+	}
+	// Chiliz Mainnet just return already stored genesis config
+	if ctx.Bool(utils.ChilizMainnetFlag.Name) {
+		return config.ChilizMainnetGenesisConfig
+	}
+	// Make sure we have a valid genesis JSON
+	genesisPath := ctx.String(utils.GenesisFlag.Name)
+	if len(genesisPath) == 0 {
+		utils.Fatalf("Must supply path to genesis JSON file")
+	}
+	file, err := os.Open(genesisPath)
+	if err != nil {
+		utils.Fatalf("Failed to read genesis file: %v", err)
+	}
+	//goland:noinspection GoUnhandledErrorResult
+	defer file.Close()
+	genesis := new(core.Genesis)
+	if err := json.NewDecoder(file).Decode(genesis); err != nil {
+		utils.Fatalf("invalid genesis file: %v", err)
+	}
+	return genesis
+}
+
 // loadBaseConfig loads the gethConfig based on the given command line
 // parameters and config file.
 func loadBaseConfig(ctx *cli.Context) gethConfig {
@@ -138,6 +171,8 @@ func loadBaseConfig(ctx *cli.Context) gethConfig {
 			utils.Fatalf("%v", err)
 		}
 	}
+
+	cfg.Eth.Genesis = readGenesisConfig(ctx)
 
 	scheme := cfg.Eth.StateScheme
 	if scheme != "" {
@@ -172,20 +207,6 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
 	}
 	applyMetricConfig(ctx, &cfg)
 
-	// Open and initialise both full and light databases
-	for _, name := range []string{"chaindata", "lightchaindata"} {
-		chaindb, err := stack.OpenDatabase(name, 0, 0, "", false)
-		if err != nil {
-			utils.Fatalf("Failed to open database: %v", err)
-		}
-		_, hash, err := core.SetupGenesisBlock(chaindb, cfg.Eth.Genesis)
-		if err != nil {
-			utils.Fatalf("Failed to write genesis block: %v", err)
-		}
-		_ = chaindb.Close()
-		log.Info("Successfully wrote genesis state", "database", name, "hash", hash.String())
-	}
-
 	return stack, cfg
 }
 
@@ -213,6 +234,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		v := ctx.Uint64(utils.OverrideVerkle.Name)
 		cfg.Eth.OverrideVerkle = &v
 	}
+
 	backend, _ := utils.RegisterEthService(stack, &cfg.Eth)
 
 	// Configure log filter RPC API.

@@ -881,11 +881,11 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 	for _, cur := range []fork{
 		{name: "mirrorSyncBlock", block: c.MirrorSyncBlock},
 		{name: "brunoBlock", block: c.BrunoBlock},
-		{name: "eulerBlock", block: c.EulerBlock},
+		// {name: "eulerBlock", block: c.EulerBlock}, // fork not enabled
 		{name: "gibbsBlock", block: c.GibbsBlock},
 		{name: "planckBlock", block: c.PlanckBlock},
-		{name: "lubanBlock", block: c.LubanBlock},
-		{name: "platoBlock", block: c.PlatoBlock},
+		// {name: "lubanBlock", block: c.LubanBlock}, // fork not enabled
+		// {name: "platoBlock", block: c.PlatoBlock}, // fork not enabled
 		{name: "hertzBlock", block: c.HertzBlock},
 		{name: "hertzfixBlock", block: c.HertzfixBlock},
 		{name: "keplerTime", timestamp: c.KeplerTime},
@@ -1186,6 +1186,7 @@ type Rules struct {
 	HasDeployOrigin                          bool
 	HasDeploymentHookFix                     bool
 	DeployerFactory                          bool
+	IsCayenne                                bool
 	IsMerge                                  bool
 	IsNano                                   bool
 	IsMoran                                  bool
