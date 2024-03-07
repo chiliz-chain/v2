@@ -1,4 +1,4 @@
-// Copyright 2019 The go-ethereum Authors
+// Copyright 2020 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -37,7 +37,7 @@ type blockPropagation struct {
 	td    *big.Int
 }
 
-// broadcastBlocks is a write loop that multiplexes blocks and block accouncements
+// broadcastBlocks is a write loop that multiplexes blocks and block announcements
 // to the remote peer. The goal is to have an async writer that does not lock up
 // node internals and at the same time rate limits queued data.
 func (p *Peer) broadcastBlocks() {
@@ -76,18 +76,18 @@ func (p *Peer) broadcastTransactions() {
 		if done == nil && len(queue) > 0 {
 			// Pile transaction until we reach our allowed network limit
 			var (
-				hashes []common.Hash
-				txs    []*types.Transaction
-				size   common.StorageSize
+				hashesCount uint64
+				txs         []*types.Transaction
+				size        common.StorageSize
 			)
 			for i := 0; i < len(queue) && size < maxTxPacketSize; i++ {
 				if tx := p.txpool.Get(queue[i]); tx != nil {
-					txs = append(txs, tx)
-					size += tx.Size()
+					txs = append(txs, tx.Tx)
+					size += common.StorageSize(tx.Tx.Size())
 				}
-				hashes = append(hashes, queue[i])
+				hashesCount++
 			}
-			queue = queue[:copy(queue, queue[len(hashes):])]
+			queue = queue[:copy(queue, queue[hashesCount:])]
 
 			// If there's anything available to transfer, fire up an async writer
 			if len(txs) > 0 {
@@ -146,13 +146,17 @@ func (p *Peer) announceTransactions() {
 		if done == nil && len(queue) > 0 {
 			// Pile transaction hashes until we reach our allowed network limit
 			var (
-				count   int
-				pending []common.Hash
-				size    common.StorageSize
+				count        int
+				pending      []common.Hash
+				pendingTypes []byte
+				pendingSizes []uint32
+				size         common.StorageSize
 			)
 			for count = 0; count < len(queue) && size < maxTxPacketSize; count++ {
-				if p.txpool.Get(queue[count]) != nil {
+				if tx := p.txpool.Get(queue[count]); tx != nil {
 					pending = append(pending, queue[count])
+					pendingTypes = append(pendingTypes, tx.Tx.Type())
+					pendingSizes = append(pendingSizes, uint32(tx.Tx.Size()))
 					size += common.HashLength
 				}
 			}
@@ -163,9 +167,16 @@ func (p *Peer) announceTransactions() {
 			if len(pending) > 0 {
 				done = make(chan struct{})
 				gopool.Submit(func() {
-					if err := p.sendPooledTransactionHashes(pending); err != nil {
-						fail <- err
-						return
+					if p.version >= ETH68 {
+						if err := p.sendPooledTransactionHashes68(pending, pendingTypes, pendingSizes); err != nil {
+							fail <- err
+							return
+						}
+					} else {
+						if err := p.sendPooledTransactionHashes66(pending); err != nil {
+							fail <- err
+							return
+						}
 					}
 					close(done)
 					//p.Log().Trace("Sent transaction announcements", "count", len(pending))

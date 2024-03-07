@@ -432,9 +432,14 @@ func (db *DB) UpdateFindFailsV5(id ID, ip net.IP, fails int) error {
 	return db.storeInt64(v5Key(id, ip, dbNodeFindFails), int64(fails))
 }
 
-// LocalSeq retrieves the local record sequence counter.
+// localSeq retrieves the local record sequence counter, defaulting to the current
+// timestamp if no previous exists. This ensures that wiping all data associated
+// with a node (apart from its key) will not generate already used sequence nums.
 func (db *DB) localSeq(id ID) uint64 {
-	return db.fetchUint64(localItemKey(id, dbLocalSeq))
+	if seq := db.fetchUint64(localItemKey(id, dbLocalSeq)); seq > 0 {
+		return seq
+	}
+	return nowMilliseconds()
 }
 
 // storeLocalSeq stores the local record sequence counter.
@@ -494,8 +499,14 @@ func nextNode(it iterator.Iterator) *Node {
 	return nil
 }
 
-// close flushes and closes the database files.
+// Close flushes and closes the database files.
 func (db *DB) Close() {
 	close(db.quit)
 	db.lvl.Close()
+}
+
+func (db *DB) Size() int64 {
+	var stats leveldb.DBStats
+	db.lvl.Stats(&stats)
+	return stats.LevelSizes.Sum()
 }

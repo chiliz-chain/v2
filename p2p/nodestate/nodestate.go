@@ -117,7 +117,7 @@ type (
 		decode func([]byte) (interface{}, error)
 	}
 
-	// stateSetup contains the list of flags and fields used by the application
+	// Setup contains the list of flags and fields used by the application
 	Setup struct {
 		Version uint
 		flags   []flagDefinition
@@ -333,7 +333,7 @@ func NewNodeStateMachine(db ethdb.KeyValueStore, dbKey []byte, clock mclock.Cloc
 		fields:    make([]*fieldInfo, len(setup.fields)),
 	}
 	ns.opWait = sync.NewCond(&ns.lock)
-	stateNameMap := make(map[string]int)
+	stateNameMap := make(map[string]int, len(setup.flags))
 	for index, flag := range setup.flags {
 		if _, ok := stateNameMap[flag.name]; ok {
 			panic("Node state flag name collision: " + flag.name)
@@ -343,7 +343,7 @@ func NewNodeStateMachine(db ethdb.KeyValueStore, dbKey []byte, clock mclock.Cloc
 			ns.saveFlags |= bitMask(1) << uint(index)
 		}
 	}
-	fieldNameMap := make(map[string]int)
+	fieldNameMap := make(map[string]int, len(setup.fields))
 	for index, field := range setup.fields {
 		if _, ok := fieldNameMap[field.name]; ok {
 			panic("Node field name collision: " + field.name)
@@ -808,7 +808,14 @@ func (ns *NodeStateMachine) addTimeout(n *enode.Node, mask bitMask, timeout time
 	ns.removeTimeouts(node, mask)
 	t := &nodeStateTimeout{mask: mask}
 	t.timer = ns.clock.AfterFunc(timeout, func() {
-		ns.SetState(n, Flags{}, Flags{mask: t.mask, setup: ns.setup}, 0)
+		ns.lock.Lock()
+		defer ns.lock.Unlock()
+
+		if !ns.opStart() {
+			return
+		}
+		ns.setState(n, Flags{}, Flags{mask: t.mask, setup: ns.setup}, 0)
+		ns.opFinish()
 	})
 	node.timeouts = append(node.timeouts, t)
 	if mask&ns.saveFlags != 0 {

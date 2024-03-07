@@ -28,7 +28,9 @@ const schema string = `
     # Strings may be either decimal or 0x-prefixed hexadecimal. Output values are all
     # 0x-prefixed hexadecimal.
     scalar BigInt
-    # Long is a 64 bit unsigned integer.
+    # Long is a 64 bit unsigned integer. Input is accepted as either a JSON number or as a string.
+    # Strings may be either decimal or 0x-prefixed hexadecimal. Output values are all
+    # 0x-prefixed hexadecimal.
     scalar Long
 
     schema {
@@ -57,7 +59,7 @@ const schema string = `
     # Log is an Ethereum event log.
     type Log {
         # Index is the index of this log in the block.
-        index: Int!
+        index: Long!
         # Account is the account which generated this log - this will always
         # be a contract account.
         account(block: Long): Account!
@@ -69,10 +71,22 @@ const schema string = `
         transaction: Transaction!
     }
 
-    #EIP-2718 
+    #EIP-2718
     type AccessTuple{
         address: Address!
-        storageKeys : [Bytes32!]
+        storageKeys : [Bytes32!]!
+    }
+
+    # EIP-4895
+    type Withdrawal {
+        # Index is a monotonically increasing identifier issued by consensus layer.
+        index: Long!
+        # Validator is index of the validator associated with withdrawal.
+        validator: Long!
+        # Recipient address of the withdrawn amount.
+        address: Address!
+        # Amount is the withdrawal value in Gwei.
+        amount: Long!
     }
 
     # Transaction is an Ethereum transaction.
@@ -83,7 +97,7 @@ const schema string = `
         nonce: Long!
         # Index is the index of this transaction in the parent block. This will
         # be null if the transaction has not yet been mined.
-        index: Int
+        index: Long
         # From is the account that sent this transaction - this will always be
         # an externally owned account.
         from(block: Long): Account!
@@ -94,6 +108,12 @@ const schema string = `
         value: BigInt!
         # GasPrice is the price offered to miners for gas, in wei per unit.
         gasPrice: BigInt!
+        # MaxFeePerGas is the maximum fee per gas offered to include a transaction, in wei.
+        maxFeePerGas: BigInt
+        # MaxPriorityFeePerGas is the maximum miner tip per gas offered to include a transaction, in wei.
+        maxPriorityFeePerGas: BigInt
+        # EffectiveTip is the actual amount of reward going to miner after considering the max fee cap.
+        effectiveTip: BigInt
         # Gas is the maximum amount of gas this transaction can consume.
         gas: Long!
         # InputData is the data supplied to the target of the transaction.
@@ -114,6 +134,13 @@ const schema string = `
         # this transaction. If the transaction has not yet been mined, this field
         # will be null.
         cumulativeGasUsed: Long
+        # EffectiveGasPrice is actual value per gas deducted from the sender's
+        # account. Before EIP-1559, this is equal to the transaction's gas price.
+        # After EIP-1559, it is baseFeePerGas + min(maxFeePerGas - baseFeePerGas,
+        # maxPriorityFeePerGas). Legacy transactions and EIP-2930 transactions are
+        # coerced into the EIP-1559 format by setting both maxFeePerGas and
+        # maxPriorityFeePerGas as the transaction's gas price.
+        effectiveGasPrice: BigInt
         # CreatedContract is the account that was created by a contract creation
         # transaction. If the transaction was not a contract creation transaction,
         # or it has not yet been mined, this field will be null.
@@ -124,9 +151,17 @@ const schema string = `
         r: BigInt!
         s: BigInt!
         v: BigInt!
-        #Envelope transaction support
-        type: Int
+        yParity: Long
+        # Envelope transaction support
+        type: Long
         accessList: [AccessTuple!]
+        # Raw is the canonical encoding of the transaction.
+        # For legacy transactions, it returns the RLP encoding.
+        # For EIP-2718 typed transactions, it returns the type and payload.
+        raw: Bytes!
+        # RawReceipt is the canonical encoding of the receipt. For post EIP-2718 typed transactions
+        # this is equivalent to TxType || ReceiptEncoding.
+        rawReceipt: Bytes!
     }
 
     # BlockFilterCriteria encapsulates log filter criteria for a filter applied
@@ -163,7 +198,7 @@ const schema string = `
         transactionsRoot: Bytes32!
         # TransactionCount is the number of transactions in this block. if
         # transactions are not available for this block, this field will be null.
-        transactionCount: Int
+        transactionCount: Long
         # StateRoot is the keccak256 hash of the state trie after this block was processed.
         stateRoot: Bytes32!
         # ReceiptsRoot is the keccak256 hash of the trie of transaction receipts in this block.
@@ -176,6 +211,10 @@ const schema string = `
         gasLimit: Long!
         # GasUsed is the amount of gas that was used executing transactions in this block.
         gasUsed: Long!
+        # BaseFeePerGas is the fee per unit of gas burned by the protocol in this block.
+        baseFeePerGas: BigInt
+        # NextBaseFeePerGas is the fee per unit of gas which needs to be burned in the next block.
+        nextBaseFeePerGas: BigInt
         # Timestamp is the unix timestamp at which this block was mined.
         timestamp: Long!
         # LogsBloom is a bloom filter that can be used to check if a block may
@@ -190,7 +229,7 @@ const schema string = `
         totalDifficulty: BigInt!
         # OmmerCount is the number of ommers (AKA uncles) associated with this
         # block. If ommers are unavailable, this field will be null.
-        ommerCount: Int
+        ommerCount: Long
         # Ommers is a list of ommer (AKA uncle) blocks associated with this block.
         # If ommers are unavailable, this field will be null. Depending on your
         # node, the transactions, transactionAt, transactionCount, ommers,
@@ -198,7 +237,7 @@ const schema string = `
         ommers: [Block]
         # OmmerAt returns the ommer (AKA uncle) at the specified index. If ommers
         # are unavailable, or the index is out of bounds, this field will be null.
-        ommerAt(index: Int!): Block
+        ommerAt(index: Long!): Block
         # OmmerHash is the keccak256 hash of all the ommers (AKA uncles)
         # associated with this block.
         ommerHash: Bytes32!
@@ -208,7 +247,7 @@ const schema string = `
         # TransactionAt returns the transaction at the specified index. If
         # transactions are unavailable for this block, or if the index is out of
         # bounds, this field will be null.
-        transactionAt(index: Int!): Transaction
+        transactionAt(index: Long!): Transaction
         # Logs returns a filtered set of logs from this block.
         logs(filter: BlockFilterCriteria!): [Log!]!
         # Account fetches an Ethereum account at the current block's state.
@@ -218,6 +257,16 @@ const schema string = `
         # EstimateGas estimates the amount of gas that will be required for
         # successful execution of a transaction at the current block's state.
         estimateGas(data: CallData!): Long!
+        # RawHeader is the RLP encoding of the block's header.
+        rawHeader: Bytes!
+        # Raw is the RLP encoding of the block.
+        raw: Bytes!
+        # WithdrawalsRoot is the withdrawals trie root in this block.
+        # If withdrawals are unavailable for this block, this field will be null.
+        withdrawalsRoot: Bytes32
+        # Withdrawals is a list of withdrawals associated with this block. If
+        # withdrawals are unavailable for this block, this field will be null.
+        withdrawals: [Withdrawal!]
     }
 
     # CallData represents the data associated with a local contract call.
@@ -231,6 +280,10 @@ const schema string = `
         gas: Long
         # GasPrice is the price, in wei, offered for each unit of gas.
         gasPrice: BigInt
+        # MaxFeePerGas is the maximum fee per gas offered, in wei.
+        maxFeePerGas: BigInt
+        # MaxPriorityFeePerGas is the maximum miner tip per gas offered, in wei.
+        maxPriorityFeePerGas: BigInt
         # Value is the value, in wei, sent along with the call.
         value: BigInt
         # Data is the data sent to the callee.
@@ -280,18 +333,12 @@ const schema string = `
         currentBlock: Long!
         # HighestBlock is the latest known block number.
         highestBlock: Long!
-        # PulledStates is the number of state entries fetched so far, or null
-        # if this is not known or not relevant.
-        pulledStates: Long
-        # KnownStates is the number of states the node knows of so far, or null
-        # if this is not known or not relevant.
-        knownStates: Long
     }
 
     # Pending represents the current pending state.
     type Pending {
       # TransactionCount is the number of transactions in the pending state.
-      transactionCount: Int!
+      transactionCount: Long!
       # Transactions is a list of transactions in the current pending state.
       transactions: [Transaction!]
       # Account fetches an Ethereum account for the pending state.
@@ -319,6 +366,9 @@ const schema string = `
         # GasPrice returns the node's estimate of a gas price sufficient to
         # ensure a transaction is mined in a timely fashion.
         gasPrice: BigInt!
+        # MaxPriorityFeePerGas returns the node's estimate of a gas tip sufficient
+        # to ensure a transaction is mined in a timely fashion.
+        maxPriorityFeePerGas: BigInt!
         # Syncing returns information on the current synchronisation state.
         syncing: SyncState
         # ChainID returns the current chain ID for transaction replay protection.

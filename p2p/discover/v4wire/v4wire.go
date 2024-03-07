@@ -1,4 +1,4 @@
-// Copyright 2019 The go-ethereum Authors
+// Copyright 2020 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -50,6 +50,8 @@ type (
 		Version    uint
 		From, To   Endpoint
 		Expiration uint64
+		ENRSeq     uint64 `rlp:"optional"` // Sequence number of local record, added by EIP-868.
+
 		// Ignore additional fields (for forward compatibility).
 		Rest []rlp.RawValue `rlp:"tail"`
 	}
@@ -58,10 +60,12 @@ type (
 	Pong struct {
 		// This field should mirror the UDP envelope address
 		// of the ping packet, which provides a way to discover the
-		// the external address (after NAT).
+		// external address (after NAT).
 		To         Endpoint
 		ReplyTok   []byte // This contains the hash of the ping packet.
 		Expiration uint64 // Absolute timestamp at which the packet becomes invalid.
+		ENRSeq     uint64 `rlp:"optional"` // Sequence number of local record, added by EIP-868.
+
 		// Ignore additional fields (for forward compatibility).
 		Rest []rlp.RawValue `rlp:"tail"`
 	}
@@ -82,23 +86,23 @@ type (
 		Rest []rlp.RawValue `rlp:"tail"`
 	}
 
-	// enrRequest queries for the remote node's record.
+	// ENRRequest queries for the remote node's record.
 	ENRRequest struct {
 		Expiration uint64
 		// Ignore additional fields (for forward compatibility).
 		Rest []rlp.RawValue `rlp:"tail"`
 	}
 
-	// enrResponse is the reply to enrRequest.
+	// ENRResponse is the reply to ENRRequest.
 	ENRResponse struct {
-		ReplyTok []byte // Hash of the enrRequest packet.
+		ReplyTok []byte // Hash of the ENRRequest packet.
 		Record   enr.Record
 		// Ignore additional fields (for forward compatibility).
 		Rest []rlp.RawValue `rlp:"tail"`
 	}
 )
 
-// This number is the maximum number of neighbor nodes in a Neigbors packet.
+// MaxNeighbors is the maximum number of neighbor nodes in a Neighbors packet.
 const MaxNeighbors = 12
 
 // This code computes the MaxNeighbors constant value.
@@ -157,18 +161,17 @@ func NewEndpoint(addr *net.UDPAddr, tcpPort uint16) Endpoint {
 }
 
 type Packet interface {
-	// packet name and type for logging purposes.
+	// Name is the name of the package, for logging purposes.
 	Name() string
+	// Kind is the packet type, for logging purposes.
 	Kind() byte
 }
 
-func (req *Ping) Name() string   { return "PING/v4" }
-func (req *Ping) Kind() byte     { return PingPacket }
-func (req *Ping) ENRSeq() uint64 { return seqFromTail(req.Rest) }
+func (req *Ping) Name() string { return "PING/v4" }
+func (req *Ping) Kind() byte   { return PingPacket }
 
-func (req *Pong) Name() string   { return "PONG/v4" }
-func (req *Pong) Kind() byte     { return PongPacket }
-func (req *Pong) ENRSeq() uint64 { return seqFromTail(req.Rest) }
+func (req *Pong) Name() string { return "PONG/v4" }
+func (req *Pong) Kind() byte   { return PongPacket }
 
 func (req *Findnode) Name() string { return "FINDNODE/v4" }
 func (req *Findnode) Kind() byte   { return FindnodePacket }
@@ -185,15 +188,6 @@ func (req *ENRResponse) Kind() byte   { return ENRResponsePacket }
 // Expired checks whether the given UNIX time stamp is in the past.
 func Expired(ts uint64) bool {
 	return time.Unix(int64(ts), 0).Before(time.Now())
-}
-
-func seqFromTail(tail []rlp.RawValue) uint64 {
-	if len(tail) == 0 {
-		return 0
-	}
-	var seq uint64
-	rlp.DecodeBytes(tail[0], &seq)
-	return seq
 }
 
 // Encoder/decoder.
