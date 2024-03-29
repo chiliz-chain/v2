@@ -3,8 +3,11 @@ package parlia
 import (
 	"crypto/rand"
 	"fmt"
+	"math"
+	"math/big"
 	mrand "math/rand"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/sha3"
 
@@ -595,6 +598,89 @@ func TestSimulateP2P(t *testing.T) {
 
 		if c.CheckChain() == false {
 			t.Fatalf("[Testcase %d] chain not works as expected", index)
+		}
+	}
+}
+
+func TestGetNewSupplyForBlock(t *testing.T) {
+	// These numbers are rounded. This test verifies that we are aligned with general vision.
+	expectedPctLt13 := [][]float64{
+		[]float64{7.20, 8.80},
+		[]float64{5.96, 7.20},
+		[]float64{5.00, 5.96},
+		[]float64{4.25, 5.00},
+		[]float64{3.66, 4.25},
+		[]float64{3.21, 3.66},
+		[]float64{2.85, 3.21},
+		[]float64{2.57, 2.85},
+		[]float64{2.36, 2.57},
+		[]float64{2.19, 2.36},
+		[]float64{2.06, 2.19},
+		[]float64{1.96, 2.06},
+		[]float64{0.0, 1.96},
+	}
+	tries := mrand.Intn(10)
+	blocksPerYear := 10512000
+	yearInSeconds := int64(365 * 24 * 60 * 60)
+	forkTs := time.Now().Unix()
+	totalSupply := big.NewInt(8_888_888_888)
+	totalSupply.Mul(totalSupply, big.NewInt(1e18))
+
+	getExpectedBlockAmount := func(totalSupply, infPct *big.Int) *big.Int {
+		expectedAmount := big.NewInt(0)
+		expectedAmount.Mul(totalSupply, infPct)
+		expectedAmount.Div(expectedAmount, big.NewInt(1e18))
+		expectedAmount.Div(expectedAmount, big.NewInt(100)) // inflPct is percent*1e18
+		expectedAmount.Div(expectedAmount, big.NewInt(int64(blocksPerYear)))
+		return expectedAmount
+	}
+
+	// test for first 13 years (this is just an approximation)
+	// choose a pseudo random block within each year and verify the inflation %
+	for i := 0; i < tries; i++ {
+		for year := 1; year <= 13; year++ {
+			endTs := forkTs + int64(year)*yearInSeconds
+			startTs := endTs - yearInSeconds
+			blockTs := startTs + mrand.Int63n(endTs-startTs)
+
+			blockAmount, infPct := getNewSupplyForBlock(uint64(forkTs), uint64(blockTs), totalSupply)
+
+			// check amount
+			expectedAmount := getExpectedBlockAmount(totalSupply, infPct)
+			if blockAmount.Cmp(expectedAmount) != 0 {
+				t.Errorf("invalid block amount for year %d, blockTs %d. got %d expected %d", year, blockTs, blockAmount, expectedAmount)
+			}
+
+			// check inflation %
+			infPct.Div(infPct, big.NewInt(1e16))
+			infPctF, _ := infPct.Float64()
+			infPctFRounded := math.Round(infPctF*10) / 1000.0
+			expectedRange := expectedPctLt13[year-1]
+			isWithinRange := infPctFRounded >= expectedRange[0] && infPctFRounded <= expectedRange[1]
+			if !isWithinRange {
+				t.Errorf("invalid inflation percentage for year %d. got %f expected range (%.2f, %.2f), seconds passed %d", year, infPctFRounded, expectedRange[0], expectedRange[1], blockTs-forkTs)
+			}
+		}
+	}
+
+	// test for years > 13
+	expectedPctGt13 := big.NewInt(1880000000000000000)
+	for i := 0; i < tries; i++ {
+		year := 13 + tries
+		endTs := forkTs + int64(year)*31536000
+		startTs := endTs - 31536000
+		blockTs := startTs + mrand.Int63n(endTs-startTs)
+
+		blockAmount, infPct := getNewSupplyForBlock(uint64(forkTs), uint64(blockTs), totalSupply)
+
+		// check amount
+		expectedAmount := getExpectedBlockAmount(totalSupply, infPct)
+		if blockAmount.Cmp(expectedAmount) != 0 {
+			t.Errorf("invalid block amount for year %d, blockTs %d. got %d expected %d", year, blockTs, blockAmount, expectedAmount)
+		}
+
+		if infPct.Cmp(expectedPctGt13) != 0 {
+			t.Errorf("invalid inflation percentage for year %d. got %f expected %f", year, infPct, expectedPctGt13)
 		}
 	}
 }

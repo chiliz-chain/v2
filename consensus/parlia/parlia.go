@@ -216,6 +216,7 @@ type Parlia struct {
 	validatorSetABIBeforeLuban abi.ABI
 	validatorSetABI            abi.ABI
 	slashABI                   abi.ABI
+	tokenomicsABI              abi.ABI
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
@@ -258,6 +259,10 @@ func New(
 	if err != nil {
 		panic(err)
 	}
+	tABI, err := abi.JSON(strings.NewReader(tokenomicsABI))
+	if err != nil {
+		panic(err)
+	}
 	c := &Parlia{
 		chainConfig:                chainConfig,
 		config:                     parliaConfig,
@@ -269,6 +274,7 @@ func New(
 		validatorSetABIBeforeLuban: vABIBeforeLuban,
 		validatorSetABI:            vABI,
 		slashABI:                   sABI,
+		tokenomicsABI:              tABI,
 		signer:                     types.LatestSigner(chainConfig),
 	}
 
@@ -1519,6 +1525,96 @@ func (p *Parlia) Close() error {
 
 // ==========================  interaction with contract/account =========
 
+// Returns the inflation % for years passed
+// years are estimated based on the seconds passed since the fork block's timestamp
+// If year > 13: pct = 1.88, Otherwise  pct = 9.24e^(-0.250x) + 1.60
+// Note: result is rounded to 1e18 decimal places and returned as int (percent * 1e18)
+func getInflationPct(secondsPassed uint64) *big.Int {
+	// convert seconds to years
+	year := big.NewFloat(0)
+	year.Mul(big.NewFloat(0).SetUint64(secondsPassed), big.NewFloat(1.0/31536000))
+	year.Add(year, big.NewFloat(1))
+	yearF, _ := year.Float64()
+
+	log.Trace("inflation year", "year", yearF)
+
+	var inflationPct float64
+	if year.Cmp(big.NewFloat(13)) > 0 {
+		inflationPct = 1.88
+	} else {
+		initDecayMag := 9.24
+		decayRate := -0.25
+		offset := 1.6
+
+		inflationPct = initDecayMag*math.Pow(math.E, decayRate*yearF) + offset
+	}
+	inflationPct = math.Round(inflationPct*1e18) / 1e18
+	return big.NewInt(int64(inflationPct * 1e18))
+}
+
+func getNewSupplyForBlock(forkTs uint64, currentTs uint64, lastSupply *big.Int) (*big.Int, *big.Int) {
+	// Calculate the new supply
+	secondsPassed := currentTs - forkTs
+	newIntroducedSupply := big.NewInt(0)
+	inflationPct := getInflationPct(secondsPassed)
+	newIntroducedSupply.Mul(lastSupply, inflationPct)
+	newIntroducedSupply.Div(newIntroducedSupply, big.NewInt(1e18))
+	newIntroducedSupply.Div(newIntroducedSupply, big.NewInt(100)) // inflPct is percent*1e18
+
+	// Calculate amount for 1 block
+	blockAmount := big.NewInt(0)
+	blockAmount.Div(newIntroducedSupply, big.NewInt(10512000)) // 10512000 blocks = ~1y
+
+	log.Trace("inflation details", "secondsSinceFork", secondsPassed, "newIntroducedSupply", newIntroducedSupply, "blockAmount", blockAmount)
+
+	return blockAmount, inflationPct
+}
+
+func (p *Parlia) getLastSupplyFromTokenomics(header *types.Header) (*big.Int, error) {
+	method := "getTotalSupply"
+	data, err := p.tokenomicsABI.Pack(method)
+	if err != nil {
+		return nil, err
+	}
+	msgData := (hexutil.Bytes)(data)
+	gas := (hexutil.Uint64)(uint64(math.MaxUint64 / 2))
+	args := ethapi.TransactionArgs{
+		From: &header.Coinbase,
+		To:   &systemcontract.TokenomicsContractAddress,
+		Gas:  &gas,
+		Data: &msgData,
+	}
+	blockNum := (rpc.BlockNumber)(big.NewInt(0).Sub(header.Number, big.NewInt(1)).Int64())
+	res, err := p.ethAPI.Call(context.Background(), args, rpc.BlockNumberOrHashWithNumber(blockNum), nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	initialTotalSupply := big.NewInt(0)
+	if err := p.tokenomicsABI.UnpackIntoInterface(&initialTotalSupply, method, res); err != nil {
+		return nil, err
+	}
+	return initialTotalSupply, nil
+}
+
+func (p *Parlia) distributeToTokenomics(amount *big.Int, inflationPct *big.Int, validator common.Address, newTotalSupply *big.Int,
+	state *state.StateDB, header *types.Header, chain core.ChainContext,
+	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
+	// method
+	method := "deposit"
+
+	// get packed data
+	data, err := p.tokenomicsABI.Pack(method, validator, newTotalSupply, inflationPct)
+	if err != nil {
+		log.Error("Unable to pack tx for tokenomics deposit", "error", err)
+		return err
+	}
+	// get system message
+	msg := p.getSystemMessage(header.Coinbase, systemcontract.TokenomicsContractAddress, data, amount)
+	// apply message
+	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
+}
+
 // getCurrentValidators get current validators
 func (p *Parlia) getCurrentValidators(blockHash common.Hash, blockNum *big.Int) ([]common.Address, map[common.Address]*types.BLSPublicKey, error) {
 	// block
@@ -1571,6 +1667,44 @@ func (p *Parlia) getCurrentValidators(blockHash common.Hash, blockNum *big.Int) 
 func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, header *types.Header, chain core.ChainContext,
 	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
 	coinbase := header.Coinbase
+
+	if p.chainConfig.IsTokenomics(header.Number) {
+		lastSupply, err := p.getLastSupplyFromTokenomics(header)
+		if err != nil {
+			return err
+		}
+
+		cx, ok := chain.(chainContext)
+		if !ok {
+			return errors.New("cannot get chain from ChainContext")
+		}
+		tokenomicsHeader := cx.Chain.GetHeaderByNumber(p.chainConfig.TokenomicsBlock.Uint64())
+
+		blockAmount, inflationPct := getNewSupplyForBlock(tokenomicsHeader.Time, header.Time, lastSupply)
+		newTotalSupply := big.NewInt(0).Add(lastSupply, blockAmount)
+		if p.chainConfig.IsLondon(header.Number) {
+			// calculate total gas used by non-system txs
+			var totalGasUsed uint64
+			lenTxs := len(*receipts)
+			for i := 0; i < lenTxs; i++ {
+				tx := (*txs)[i]
+				if isToSystemContract(*tx.To()) {
+					continue
+				}
+				totalGasUsed += (*receipts)[i].GasUsed
+			}
+			burntFees := big.NewInt(0).Mul(header.BaseFee, big.NewInt(0).SetUint64(totalGasUsed))
+			newTotalSupply.Sub(newTotalSupply, burntFees)
+		}
+		state.AddBalance(coinbase, blockAmount)
+
+		// DEPOSIT to tokenomics
+		log.Trace("distribute to tokenomics", "block hash", header.Hash(), "amount", blockAmount, "inflation", inflationPct, "lastSupply", lastSupply, "newTotalSupply", newTotalSupply)
+		if err := p.distributeToTokenomics(blockAmount, inflationPct, val, newTotalSupply, state, header, chain, txs, receipts, receivedTxs, usedGas, mining); err != nil {
+			return err
+		}
+	}
+
 	balance := state.GetBalance(consensus.SystemAddress)
 	if balance.Cmp(common.Big0) <= 0 {
 		return nil
@@ -1578,8 +1712,7 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 	state.SetBalance(consensus.SystemAddress, big.NewInt(0))
 	state.AddBalance(coinbase, balance)
 
-	doDistributeSysReward := !p.chainConfig.IsKepler(header.Number, header.Time) &&
-		state.GetBalance(common.HexToAddress(systemcontracts.SystemRewardContract)).Cmp(maxSystemBalance) < 0
+	doDistributeSysReward := state.GetBalance(common.HexToAddress(systemcontracts.SystemRewardContract)).Cmp(maxSystemBalance) < 0
 	if doDistributeSysReward {
 		var rewards = new(big.Int)
 		rewards = rewards.Div(balance, big.NewInt(systemRewardPercent))
@@ -1636,6 +1769,7 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 		common.HexToAddress(systemcontract.ChainConfigContract),
 		common.HexToAddress(systemcontract.RuntimeUpgradeContract),
 		common.HexToAddress(systemcontract.DeployerProxyContract),
+		common.HexToAddress(systemcontract.TokenomicsContract),
 	}
 	for _, c := range contracts {
 		msg := p.getSystemMessage(header.Coinbase, c, data, common.Big0)
@@ -1683,7 +1817,7 @@ func (p *Parlia) getSystemMessage(from, toAddress common.Address, data []byte, v
 	return callmsg{
 		ethereum.CallMsg{
 			From:     from,
-			Gas:      math.MaxUint64 / 2,
+			Gas:      30000000,
 			GasPrice: big.NewInt(0),
 			Value:    value,
 			To:       &toAddress,
