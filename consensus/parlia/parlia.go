@@ -1688,7 +1688,11 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 			lenTxs := len(*receipts)
 			for i := 0; i < lenTxs; i++ {
 				tx := (*txs)[i]
-				if isToSystemContract(*tx.To()) {
+				isSystemTx, err := p.IsSystemTransaction(tx, header)
+				if err != nil {
+					return err
+				}
+				if isSystemTx {
 					continue
 				}
 				totalGasUsed += (*receipts)[i].GasUsed
