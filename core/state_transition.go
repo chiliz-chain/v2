@@ -309,7 +309,8 @@ func (st *StateTransition) preCheck() error {
 			}
 			// This will panic if baseFee is nil, but basefee presence is verified
 			// as part of header validation.
-			if !systemcontract.IsSystemContract(*msg.To) && msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
+			isSystemTx := msg.To != nil && systemcontract.IsSystemContract(*msg.To) && msg.From == st.evm.Context.Coinbase && msg.GasPrice.Cmp(big.NewInt(0)) == 0
+			if !isSystemTx && msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
 				return fmt.Errorf("%w: address %v, maxFeePerGas: %s baseFee: %s", ErrFeeCapTooLow,
 					msg.From.Hex(), msg.GasFeeCap, st.evm.Context.BaseFee)
 			}
