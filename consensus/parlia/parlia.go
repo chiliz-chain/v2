@@ -1668,19 +1668,13 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
 	coinbase := header.Coinbase
 
-	if p.chainConfig.IsTokenomics(header.Number) {
+	if p.chainConfig.IsTokenomics(header.Time) {
 		lastSupply, err := p.getLastSupplyFromTokenomics(header)
 		if err != nil {
 			return err
 		}
 
-		cx, ok := chain.(chainContext)
-		if !ok {
-			return errors.New("cannot get chain from ChainContext")
-		}
-		tokenomicsHeader := cx.Chain.GetHeaderByNumber(p.chainConfig.TokenomicsBlock.Uint64())
-
-		blockAmount, inflationPct := getNewSupplyForBlock(tokenomicsHeader.Time, header.Time, lastSupply)
+		blockAmount, inflationPct := getNewSupplyForBlock(*p.chainConfig.TokenomicsTime, header.Time, lastSupply)
 		newTotalSupply := big.NewInt(0).Add(lastSupply, blockAmount)
 		if p.chainConfig.IsLondon(header.Number) {
 			// calculate total gas used by non-system txs
