@@ -11,6 +11,11 @@ GORUN = env GO111MODULE=on go run
 GIT_COMMIT=$(shell git rev-parse HEAD)
 GIT_COMMIT_DATE=$(shell git log -n1 --pretty='format:%cd' --date=format:'%Y%m%d')
 
+export AWS_ACCOUNT	= 475320849898.dkr.ecr.eu-west-3.amazonaws.com
+export IMAGE_NAME	= blockchain/ccv2-geth
+export IMAGE_TAG	=
+
+
 geth:
 	$(GORUN) build/ci.go install ./cmd/geth
 	@echo "Done building."
@@ -57,3 +62,16 @@ devtools:
 
 docker:
 	docker build --pull -t chilizchain/ccv2-geth:latest -f Dockerfile .
+docker.login:
+	aws ecr get-login-password --profile=chiliz-integration --region=eu-west-3 | docker login --username AWS --password-stdin $(AWS_ACCOUNT)
+
+
+docker.build_images:
+	@if [ -z "$(IMAGE_TAG)" ]; \
+	then echo "Please define IMAGE_TAG"; exit 1; \
+	fi
+	DOCKER_BUILDKIT=1 docker build --build-arg BUILDKIT_INLINE_CACHE=1 -f Dockerfile --progress plain \
+	    --build-arg COMPOSER_AUTH='${COMPOSER_AUTH}' \
+		--tag $(AWS_ACCOUNT)/$(IMAGE_NAME):$(IMAGE_TAG) \
+		.
+	docker push $(AWS_ACCOUNT)/$(IMAGE_NAME):$(IMAGE_TAG)
