@@ -461,7 +461,7 @@ type ChainConfig struct {
 	DeployOriginBlock      *big.Int `json:"deployOriginBlock,omitempty"`
 	DeploymentHookFixBlock *big.Int `json:"deploymentHookFixBlock,omitempty"`
 	DeployerFactoryBlock   *big.Int `json:"deployerFactoryBlock,omitempty"`
-	TokenomicsBlock        *big.Int `json:"tokenomicsBlock,omitempty"`
+	TokenomicsTime         *uint64  `json:"tokenomicsTime,omitempty"`
 
 	ShanghaiTime *uint64 `json:"shanghaiTime,omitempty" ` // Shanghai switch time (nil = no fork, 0 = already on shanghai)
 	KeplerTime   *uint64 `json:"keplerTime,omitempty"`    // Kepler switch time (nil = no fork, 0 = already activated)
@@ -557,7 +557,12 @@ func (c *ChainConfig) String() string {
 		KeplerTime = big.NewInt(0).SetUint64(*c.KeplerTime)
 	}
 
-	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, Tokenomics: %v, ShanghaiTime: %v, KeplerTime: %v, Engine: %v}",
+	var TokenomicsTime *big.Int
+	if c.TokenomicsTime != nil {
+		TokenomicsTime = big.NewInt(0).SetUint64(*c.TokenomicsTime)
+	}
+
+	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, TokenomicsTime: %v, ShanghaiTime: %v, KeplerTime: %v, Engine: %v}",
 		c.ChainID,
 		c.HomesteadBlock,
 		c.DAOForkBlock,
@@ -589,16 +594,16 @@ func (c *ChainConfig) String() string {
 		c.PlatoBlock,
 		c.HertzBlock,
 		c.HertzfixBlock,
-		c.TokenomicsBlock,
+		TokenomicsTime,
 		ShanghaiTime,
 		KeplerTime,
 		engine,
 	)
 }
 
-// IsTokenomics returns whether num represents a block number after the tokenomics fork
-func (c *ChainConfig) IsTokenomics(num *big.Int) bool {
-	return isBlockForked(c.TokenomicsBlock, num)
+// IsTokenomics returns whether num & timestamp represents a block number after the tokenomics fork
+func (c *ChainConfig) IsTokenomics(time uint64) bool {
+	return isTimestampForked(c.TokenomicsTime, time)
 }
 
 // IsHomestead returns whether num is either equal to the homestead block or greater.
@@ -1243,6 +1248,6 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		HasDeployOrigin:      isBlockForked(c.DeployOriginBlock, num),
 		HasDeploymentHookFix: isBlockForked(c.DeploymentHookFixBlock, num),
 		DeployerFactory:      isBlockForked(c.DeployerFactoryBlock, num),
-		Tokenomics:           c.IsTokenomics(num),
+		Tokenomics:           c.IsTokenomics(timestamp),
 	}
 }
