@@ -405,23 +405,14 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *trie.Database, gen
 }
 
 // LoadChainConfig retrieves the predefined chain configuration for the built-in network.
-// For non-built-in networks, it first attempts to load the stored chain configuration from the database.
-// If the configuration is not present, it returns the configuration specified in the provided genesis specification.
+// For non-built-in networks, it first attempts to return the configuration specified in the provided genesis specification.
+// If the genesis specification or the configuration in it are absent, it tries to load the stored chain configuration from the database.
+// If the stored configuration is also absent, it returns default chain config (bsc mainnet)
 func LoadChainConfig(db ethdb.Database, genesis *Genesis) (*params.ChainConfig, common.Hash, error) {
 	// Load the stored chain config from the database. It can be nil
 	// in case the database is empty. Notably, we only care about the
 	// chain config corresponds to the canonical chain.
 	stored := rawdb.ReadCanonicalHash(db, 0)
-	if stored != (common.Hash{}) {
-		builtInConf := params.GetBuiltInChainConfig(stored)
-		if builtInConf != nil {
-			return builtInConf, stored, nil
-		}
-		storedcfg := rawdb.ReadChainConfig(db, stored)
-		if storedcfg != nil {
-			return storedcfg, stored, nil
-		}
-	}
 	// Load the config from the provided genesis specification
 	if genesis != nil {
 		// Reject invalid genesis spec without valid chain config
@@ -436,6 +427,16 @@ func LoadChainConfig(db ethdb.Database, genesis *Genesis) (*params.ChainConfig, 
 			return nil, common.Hash{}, &GenesisMismatchError{stored, genesis.ToBlock().Hash()}
 		}
 		return genesis.Config, stored, nil
+	}
+	if stored != (common.Hash{}) {
+		builtInConf := params.GetBuiltInChainConfig(stored)
+		if builtInConf != nil {
+			return builtInConf, stored, nil
+		}
+		storedcfg := rawdb.ReadChainConfig(db, stored)
+		if storedcfg != nil {
+			return storedcfg, stored, nil
+		}
 	}
 
 	// There is no stored chain config and no new config provided,
