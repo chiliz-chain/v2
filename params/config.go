@@ -461,7 +461,7 @@ type ChainConfig struct {
 	DeployOriginBlock      *big.Int `json:"deployOriginBlock,omitempty"`
 	DeploymentHookFixBlock *big.Int `json:"deploymentHookFixBlock,omitempty"`
 	DeployerFactoryBlock   *big.Int `json:"deployerFactoryBlock,omitempty"`
-	TokenomicsTime         *uint64  `json:"tokenomicsTime,omitempty"`
+	Dragon8Time            *uint64  `json:"dragon8Time,omitempty"`
 
 	ShanghaiTime *uint64 `json:"shanghaiTime,omitempty" ` // Shanghai switch time (nil = no fork, 0 = already on shanghai)
 	KeplerTime   *uint64 `json:"keplerTime,omitempty"`    // Kepler switch time (nil = no fork, 0 = already activated)
@@ -557,12 +557,12 @@ func (c *ChainConfig) String() string {
 		KeplerTime = big.NewInt(0).SetUint64(*c.KeplerTime)
 	}
 
-	var TokenomicsTime *big.Int
-	if c.TokenomicsTime != nil {
-		TokenomicsTime = big.NewInt(0).SetUint64(*c.TokenomicsTime)
+	var Dragon8Time *big.Int
+	if c.Dragon8Time != nil {
+		Dragon8Time = big.NewInt(0).SetUint64(*c.Dragon8Time)
 	}
 
-	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, TokenomicsTime: %v, ShanghaiTime: %v, KeplerTime: %v, Engine: %v}",
+	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, Dragon8Time: %v, ShanghaiTime: %v, KeplerTime: %v, Engine: %v}",
 		c.ChainID,
 		c.HomesteadBlock,
 		c.DAOForkBlock,
@@ -594,16 +594,16 @@ func (c *ChainConfig) String() string {
 		c.PlatoBlock,
 		c.HertzBlock,
 		c.HertzfixBlock,
-		TokenomicsTime,
+		Dragon8Time,
 		ShanghaiTime,
 		KeplerTime,
 		engine,
 	)
 }
 
-// IsTokenomics returns whether num & timestamp represents a block number after the tokenomics fork
-func (c *ChainConfig) IsTokenomics(time uint64) bool {
-	return isTimestampForked(c.TokenomicsTime, time)
+// IsDragon8 returns whether num & timestamp represents a block number after the dragon8 fork
+func (c *ChainConfig) IsDragon8(time uint64) bool {
+	return isTimestampForked(c.Dragon8Time, time)
 }
 
 // IsHomestead returns whether num is either equal to the homestead block or greater.
@@ -1198,7 +1198,7 @@ type Rules struct {
 	HasDeployOrigin                          bool
 	HasDeploymentHookFix                     bool
 	DeployerFactory                          bool
-	Tokenomics                               bool
+	Dragon8                                  bool
 	IsCayenne                                bool
 	IsMerge                                  bool
 	IsNano                                   bool
@@ -1248,6 +1248,6 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		HasDeployOrigin:      isBlockForked(c.DeployOriginBlock, num),
 		HasDeploymentHookFix: isBlockForked(c.DeploymentHookFixBlock, num),
 		DeployerFactory:      isBlockForked(c.DeployerFactoryBlock, num),
-		Tokenomics:           c.IsTokenomics(timestamp),
+		Dragon8:              c.IsDragon8(timestamp),
 	}
 }
