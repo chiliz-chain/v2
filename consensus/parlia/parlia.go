@@ -1676,24 +1676,6 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 
 		blockAmount, inflationPct := getNewSupplyForBlock(*p.chainConfig.Dragon8Time, header.Time, lastSupply)
 		newTotalSupply := big.NewInt(0).Add(lastSupply, blockAmount)
-		if p.chainConfig.IsLondon(header.Number) {
-			// calculate total gas used by non-system txs
-			var totalGasUsed uint64
-			lenTxs := len(*receipts)
-			for i := 0; i < lenTxs; i++ {
-				tx := (*txs)[i]
-				isSystemTx, err := p.IsSystemTransaction(tx, header)
-				if err != nil {
-					return err
-				}
-				if isSystemTx {
-					continue
-				}
-				totalGasUsed += (*receipts)[i].GasUsed
-			}
-			burntFees := big.NewInt(0).Mul(header.BaseFee, big.NewInt(0).SetUint64(totalGasUsed))
-			newTotalSupply.Sub(newTotalSupply, burntFees)
-		}
 		state.AddBalance(coinbase, blockAmount)
 
 		// DEPOSIT to tokenomics
