@@ -43,3 +43,6 @@ build_images:
     - make docker.login
   script:
     - make docker.build_images IMAGE_TAG=${CI_COMMIT_TAG:-$CI_COMMIT_REF_SLUG}
+  trigger:
+    project: 'mediarex/blockchain/tools-blockchain'
+    branch: 'main'
