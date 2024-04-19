@@ -41,6 +41,10 @@ stages:
 build_images:
   stage: build_images
   when: manual
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: always
+    - when: manual
   before_script:
     - make docker.login
   script:
