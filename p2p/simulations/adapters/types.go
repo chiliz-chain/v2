@@ -39,10 +39,9 @@ import (
 // Node represents a node in a simulation network which is created by a
 // NodeAdapter, for example:
 //
-// * SimNode    - An in-memory node
-// * ExecNode   - A child process node
-// * DockerNode - A Docker container node
-//
+//   - SimNode, an in-memory node in the same process
+//   - ExecNode, a child process node
+//   - DockerNode, a node running in a Docker container
 type Node interface {
 	// Addr returns the node's address (e.g. an Enode URL)
 	Addr() []byte
@@ -242,7 +241,7 @@ func assignTCPPort() (uint16, error) {
 	if err != nil {
 		return 0, err
 	}
-	p, err := strconv.ParseInt(port, 10, 32)
+	p, err := strconv.ParseUint(port, 10, 16)
 	if err != nil {
 		return 0, err
 	}

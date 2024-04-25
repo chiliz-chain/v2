@@ -35,14 +35,16 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/netutil"
 )
 
 const (
-	alpha           = 3  // Kademlia concurrency factor
-	bucketSize      = 16 // Kademlia bucket size
-	maxReplacements = 10 // Size of per-bucket replacement list
+	alpha              = 3   // Kademlia concurrency factor
+	bucketSize         = 16  // Kademlia bucket size
+	bootNodeBucketSize = 256 // Bigger bucket size for boot nodes
+	maxReplacements    = 10  // Size of per-bucket replacement list
 
 	// We keep buckets for the upper 1/15 of distances because
 	// it's very unlikely we'll ever encounter a node that's closer.
@@ -54,33 +56,38 @@ const (
 	bucketIPLimit, bucketSubnet = 2, 24 // at most 2 addresses from the same /24
 	tableIPLimit, tableSubnet   = 10, 24
 
-	refreshInterval    = 30 * time.Minute
-	revalidateInterval = 10 * time.Second
-	copyNodesInterval  = 30 * time.Second
-	seedMinTableTime   = 5 * time.Minute
-	seedCount          = 30
-	seedMaxAge         = 5 * 24 * time.Hour
+	copyNodesInterval = 30 * time.Second
+	seedMinTableTime  = 5 * time.Minute
+	seedCount         = 30
+	seedMaxAge        = 5 * 24 * time.Hour
 )
 
 // Table is the 'node table', a Kademlia-like index of neighbor nodes. The table keeps
 // itself up-to-date by verifying the liveness of neighbors and requesting their node
 // records when announcements of a new record version are received.
 type Table struct {
-	mutex   sync.Mutex        // protects buckets, bucket content, nursery, rand
-	buckets [nBuckets]*bucket // index of known nodes by distance
-	nursery []*node           // bootstrap nodes
-	rand    *mrand.Rand       // source of randomness, periodically reseeded
-	ips     netutil.DistinctNetSet
+	mutex      sync.Mutex        // protects buckets, bucket content, nursery, rand
+	buckets    [nBuckets]*bucket // index of known nodes by distance
+	bucketSize int               // size of bucket
+	nursery    []*node           // bootstrap nodes
+	rand       *mrand.Rand       // source of randomness, periodically reseeded
+	ips        netutil.DistinctNetSet
 
-	log        log.Logger
-	db         *enode.DB // database of known nodes
-	net        transport
+	db  *enode.DB // database of known nodes
+	net transport
+	cfg Config
+	log log.Logger
+
+	// loop channels
 	refreshReq chan chan struct{}
 	initDone   chan struct{}
 	closeReq   chan struct{}
 	closed     chan struct{}
 
-	nodeAddedHook func(*node) // for testing
+	enrFilter NodeFilterFunc
+
+	nodeAddedHook   func(*bucket, *node)
+	nodeRemovedHook func(*bucket, *node)
 }
 
 // transport is implemented by the UDP transports.
@@ -98,32 +105,75 @@ type bucket struct {
 	entries      []*node // live entries, sorted by time of last contact
 	replacements []*node // recently seen nodes to be used if revalidation fails
 	ips          netutil.DistinctNetSet
+	index        int
 }
 
-func newTable(t transport, db *enode.DB, bootnodes []*enode.Node, log log.Logger) (*Table, error) {
+func newTable(t transport, db *enode.DB, cfg Config) (*Table, error) {
+	cfg = cfg.withDefaults()
 	tab := &Table{
 		net:        t,
 		db:         db,
+		cfg:        cfg,
+		log:        cfg.Log,
 		refreshReq: make(chan chan struct{}),
 		initDone:   make(chan struct{}),
 		closeReq:   make(chan struct{}),
 		closed:     make(chan struct{}),
 		rand:       mrand.New(mrand.NewSource(0)),
 		ips:        netutil.DistinctNetSet{Subnet: tableSubnet, Limit: tableIPLimit},
-		log:        log,
+		enrFilter:  cfg.FilterFunction,
+		bucketSize: bucketSize,
 	}
-	if err := tab.setFallbackNodes(bootnodes); err != nil {
+	if cfg.IsBootnode {
+		tab.bucketSize = bootNodeBucketSize
+	}
+	if err := tab.setFallbackNodes(cfg.Bootnodes); err != nil {
 		return nil, err
 	}
 	for i := range tab.buckets {
 		tab.buckets[i] = &bucket{
-			ips: netutil.DistinctNetSet{Subnet: bucketSubnet, Limit: bucketIPLimit},
+			index: i,
+			ips:   netutil.DistinctNetSet{Subnet: bucketSubnet, Limit: bucketIPLimit},
 		}
 	}
 	tab.seedRand()
 	tab.loadSeedNodes()
 
 	return tab, nil
+}
+
+func newMeteredTable(t transport, db *enode.DB, cfg Config) (*Table, error) {
+	tab, err := newTable(t, db, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if metrics.Enabled {
+		tab.nodeAddedHook = func(b *bucket, n *node) {
+			bucketsCounter[b.index].Inc(1)
+		}
+		tab.nodeRemovedHook = func(b *bucket, n *node) {
+			bucketsCounter[b.index].Dec(1)
+		}
+	}
+	return tab, nil
+}
+
+// Nodes returns all nodes contained in the table.
+func (tab *Table) Nodes() []*enode.Node {
+	if !tab.isInitDone() {
+		return nil
+	}
+
+	tab.mutex.Lock()
+	defer tab.mutex.Unlock()
+
+	var nodes []*enode.Node
+	for _, b := range &tab.buckets {
+		for _, n := range b.entries {
+			nodes = append(nodes, unwrapNode(n))
+		}
+	}
+	return nodes
 }
 
 func (tab *Table) self() *enode.Node {
@@ -137,29 +187,6 @@ func (tab *Table) seedRand() {
 	tab.mutex.Lock()
 	tab.rand.Seed(int64(binary.BigEndian.Uint64(b[:])))
 	tab.mutex.Unlock()
-}
-
-// ReadRandomNodes fills the given slice with random nodes from the table. The results
-// are guaranteed to be unique for a single invocation, no node will appear twice.
-func (tab *Table) ReadRandomNodes(buf []*enode.Node) (n int) {
-	if !tab.isInitDone() {
-		return 0
-	}
-	tab.mutex.Lock()
-	defer tab.mutex.Unlock()
-
-	var nodes []*enode.Node
-	for _, b := range &tab.buckets {
-		for _, n := range b.entries {
-			nodes = append(nodes, unwrapNode(n))
-		}
-	}
-	// Shuffle.
-	for i := 0; i < len(nodes); i++ {
-		j := tab.rand.Intn(len(nodes))
-		nodes[i], nodes[j] = nodes[j], nodes[i]
-	}
-	return copy(buf, nodes)
 }
 
 // getNode returns the node with the given ID or nil if it isn't in the table.
@@ -186,12 +213,18 @@ func (tab *Table) close() {
 // are used to connect to the network if the table is empty and there
 // are no known nodes in the database.
 func (tab *Table) setFallbackNodes(nodes []*enode.Node) error {
+	nursery := make([]*node, 0, len(nodes))
 	for _, n := range nodes {
 		if err := n.ValidateComplete(); err != nil {
 			return fmt.Errorf("bad bootstrap node %q: %v", n, err)
 		}
+		if tab.cfg.NetRestrict != nil && !tab.cfg.NetRestrict.Contains(n.IP()) {
+			tab.log.Error("Bootstrap node filtered by netrestrict", "id", n.ID(), "ip", n.IP())
+			continue
+		}
+		nursery = append(nursery, wrapNode(n))
 	}
-	tab.nursery = wrapNodes(nodes)
+	tab.nursery = nursery
 	return nil
 }
 
@@ -219,7 +252,7 @@ func (tab *Table) refresh() <-chan struct{} {
 func (tab *Table) loop() {
 	var (
 		revalidate     = time.NewTimer(tab.nextRevalidateTime())
-		refresh        = time.NewTicker(refreshInterval)
+		refresh        = time.NewTimer(tab.nextRefreshTime())
 		copyNodes      = time.NewTicker(copyNodesInterval)
 		refreshDone    = make(chan struct{})           // where doRefresh reports completion
 		revalidateDone chan struct{}                   // where doRevalidate reports completion
@@ -258,6 +291,7 @@ loop:
 				close(ch)
 			}
 			waiting, refreshDone = nil, nil
+			refresh.Reset(tab.nextRefreshTime())
 		case <-revalidate.C:
 			revalidateDone = make(chan struct{})
 			gopool.Submit(func() {
@@ -339,10 +373,16 @@ func (tab *Table) doRevalidate(done chan<- struct{}) {
 
 	// Also fetch record if the node replied and returned a higher sequence number.
 	if last.Seq() < remoteSeq {
-		n, err := tab.net.RequestENR(unwrapNode(last))
-		if err != nil {
-			tab.log.Debug("ENR request failed", "id", last.ID(), "addr", last.addr(), "err", err)
+		n, enrErr := tab.net.RequestENR(unwrapNode(last))
+		if enrErr != nil {
+			tab.log.Debug("ENR request failed", "id", last.ID(), "addr", last.addr(), "err", enrErr)
 		} else {
+			if tab.enrFilter != nil {
+				if !tab.enrFilter(n.Record()) {
+					tab.log.Trace("ENR record filter out", "id", last.ID(), "addr", last.addr())
+					err = fmt.Errorf("filtered node")
+				}
+			}
 			last = &node{Node: *n, addedAt: last.addedAt, livenessChecks: last.livenessChecks}
 		}
 	}
@@ -385,7 +425,15 @@ func (tab *Table) nextRevalidateTime() time.Duration {
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
 
-	return time.Duration(tab.rand.Int63n(int64(revalidateInterval)))
+	return time.Duration(tab.rand.Int63n(int64(tab.cfg.PingInterval)))
+}
+
+func (tab *Table) nextRefreshTime() time.Duration {
+	tab.mutex.Lock()
+	defer tab.mutex.Unlock()
+
+	half := tab.cfg.RefreshInterval / 2
+	return half + time.Duration(tab.rand.Int63n(int64(half)))
 }
 
 // copyLiveNodes adds nodes from the table to the database if they have been in the table
@@ -473,7 +521,17 @@ func (tab *Table) bucketAtDistance(d int) *bucket {
 //
 // The caller must not hold tab.mutex.
 func (tab *Table) addSeenNode(n *node) {
+	gopool.Submit(func() {
+		tab.addSeenNodeSync(n)
+	})
+}
+
+func (tab *Table) addSeenNodeSync(n *node) {
 	if n.ID() == tab.self().ID() {
+		return
+	}
+
+	if tab.filterNode(n) {
 		return
 	}
 
@@ -484,7 +542,7 @@ func (tab *Table) addSeenNode(n *node) {
 		// Already in bucket, don't add.
 		return
 	}
-	if len(b.entries) >= bucketSize {
+	if len(b.entries) >= tab.bucketSize {
 		// Bucket full, maybe add as replacement.
 		tab.addReplacement(b, n)
 		return
@@ -493,13 +551,29 @@ func (tab *Table) addSeenNode(n *node) {
 		// Can't add: IP limit reached.
 		return
 	}
+
 	// Add to end of bucket:
 	b.entries = append(b.entries, n)
 	b.replacements = deleteNode(b.replacements, n)
 	n.addedAt = time.Now()
+
 	if tab.nodeAddedHook != nil {
-		tab.nodeAddedHook(n)
+		tab.nodeAddedHook(b, n)
 	}
+}
+
+func (tab *Table) filterNode(n *node) bool {
+	if tab.enrFilter == nil {
+		return false
+	}
+	if node, err := tab.net.RequestENR(unwrapNode(n)); err != nil {
+		tab.log.Debug("ENR request failed", "id", n.ID(), "addr", n.addr(), "err", err)
+		return false
+	} else if !tab.enrFilter(node.Record()) {
+		tab.log.Trace("ENR record filter out", "id", n.ID(), "addr", n.addr())
+		return true
+	}
+	return false
 }
 
 // addVerifiedNode adds a node whose existence has been verified recently to the front of a
@@ -511,14 +585,23 @@ func (tab *Table) addSeenNode(n *node) {
 // ping repeatedly.
 //
 // The caller must not hold tab.mutex.
+
 func (tab *Table) addVerifiedNode(n *node) {
+	gopool.Submit(func() {
+		tab.addVerifiedNodeSync(n)
+	})
+}
+
+func (tab *Table) addVerifiedNodeSync(n *node) {
 	if !tab.isInitDone() {
 		return
 	}
 	if n.ID() == tab.self().ID() {
 		return
 	}
-
+	if tab.filterNode(n) {
+		return
+	}
 	tab.mutex.Lock()
 	defer tab.mutex.Unlock()
 	b := tab.bucket(n.ID())
@@ -526,7 +609,7 @@ func (tab *Table) addVerifiedNode(n *node) {
 		// Already in bucket, moved to front.
 		return
 	}
-	if len(b.entries) >= bucketSize {
+	if len(b.entries) >= tab.bucketSize {
 		// Bucket full, maybe add as replacement.
 		tab.addReplacement(b, n)
 		return
@@ -535,12 +618,14 @@ func (tab *Table) addVerifiedNode(n *node) {
 		// Can't add: IP limit reached.
 		return
 	}
+
 	// Add to front of bucket.
-	b.entries, _ = pushNode(b.entries, n, bucketSize)
+	b.entries, _ = pushNode(b.entries, n, tab.bucketSize)
 	b.replacements = deleteNode(b.replacements, n)
 	n.addedAt = time.Now()
+
 	if tab.nodeAddedHook != nil {
-		tab.nodeAddedHook(n)
+		tab.nodeAddedHook(b, n)
 	}
 }
 
@@ -639,8 +724,16 @@ func (tab *Table) bumpInBucket(b *bucket, n *node) bool {
 }
 
 func (tab *Table) deleteInBucket(b *bucket, n *node) {
+	// Check if the node is actually in the bucket so the removed hook
+	// isn't called multiple times for the same node.
+	if !contains(b.entries, n.ID()) {
+		return
+	}
 	b.entries = deleteNode(b.entries, n)
 	tab.removeIP(b, n.IP())
+	if tab.nodeRemovedHook != nil {
+		tab.nodeRemovedHook(b, n)
+	}
 }
 
 func contains(ns []*node, id enode.ID) bool {
@@ -684,15 +777,14 @@ func (h *nodesByDistance) push(n *node, maxElems int) {
 	ix := sort.Search(len(h.entries), func(i int) bool {
 		return enode.DistCmp(h.target, h.entries[i].ID(), n.ID()) > 0
 	})
+
+	end := len(h.entries)
 	if len(h.entries) < maxElems {
 		h.entries = append(h.entries, n)
 	}
-	if ix == len(h.entries) {
-		// farther away than all nodes we already have.
-		// if there was room for it, the node is now the last element.
-	} else {
-		// slide existing entries down to make room
-		// this will overwrite the entry we just appended.
+	if ix < end {
+		// Slide existing entries down to make room.
+		// This will overwrite the entry we just appended.
 		copy(h.entries[ix+1:], h.entries[ix:])
 		h.entries[ix] = n
 	}

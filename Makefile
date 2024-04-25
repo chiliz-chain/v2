@@ -2,15 +2,19 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: geth android ios geth-cross evm all test truffle-test clean
-.PHONY: geth-linux geth-linux-386 geth-linux-amd64 geth-linux-mips64 geth-linux-mips64le
-.PHONY: geth-linux-arm geth-linux-arm-5 geth-linux-arm-6 geth-linux-arm-7 geth-linux-arm64
-.PHONY: geth-darwin geth-darwin-386 geth-darwin-amd64
-.PHONY: geth-windows geth-windows-386 geth-windows-amd64
+.PHONY: geth android ios evm all test truffle-test clean
+.PHONY: docker
 
 GOBIN = ./build/bin
 GO ?= latest
 GORUN = env GO111MODULE=on go run
+GIT_COMMIT=$(shell git rev-parse HEAD)
+GIT_COMMIT_DATE=$(shell git log -n1 --pretty='format:%cd' --date=format:'%Y%m%d')
+
+export AWS_ACCOUNT	= 475320849898.dkr.ecr.eu-west-3.amazonaws.com
+export IMAGE_NAME	= blockchain/ccv2-geth
+export IMAGE_TAG	=
+
 
 geth:
 	$(GORUN) build/ci.go install ./cmd/geth
@@ -24,18 +28,6 @@ faucet:
 
 all:
 	$(GORUN) build/ci.go install
-
-android:
-	$(GORUN) build/ci.go aar --local
-	@echo "Done building."
-	@echo "Import \"$(GOBIN)/geth.aar\" to use the library."
-	@echo "Import \"$(GOBIN)/geth-sources.jar\" to add javadocs"
-	@echo "For more info see https://stackoverflow.com/questions/20994336/android-studio-how-to-attach-javadoc"
-
-ios:
-	$(GORUN) build/ci.go xcode --local
-	@echo "Done building."
-	@echo "Import \"$(GOBIN)/Geth.framework\" to use the library."
 
 test: all
 	$(GORUN) build/ci.go test -timeout 1h
@@ -62,101 +54,24 @@ clean:
 
 devtools:
 	env GOBIN= go install golang.org/x/tools/cmd/stringer@latest
-	env GOBIN= go install github.com/kevinburke/go-bindata/go-bindata@latest
 	env GOBIN= go install github.com/fjl/gencodec@latest
 	env GOBIN= go install github.com/golang/protobuf/protoc-gen-go@latest
 	env GOBIN= go install ./cmd/abigen
 	@type "solc" 2> /dev/null || echo 'Please install solc'
 	@type "protoc" 2> /dev/null || echo 'Please install protoc'
 
-# Cross Compilation Targets (xgo)
+docker:
+	docker build --pull -t chilizchain/ccv2-geth:latest -f Dockerfile .
+docker.login:
+	aws ecr get-login-password --profile=chiliz-integration --region=eu-west-3 | docker login --username AWS --password-stdin $(AWS_ACCOUNT)
 
-geth-cross: geth-linux geth-darwin geth-windows geth-android geth-ios
-	@echo "Full cross compilation done:"
-	@ls -ld $(GOBIN)/geth-*
 
-geth-linux: geth-linux-386 geth-linux-amd64 geth-linux-arm geth-linux-mips64 geth-linux-mips64le
-	@echo "Linux cross compilation done:"
-	@ls -ld $(GOBIN)/geth-linux-*
-
-geth-linux-386:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=linux/386 -v ./cmd/geth
-	@echo "Linux 386 cross compilation done:"
-	@ls -ld $(GOBIN)/geth-linux-* | grep 386
-
-geth-linux-amd64:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=linux/amd64 -v ./cmd/geth
-	@echo "Linux amd64 cross compilation done:"
-	@ls -ld $(GOBIN)/geth-linux-* | grep amd64
-
-geth-linux-arm: geth-linux-arm-5 geth-linux-arm-6 geth-linux-arm-7 geth-linux-arm64
-	@echo "Linux ARM cross compilation done:"
-	@ls -ld $(GOBIN)/geth-linux-* | grep arm
-
-geth-linux-arm-5:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=linux/arm-5 -v ./cmd/geth
-	@echo "Linux ARMv5 cross compilation done:"
-	@ls -ld $(GOBIN)/geth-linux-* | grep arm-5
-
-geth-linux-arm-6:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=linux/arm-6 -v ./cmd/geth
-	@echo "Linux ARMv6 cross compilation done:"
-	@ls -ld $(GOBIN)/geth-linux-* | grep arm-6
-
-geth-linux-arm-7:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=linux/arm-7 -v ./cmd/geth
-	@echo "Linux ARMv7 cross compilation done:"
-	@ls -ld $(GOBIN)/geth-linux-* | grep arm-7
-
-geth-linux-arm64:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=linux/arm64 -v ./cmd/geth
-	@echo "Linux ARM64 cross compilation done:"
-	@ls -ld $(GOBIN)/geth-linux-* | grep arm64
-
-geth-linux-mips:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=linux/mips --ldflags '-extldflags "-static"' -v ./cmd/geth
-	@echo "Linux MIPS cross compilation done:"
-	@ls -ld $(GOBIN)/geth-linux-* | grep mips
-
-geth-linux-mipsle:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=linux/mipsle --ldflags '-extldflags "-static"' -v ./cmd/geth
-	@echo "Linux MIPSle cross compilation done:"
-	@ls -ld $(GOBIN)/geth-linux-* | grep mipsle
-
-geth-linux-mips64:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=linux/mips64 --ldflags '-extldflags "-static"' -v ./cmd/geth
-	@echo "Linux MIPS64 cross compilation done:"
-	@ls -ld $(GOBIN)/geth-linux-* | grep mips64
-
-geth-linux-mips64le:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=linux/mips64le --ldflags '-extldflags "-static"' -v ./cmd/geth
-	@echo "Linux MIPS64le cross compilation done:"
-	@ls -ld $(GOBIN)/geth-linux-* | grep mips64le
-
-geth-darwin: geth-darwin-386 geth-darwin-amd64
-	@echo "Darwin cross compilation done:"
-	@ls -ld $(GOBIN)/geth-darwin-*
-
-geth-darwin-386:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=darwin/386 -v ./cmd/geth
-	@echo "Darwin 386 cross compilation done:"
-	@ls -ld $(GOBIN)/geth-darwin-* | grep 386
-
-geth-darwin-amd64:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=darwin/amd64 -v ./cmd/geth
-	@echo "Darwin amd64 cross compilation done:"
-	@ls -ld $(GOBIN)/geth-darwin-* | grep amd64
-
-geth-windows: geth-windows-386 geth-windows-amd64
-	@echo "Windows cross compilation done:"
-	@ls -ld $(GOBIN)/geth-windows-*
-
-geth-windows-386:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=windows/386 -v ./cmd/geth
-	@echo "Windows 386 cross compilation done:"
-	@ls -ld $(GOBIN)/geth-windows-* | grep 386
-
-geth-windows-amd64:
-	$(GORUN) build/ci.go xgo -- --go=$(GO) --targets=windows/amd64 -v ./cmd/geth
-	@echo "Windows amd64 cross compilation done:"
-	@ls -ld $(GOBIN)/geth-windows-* | grep amd64
+docker.build_images:
+	@if [ -z "$(IMAGE_TAG)" ]; \
+	then echo "Please define IMAGE_TAG"; exit 1; \
+	fi
+	DOCKER_BUILDKIT=1 docker build --build-arg BUILDKIT_INLINE_CACHE=1 -f Dockerfile --progress plain \
+	    --build-arg COMPOSER_AUTH='${COMPOSER_AUTH}' \
+		--tag $(AWS_ACCOUNT)/$(IMAGE_NAME):$(IMAGE_TAG) \
+		.
+	docker push $(AWS_ACCOUNT)/$(IMAGE_NAME):$(IMAGE_TAG)

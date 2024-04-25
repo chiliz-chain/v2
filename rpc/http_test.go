@@ -17,6 +17,8 @@
 package rpc
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,6 +94,7 @@ func confirmHTTPRequestYieldsStatusCode(t *testing.T, method, contentType, body 
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
+	resp.Body.Close()
 	confirmStatusCode(t, resp.StatusCode, expectedStatusCode)
 }
 
@@ -160,5 +163,81 @@ func TestHTTPErrorResponse(t *testing.T) {
 
 	if errMsg := httpErr.Error(); errMsg != "418 I'm a teapot: error has occurred!\n" {
 		t.Error("unexpected error message", errMsg)
+	}
+}
+
+func TestHTTPPeerInfo(t *testing.T) {
+	s := newTestServer()
+	defer s.Stop()
+	ts := httptest.NewServer(s)
+	defer ts.Close()
+
+	c, err := Dial(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetHeader("user-agent", "ua-testing")
+	c.SetHeader("origin", "origin.example.com")
+
+	// Request peer information.
+	var info PeerInfo
+	if err := c.Call(&info, "test_peerInfo"); err != nil {
+		t.Fatal(err)
+	}
+
+	if info.RemoteAddr == "" {
+		t.Error("RemoteAddr not set")
+	}
+	if info.Transport != "http" {
+		t.Errorf("wrong Transport %q", info.Transport)
+	}
+	if info.HTTP.Version != "HTTP/1.1" {
+		t.Errorf("wrong HTTP.Version %q", info.HTTP.Version)
+	}
+	if info.HTTP.UserAgent != "ua-testing" {
+		t.Errorf("wrong HTTP.UserAgent %q", info.HTTP.UserAgent)
+	}
+	if info.HTTP.Origin != "origin.example.com" {
+		t.Errorf("wrong HTTP.Origin %q", info.HTTP.UserAgent)
+	}
+}
+
+func TestNewContextWithHeaders(t *testing.T) {
+	expectedHeaders := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		for i := 0; i < expectedHeaders; i++ {
+			key, want := fmt.Sprintf("key-%d", i), fmt.Sprintf("val-%d", i)
+			if have := request.Header.Get(key); have != want {
+				t.Errorf("wrong request headers for %s, want: %s, have: %s", key, want, have)
+			}
+		}
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+
+	client, err := Dial(server.URL)
+	if err != nil {
+		t.Fatalf("failed to dial: %s", err)
+	}
+	defer client.Close()
+
+	newHdr := func(k, v string) http.Header {
+		header := http.Header{}
+		header.Set(k, v)
+		return header
+	}
+	ctx1 := NewContextWithHeaders(context.Background(), newHdr("key-0", "val-0"))
+	ctx2 := NewContextWithHeaders(ctx1, newHdr("key-1", "val-1"))
+	ctx3 := NewContextWithHeaders(ctx2, newHdr("key-2", "val-2"))
+
+	expectedHeaders = 3
+	if err := client.CallContext(ctx3, nil, "test"); err != ErrNoResult {
+		t.Error("call failed", err)
+	}
+
+	expectedHeaders = 2
+	if err := client.CallContext(ctx2, nil, "test"); err != ErrNoResult {
+		t.Error("call failed:", err)
 	}
 }

@@ -19,33 +19,37 @@ package t8ntool
 import (
 	"crypto/ecdsa"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"math/big"
 	"os"
 	"path"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/eth/tracers/logger"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/tests"
-	"gopkg.in/urfave/cli.v1"
+	"github.com/urfave/cli/v2"
 )
 
 const (
 	ErrorEVM              = 2
-	ErrorVMConfig         = 3
+	ErrorConfig           = 3
 	ErrorMissingBlockhash = 4
 
 	ErrorJson = 10
 	ErrorIO   = 11
+	ErrorRlp  = 12
 
 	stdinSelector = "stdin"
 )
@@ -63,17 +67,23 @@ func (n *NumberedError) Error() string {
 	return fmt.Sprintf("ERROR(%d): %v", n.errorCode, n.err.Error())
 }
 
-func (n *NumberedError) Code() int {
+func (n *NumberedError) ExitCode() int {
 	return n.errorCode
 }
+
+// compile-time conformance test
+var (
+	_ cli.ExitCoder = (*NumberedError)(nil)
+)
 
 type input struct {
 	Alloc core.GenesisAlloc `json:"alloc,omitempty"`
 	Env   *stEnv            `json:"env,omitempty"`
 	Txs   []*txWithKey      `json:"txs,omitempty"`
+	TxRlp string            `json:"txsRlp,omitempty"`
 }
 
-func Main(ctx *cli.Context) error {
+func Transition(ctx *cli.Context) error {
 	// Configure the go-ethereum logger
 	glogger := log.NewGlogHandler(log.StreamHandler(os.Stderr, log.TerminalFormat(false)))
 	glogger.Verbosity(log.Lvl(ctx.Int(VerbosityFlag.Name)))
@@ -82,26 +92,32 @@ func Main(ctx *cli.Context) error {
 	var (
 		err     error
 		tracer  vm.EVMLogger
-		baseDir = ""
+		baseDir string
 	)
 	var getTracer func(txIndex int, txHash common.Hash) (vm.EVMLogger, error)
 
-	// If user specified a basedir, make sure it exists
-	if ctx.IsSet(OutputBasedir.Name) {
-		if base := ctx.String(OutputBasedir.Name); len(base) > 0 {
-			err := os.MkdirAll(base, 0755) // //rw-r--r--
-			if err != nil {
-				return NewError(ErrorIO, fmt.Errorf("failed creating output basedir: %v", err))
-			}
-			baseDir = base
-		}
+	baseDir, err = createBasedir(ctx)
+	if err != nil {
+		return NewError(ErrorIO, fmt.Errorf("failed creating output basedir: %v", err))
 	}
 	if ctx.Bool(TraceFlag.Name) {
+		if ctx.IsSet(TraceDisableMemoryFlag.Name) && ctx.IsSet(TraceEnableMemoryFlag.Name) {
+			return NewError(ErrorConfig, fmt.Errorf("can't use both flags --%s and --%s", TraceDisableMemoryFlag.Name, TraceEnableMemoryFlag.Name))
+		}
+		if ctx.IsSet(TraceDisableReturnDataFlag.Name) && ctx.IsSet(TraceEnableReturnDataFlag.Name) {
+			return NewError(ErrorConfig, fmt.Errorf("can't use both flags --%s and --%s", TraceDisableReturnDataFlag.Name, TraceEnableReturnDataFlag.Name))
+		}
+		if ctx.IsSet(TraceDisableMemoryFlag.Name) {
+			log.Warn(fmt.Sprintf("--%s has been deprecated in favour of --%s", TraceDisableMemoryFlag.Name, TraceEnableMemoryFlag.Name))
+		}
+		if ctx.IsSet(TraceDisableReturnDataFlag.Name) {
+			log.Warn(fmt.Sprintf("--%s has been deprecated in favour of --%s", TraceDisableReturnDataFlag.Name, TraceEnableReturnDataFlag.Name))
+		}
 		// Configure the EVM logger
-		logConfig := &vm.LogConfig{
+		logConfig := &logger.Config{
 			DisableStack:     ctx.Bool(TraceDisableStackFlag.Name),
-			EnableMemory:     !ctx.Bool(TraceDisableMemoryFlag.Name),
-			EnableReturnData: !ctx.Bool(TraceDisableReturnDataFlag.Name),
+			EnableMemory:     !ctx.Bool(TraceDisableMemoryFlag.Name) || ctx.Bool(TraceEnableMemoryFlag.Name),
+			EnableReturnData: !ctx.Bool(TraceDisableReturnDataFlag.Name) || ctx.Bool(TraceEnableReturnDataFlag.Name),
 			Debug:            true,
 		}
 		var prevFile *os.File
@@ -120,7 +136,7 @@ func Main(ctx *cli.Context) error {
 				return nil, NewError(ErrorIO, fmt.Errorf("failed creating trace-file: %v", err))
 			}
 			prevFile = traceFile
-			return vm.NewJSONLogger(logConfig, traceFile), nil
+			return logger.NewJSONLogger(logConfig, traceFile), nil
 		}
 	} else {
 		getTracer = func(txIndex int, txHash common.Hash) (tracer vm.EVMLogger, err error) {
@@ -142,32 +158,22 @@ func Main(ctx *cli.Context) error {
 	// Figure out the prestate alloc
 	if allocStr == stdinSelector || envStr == stdinSelector || txStr == stdinSelector {
 		decoder := json.NewDecoder(os.Stdin)
-		decoder.Decode(inputData)
+		if err := decoder.Decode(inputData); err != nil {
+			return NewError(ErrorJson, fmt.Errorf("failed unmarshaling stdin: %v", err))
+		}
 	}
 	if allocStr != stdinSelector {
-		inFile, err := os.Open(allocStr)
-		if err != nil {
-			return NewError(ErrorIO, fmt.Errorf("failed reading alloc file: %v", err))
-		}
-		defer inFile.Close()
-		decoder := json.NewDecoder(inFile)
-		if err := decoder.Decode(&inputData.Alloc); err != nil {
-			return NewError(ErrorJson, fmt.Errorf("Failed unmarshaling alloc-file: %v", err))
+		if err := readFile(allocStr, "alloc", &inputData.Alloc); err != nil {
+			return err
 		}
 	}
 	prestate.Pre = inputData.Alloc
 
 	// Set the block environment
 	if envStr != stdinSelector {
-		inFile, err := os.Open(envStr)
-		if err != nil {
-			return NewError(ErrorIO, fmt.Errorf("failed reading env file: %v", err))
-		}
-		defer inFile.Close()
-		decoder := json.NewDecoder(inFile)
 		var env stEnv
-		if err := decoder.Decode(&env); err != nil {
-			return NewError(ErrorJson, fmt.Errorf("Failed unmarshaling env-file: %v", err))
+		if err := readFile(envStr, "env", &env); err != nil {
+			return err
 		}
 		inputData.Env = &env
 	}
@@ -175,12 +181,11 @@ func Main(ctx *cli.Context) error {
 
 	vmConfig := vm.Config{
 		Tracer: tracer,
-		Debug:  (tracer != nil),
 	}
 	// Construct the chainconfig
 	var chainConfig *params.ChainConfig
 	if cConf, extraEips, err := tests.GetChainConfig(ctx.String(ForknameFlag.Name)); err != nil {
-		return NewError(ErrorVMConfig, fmt.Errorf("Failed constructing chain configuration: %v", err))
+		return NewError(ErrorConfig, fmt.Errorf("failed constructing chain configuration: %v", err))
 	} else {
 		chainConfig = cConf
 		vmConfig.ExtraEips = extraEips
@@ -196,57 +201,140 @@ func Main(ctx *cli.Context) error {
 		}
 		defer inFile.Close()
 		decoder := json.NewDecoder(inFile)
-		if err := decoder.Decode(&txsWithKeys); err != nil {
-			return NewError(ErrorJson, fmt.Errorf("Failed unmarshaling txs-file: %v", err))
+		if strings.HasSuffix(txStr, ".rlp") {
+			var body hexutil.Bytes
+			if err := decoder.Decode(&body); err != nil {
+				return err
+			}
+			var txs types.Transactions
+			if err := rlp.DecodeBytes(body, &txs); err != nil {
+				return err
+			}
+			for _, tx := range txs {
+				txsWithKeys = append(txsWithKeys, &txWithKey{
+					key: nil,
+					tx:  tx,
+				})
+			}
+		} else {
+			if err := decoder.Decode(&txsWithKeys); err != nil {
+				return NewError(ErrorJson, fmt.Errorf("failed unmarshaling txs-file: %v", err))
+			}
 		}
 	} else {
-		txsWithKeys = inputData.Txs
+		if len(inputData.TxRlp) > 0 {
+			// Decode the body of already signed transactions
+			body := common.FromHex(inputData.TxRlp)
+			var txs types.Transactions
+			if err := rlp.DecodeBytes(body, &txs); err != nil {
+				return err
+			}
+			for _, tx := range txs {
+				txsWithKeys = append(txsWithKeys, &txWithKey{
+					key: nil,
+					tx:  tx,
+				})
+			}
+		} else {
+			// JSON encoded transactions
+			txsWithKeys = inputData.Txs
+		}
 	}
 	// We may have to sign the transactions.
-	signer := types.MakeSigner(chainConfig, big.NewInt(int64(prestate.Env.Number)))
+	signer := types.MakeSigner(chainConfig, big.NewInt(int64(prestate.Env.Number)), prestate.Env.Timestamp)
 
 	if txs, err = signUnsignedTransactions(txsWithKeys, signer); err != nil {
-		return NewError(ErrorJson, fmt.Errorf("Failed signing transactions: %v", err))
+		return NewError(ErrorJson, fmt.Errorf("failed signing transactions: %v", err))
 	}
-
-	// Iterate over all the tests, run them and aggregate the results
-
+	// Sanity check, to not `panic` in state_transition
+	if chainConfig.IsLondon(big.NewInt(int64(prestate.Env.Number))) {
+		if prestate.Env.BaseFee != nil {
+			// Already set, base fee has precedent over parent base fee.
+		} else if prestate.Env.ParentBaseFee != nil && prestate.Env.Number != 0 {
+			parent := &types.Header{
+				Number:   new(big.Int).SetUint64(prestate.Env.Number - 1),
+				BaseFee:  prestate.Env.ParentBaseFee,
+				GasUsed:  prestate.Env.ParentGasUsed,
+				GasLimit: prestate.Env.ParentGasLimit,
+			}
+			prestate.Env.BaseFee = eip1559.CalcBaseFee(chainConfig, parent)
+		} else {
+			return NewError(ErrorConfig, errors.New("EIP-1559 config but missing 'currentBaseFee' in env section"))
+		}
+	}
+	if chainConfig.IsShanghai(big.NewInt(int64(prestate.Env.Number)), prestate.Env.Timestamp) && prestate.Env.Withdrawals == nil {
+		return NewError(ErrorConfig, errors.New("Shanghai config but missing 'withdrawals' in env section"))
+	}
+	isMerged := chainConfig.TerminalTotalDifficulty != nil && chainConfig.TerminalTotalDifficulty.BitLen() == 0
+	env := prestate.Env
+	if isMerged {
+		// post-merge:
+		// - random must be supplied
+		// - difficulty must be zero
+		switch {
+		case env.Random == nil:
+			return NewError(ErrorConfig, errors.New("post-merge requires currentRandom to be defined in env"))
+		case env.Difficulty != nil && env.Difficulty.BitLen() != 0:
+			return NewError(ErrorConfig, errors.New("post-merge difficulty must be zero (or omitted) in env"))
+		}
+		prestate.Env.Difficulty = nil
+	} else if env.Difficulty == nil {
+		// pre-merge:
+		// If difficulty was not provided by caller, we need to calculate it.
+		switch {
+		case env.ParentDifficulty == nil:
+			return NewError(ErrorConfig, errors.New("currentDifficulty was not provided, and cannot be calculated due to missing parentDifficulty"))
+		case env.Number == 0:
+			return NewError(ErrorConfig, errors.New("currentDifficulty needs to be provided for block number 0"))
+		case env.Timestamp <= env.ParentTimestamp:
+			return NewError(ErrorConfig, fmt.Errorf("currentDifficulty cannot be calculated -- currentTime (%d) needs to be after parent time (%d)",
+				env.Timestamp, env.ParentTimestamp))
+		}
+		prestate.Env.Difficulty = calcDifficulty(chainConfig, env.Number, env.Timestamp,
+			env.ParentTimestamp, env.ParentDifficulty, env.ParentUncleHash)
+	}
 	// Run the test and aggregate the result
-	state, result, err := prestate.Apply(vmConfig, chainConfig, txs, ctx.Int64(RewardFlag.Name), getTracer)
+	s, result, err := prestate.Apply(vmConfig, chainConfig, txs, ctx.Int64(RewardFlag.Name), getTracer)
 	if err != nil {
 		return err
 	}
 	body, _ := rlp.EncodeToBytes(txs)
 	// Dump the excution result
 	collector := make(Alloc)
-	state.DumpToCollector(collector, false, false, false, nil, -1)
+	s.DumpToCollector(collector, nil)
 	return dispatchOutput(ctx, baseDir, result, collector, body)
-
 }
 
 // txWithKey is a helper-struct, to allow us to use the types.Transaction along with
 // a `secretKey`-field, for input
 type txWithKey struct {
-	key *ecdsa.PrivateKey
-	tx  *types.Transaction
+	key       *ecdsa.PrivateKey
+	tx        *types.Transaction
+	protected bool
 }
 
 func (t *txWithKey) UnmarshalJSON(input []byte) error {
-	// Read the secretKey, if present
-	type sKey struct {
-		Key *common.Hash `json:"secretKey"`
+	// Read the metadata, if present
+	type txMetadata struct {
+		Key       *common.Hash `json:"secretKey"`
+		Protected *bool        `json:"protected"`
 	}
-	var key sKey
-	if err := json.Unmarshal(input, &key); err != nil {
+	var data txMetadata
+	if err := json.Unmarshal(input, &data); err != nil {
 		return err
 	}
-	if key.Key != nil {
-		k := key.Key.Hex()[2:]
+	if data.Key != nil {
+		k := data.Key.Hex()[2:]
 		if ecdsaKey, err := crypto.HexToECDSA(k); err != nil {
 			return err
 		} else {
 			t.key = ecdsaKey
 		}
+	}
+	if data.Protected != nil {
+		t.protected = *data.Protected
+	} else {
+		t.protected = true
 	}
 	// Now, read the transaction itself
 	var tx types.Transaction
@@ -260,8 +348,9 @@ func (t *txWithKey) UnmarshalJSON(input []byte) error {
 // signUnsignedTransactions converts the input txs to canonical transactions.
 //
 // The transactions can have two forms, either
-//   1. unsigned or
-//   2. signed
+//  1. unsigned or
+//  2. signed
+//
 // For (1), r, s, v, need so be zero, and the `secretKey` needs to be set.
 // If so, we sign it here and now, with the given `secretKey`
 // If the condition above is not met, then it's considered a signed transaction.
@@ -276,9 +365,17 @@ func signUnsignedTransactions(txs []*txWithKey, signer types.Signer) (types.Tran
 		v, r, s := tx.RawSignatureValues()
 		if key != nil && v.BitLen()+r.BitLen()+s.BitLen() == 0 {
 			// This transaction needs to be signed
-			signed, err := types.SignTx(tx, signer, key)
+			var (
+				signed *types.Transaction
+				err    error
+			)
+			if txWithKey.protected {
+				signed, err = types.SignTx(tx, signer, key)
+			} else {
+				signed, err = types.SignTx(tx, types.FrontierSigner{}, key)
+			}
 			if err != nil {
-				return nil, NewError(ErrorJson, fmt.Errorf("Tx %d: failed to sign tx: %v", i, err))
+				return nil, NewError(ErrorJson, fmt.Errorf("tx %d: failed to sign tx: %v", i, err))
 			}
 			signedTxs = append(signedTxs, signed)
 		} else {
@@ -293,7 +390,10 @@ type Alloc map[common.Address]core.GenesisAccount
 
 func (g Alloc) OnRoot(common.Hash) {}
 
-func (g Alloc) OnAccount(addr common.Address, dumpAccount state.DumpAccount) {
+func (g Alloc) OnAccount(addr *common.Address, dumpAccount state.DumpAccount) {
+	if addr == nil {
+		return
+	}
 	balance, _ := new(big.Int).SetString(dumpAccount.Balance, 10)
 	var storage map[common.Hash]common.Hash
 	if dumpAccount.Storage != nil {
@@ -303,22 +403,22 @@ func (g Alloc) OnAccount(addr common.Address, dumpAccount state.DumpAccount) {
 		}
 	}
 	genesisAccount := core.GenesisAccount{
-		Code:    common.FromHex(dumpAccount.Code),
+		Code:    dumpAccount.Code,
 		Storage: storage,
 		Balance: balance,
 		Nonce:   dumpAccount.Nonce,
 	}
-	g[addr] = genesisAccount
+	g[*addr] = genesisAccount
 }
 
-// saveFile marshalls the object to the given file
+// saveFile marshals the object to the given file
 func saveFile(baseDir, filename string, data interface{}) error {
 	b, err := json.MarshalIndent(data, "", " ")
 	if err != nil {
 		return NewError(ErrorJson, fmt.Errorf("failed marshalling output: %v", err))
 	}
 	location := path.Join(baseDir, filename)
-	if err = ioutil.WriteFile(location, b, 0644); err != nil {
+	if err = os.WriteFile(location, b, 0644); err != nil {
 		return NewError(ErrorIO, fmt.Errorf("failed writing output: %v", err))
 	}
 	log.Info("Wrote file", "file", location)
@@ -355,18 +455,20 @@ func dispatchOutput(ctx *cli.Context, baseDir string, result *ExecutionResult, a
 		return err
 	}
 	if len(stdOutObject) > 0 {
-		b, err := json.MarshalIndent(stdOutObject, "", " ")
+		b, err := json.MarshalIndent(stdOutObject, "", "  ")
 		if err != nil {
 			return NewError(ErrorJson, fmt.Errorf("failed marshalling output: %v", err))
 		}
 		os.Stdout.Write(b)
+		os.Stdout.WriteString("\n")
 	}
 	if len(stdErrObject) > 0 {
-		b, err := json.MarshalIndent(stdErrObject, "", " ")
+		b, err := json.MarshalIndent(stdErrObject, "", "  ")
 		if err != nil {
 			return NewError(ErrorJson, fmt.Errorf("failed marshalling output: %v", err))
 		}
 		os.Stderr.Write(b)
+		os.Stderr.WriteString("\n")
 	}
 	return nil
 }

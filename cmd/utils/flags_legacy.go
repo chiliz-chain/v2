@@ -18,63 +18,117 @@ package utils
 
 import (
 	"fmt"
-	"strings"
 
-	"github.com/ethereum/go-ethereum/node"
-	"gopkg.in/urfave/cli.v1"
+	"github.com/ethereum/go-ethereum/eth/ethconfig"
+	"github.com/ethereum/go-ethereum/internal/flags"
+	"github.com/urfave/cli/v2"
 )
 
-var ShowDeprecated = cli.Command{
+var ShowDeprecated = &cli.Command{
 	Action:      showDeprecated,
 	Name:        "show-deprecated-flags",
 	Usage:       "Show flags that have been deprecated",
 	ArgsUsage:   " ",
-	Category:    "MISCELLANEOUS COMMANDS",
 	Description: "Show flags that have been deprecated and will soon be removed",
 }
 
-var DeprecatedFlags = []cli.Flag{}
+var DeprecatedFlags = []cli.Flag{
+	NoUSBFlag,
+	LegacyWhitelistFlag,
+	CacheTrieJournalFlag,
+	CacheTrieRejournalFlag,
+	LegacyDiscoveryV5Flag,
+	TxLookupLimitFlag,
+	LightServeFlag,
+	LightIngressFlag,
+	LightEgressFlag,
+	LightMaxPeersFlag,
+	LightNoPruneFlag,
+	LightNoSyncServeFlag,
+}
 
 var (
-	// (Deprecated May 2020, shown in aliased flags section)
-	LegacyRPCEnabledFlag = cli.BoolFlag{
-		Name:  "rpc",
-		Usage: "Enable the HTTP-RPC server (deprecated and will be removed June 2021, use --http)",
+	// Deprecated May 2020, shown in aliased flags section
+	NoUSBFlag = &cli.BoolFlag{
+		Name:     "nousb",
+		Usage:    "Disables monitoring for and managing USB hardware wallets (deprecated)",
+		Category: flags.DeprecatedCategory,
 	}
-	LegacyRPCListenAddrFlag = cli.StringFlag{
-		Name:  "rpcaddr",
-		Usage: "HTTP-RPC server listening interface (deprecated and will be removed June 2021, use --http.addr)",
-		Value: node.DefaultHTTPHost,
+	// Deprecated March 2022
+	LegacyWhitelistFlag = &cli.StringFlag{
+		Name:     "whitelist",
+		Usage:    "Comma separated block number-to-hash mappings to enforce (<number>=<hash>) (deprecated in favor of --eth.requiredblocks)",
+		Category: flags.DeprecatedCategory,
 	}
-	LegacyRPCPortFlag = cli.IntFlag{
-		Name:  "rpcport",
-		Usage: "HTTP-RPC server listening port (deprecated and will be removed June 2021, use --http.port)",
-		Value: node.DefaultHTTPPort,
+	// Deprecated July 2023
+	CacheTrieJournalFlag = &cli.StringFlag{
+		Name:     "cache.trie.journal",
+		Usage:    "Disk journal directory for trie cache to survive node restarts",
+		Category: flags.DeprecatedCategory,
 	}
-	LegacyRPCCORSDomainFlag = cli.StringFlag{
-		Name:  "rpccorsdomain",
-		Usage: "Comma separated list of domains from which to accept cross origin requests (browser enforced) (deprecated and will be removed June 2021, use --http.corsdomain)",
-		Value: "",
+	CacheTrieRejournalFlag = &cli.DurationFlag{
+		Name:     "cache.trie.rejournal",
+		Usage:    "Time interval to regenerate the trie cache journal",
+		Category: flags.DeprecatedCategory,
 	}
-	LegacyRPCVirtualHostsFlag = cli.StringFlag{
-		Name:  "rpcvhosts",
-		Usage: "Comma separated list of virtual hostnames from which to accept requests (server enforced). Accepts '*' wildcard. (deprecated and will be removed June 2021, use --http.vhosts)",
-		Value: strings.Join(node.DefaultConfig.HTTPVirtualHosts, ","),
+	LegacyDiscoveryV5Flag = &cli.BoolFlag{
+		Name:     "v5disc",
+		Usage:    "Enables the experimental RLPx V5 (Topic Discovery) mechanism (deprecated, use --discv5 instead)",
+		Category: flags.DeprecatedCategory,
 	}
-	LegacyRPCApiFlag = cli.StringFlag{
-		Name:  "rpcapi",
-		Usage: "API's offered over the HTTP-RPC interface (deprecated and will be removed June 2021, use --http.api)",
-		Value: "",
+	// Deprecated August 2023
+	TxLookupLimitFlag = &cli.Uint64Flag{
+		Name:     "txlookuplimit",
+		Usage:    "Number of recent blocks to maintain transactions index for (default = about one year, 0 = entire chain) (deprecated, use history.transactions instead)",
+		Value:    ethconfig.Defaults.TransactionHistory,
+		Category: flags.DeprecatedCategory,
+	}
+	// Light server and client settings, Deprecated November 2023
+	LightServeFlag = &cli.IntFlag{
+		Name:     "light.serve",
+		Usage:    "Maximum percentage of time allowed for serving LES requests (deprecated)",
+		Value:    ethconfig.Defaults.LightServ,
+		Category: flags.LightCategory,
+	}
+	LightIngressFlag = &cli.IntFlag{
+		Name:     "light.ingress",
+		Usage:    "Incoming bandwidth limit for serving light clients (deprecated)",
+		Value:    ethconfig.Defaults.LightIngress,
+		Category: flags.LightCategory,
+	}
+	LightEgressFlag = &cli.IntFlag{
+		Name:     "light.egress",
+		Usage:    "Outgoing bandwidth limit for serving light clients (deprecated)",
+		Value:    ethconfig.Defaults.LightEgress,
+		Category: flags.LightCategory,
+	}
+	LightMaxPeersFlag = &cli.IntFlag{
+		Name:     "light.maxpeers",
+		Usage:    "Maximum number of light clients to serve, or light servers to attach to (deprecated)",
+		Value:    ethconfig.Defaults.LightPeers,
+		Category: flags.LightCategory,
+	}
+	LightNoPruneFlag = &cli.BoolFlag{
+		Name:     "light.nopruning",
+		Usage:    "Disable ancient light chain data pruning (deprecated)",
+		Category: flags.LightCategory,
+	}
+	LightNoSyncServeFlag = &cli.BoolFlag{
+		Name:     "light.nosyncserve",
+		Usage:    "Enables serving light clients before syncing (deprecated)",
+		Category: flags.LightCategory,
 	}
 )
 
 // showDeprecated displays deprecated flags that will be soon removed from the codebase.
-func showDeprecated(*cli.Context) {
+func showDeprecated(*cli.Context) error {
 	fmt.Println("--------------------------------------------------------------------")
 	fmt.Println("The following flags are deprecated and will be removed in the future!")
 	fmt.Println("--------------------------------------------------------------------")
 	fmt.Println()
-	// TODO remove when there are newly deprecated flags
-	fmt.Println("no deprecated flags to show at this time")
+	for _, flag := range DeprecatedFlags {
+		fmt.Println(flag.String())
+	}
 	fmt.Println()
+	return nil
 }

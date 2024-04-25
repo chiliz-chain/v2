@@ -27,6 +27,7 @@ const (
 	ChainConfigContract    = "0x0000000000000000000000000000000000007003"
 	RuntimeUpgradeContract = "0x0000000000000000000000000000000000007004"
 	DeployerProxyContract  = "0x0000000000000000000000000000000000007005"
+	TokenomicsContract     = "0x0000000000000000000000000000000000007006"
 )
 
 var (
@@ -35,6 +36,7 @@ var (
 	ChainConfigContractAddress    = common.HexToAddress(ChainConfigContract)
 	RuntimeUpgradeContractAddress = common.HexToAddress(RuntimeUpgradeContract)
 	DeployerProxyContractAddress  = common.HexToAddress(DeployerProxyContract)
+	TokenomicsContractAddress     = common.HexToAddress(TokenomicsContract)
 )
 
 var systemContracts = map[common.Address]bool{
@@ -54,6 +56,7 @@ var systemContracts = map[common.Address]bool{
 	common.HexToAddress(ChainConfigContract):    true,
 	common.HexToAddress(RuntimeUpgradeContract): true,
 	common.HexToAddress(DeployerProxyContract):  true,
+	common.HexToAddress(TokenomicsContract):     true,
 }
 
 func IsSystemContract(address common.Address) bool {

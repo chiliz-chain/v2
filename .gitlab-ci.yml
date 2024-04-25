@@ -1,0 +1,45 @@
+spec:
+  inputs:
+    behat_parallel:
+      default: "no"
+---
+services:
+  - name: ${DOCKER_BUIDER_IMAGE}-dind
+    alias: docker
+
+default:
+  image: ${DOCKER_BUIDER_IMAGE}
+  tags:
+    - kubernetes-basic
+  cache:
+    key: composer-$CI_COMMIT_BRANCH
+    paths:
+      - vendor/
+  before_script:
+    - docker-login
+
+variables:
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_HOST_IP: 172.17.0.1
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_TLS_VERIFY: 1
+  DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+  DOCKER_BUIDER_IMAGE: 475320849898.dkr.ecr.eu-west-3.amazonaws.com/gitlab/docker-builder:1.0.2
+  GIT_STRATEGY: clone
+  BEHAT_PARALLEL: $[[ inputs.behat_parallel ]]
+
+workflow:
+  rules:
+    - if: '"merge_request_event" == $CI_PIPELINE_SOURCE'
+      when: never
+    - when: always
+
+stages:
+  - build_images
+
+build_images:
+  stage: build_images
+  before_script:
+    - make docker.login
+  script:
+    - make docker.build_images IMAGE_TAG=${CI_COMMIT_TAG:-$CI_COMMIT_REF_SLUG}

@@ -20,11 +20,11 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"reflect"
 	"testing"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -75,7 +75,7 @@ func TestDecodeEmptyTypedTx(t *testing.T) {
 	input := []byte{0x80}
 	var tx Transaction
 	err := rlp.DecodeBytes(input, &tx)
-	if err != errEmptyTypedTx {
+	if err != errShortTypedTx {
 		t.Fatal("wrong error:", err)
 	}
 }
@@ -113,7 +113,6 @@ func TestEIP2718TransactionSigHash(t *testing.T) {
 
 // This test checks signature operations on access list transactions.
 func TestEIP2930Signer(t *testing.T) {
-
 	var (
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		keyAddr = crypto.PubkeyToAddress(key.PublicKey)
@@ -170,14 +169,14 @@ func TestEIP2930Signer(t *testing.T) {
 			t.Errorf("test %d: wrong sig hash: got %x, want %x", i, sigHash, test.wantSignerHash)
 		}
 		sender, err := Sender(test.signer, test.tx)
-		if err != test.wantSenderErr {
+		if !errors.Is(err, test.wantSenderErr) {
 			t.Errorf("test %d: wrong Sender error %q", i, err)
 		}
 		if err == nil && sender != keyAddr {
 			t.Errorf("test %d: wrong sender address %x", i, sender)
 		}
 		signedTx, err := SignTx(test.tx, test.signer, key)
-		if err != test.wantSignErr {
+		if !errors.Is(err, test.wantSignErr) {
 			t.Fatalf("test %d: wrong SignTx error %q", i, err)
 		}
 		if signedTx != nil {
@@ -258,106 +257,6 @@ func TestRecipientNormal(t *testing.T) {
 	}
 }
 
-// Tests that transactions can be correctly sorted according to their price in
-// decreasing order, but at the same time with increasing nonces when issued by
-// the same account.
-func TestTransactionPriceNonceSort(t *testing.T) {
-	// Generate a batch of accounts to start with
-	keys := make([]*ecdsa.PrivateKey, 25)
-	for i := 0; i < len(keys); i++ {
-		keys[i], _ = crypto.GenerateKey()
-	}
-	signer := HomesteadSigner{}
-
-	// Generate a batch of transactions with overlapping values, but shifted nonces
-	groups := map[common.Address]Transactions{}
-	for start, key := range keys {
-		addr := crypto.PubkeyToAddress(key.PublicKey)
-		for i := 0; i < 25; i++ {
-			tx, _ := SignTx(NewTransaction(uint64(start+i), common.Address{}, big.NewInt(100), 100, big.NewInt(int64(start+i)), nil), signer, key)
-			groups[addr] = append(groups[addr], tx)
-		}
-	}
-	// Sort the transactions and cross check the nonce ordering
-	txset := NewTransactionsByPriceAndNonce(signer, groups)
-
-	txs := Transactions{}
-	for tx := txset.Peek(); tx != nil; tx = txset.Peek() {
-		txs = append(txs, tx)
-		txset.Shift()
-	}
-	if len(txs) != 25*25 {
-		t.Errorf("expected %d transactions, found %d", 25*25, len(txs))
-	}
-	for i, txi := range txs {
-		fromi, _ := Sender(signer, txi)
-
-		// Make sure the nonce order is valid
-		for j, txj := range txs[i+1:] {
-			fromj, _ := Sender(signer, txj)
-			if fromi == fromj && txi.Nonce() > txj.Nonce() {
-				t.Errorf("invalid nonce ordering: tx #%d (A=%x N=%v) < tx #%d (A=%x N=%v)", i, fromi[:4], txi.Nonce(), i+j, fromj[:4], txj.Nonce())
-			}
-		}
-		// If the next tx has different from account, the price must be lower than the current one
-		if i+1 < len(txs) {
-			next := txs[i+1]
-			fromNext, _ := Sender(signer, next)
-			if fromi != fromNext && txi.GasPrice().Cmp(next.GasPrice()) < 0 {
-				t.Errorf("invalid gasprice ordering: tx #%d (A=%x P=%v) < tx #%d (A=%x P=%v)", i, fromi[:4], txi.GasPrice(), i+1, fromNext[:4], next.GasPrice())
-			}
-		}
-	}
-}
-
-// Tests that if multiple transactions have the same price, the ones seen earlier
-// are prioritized to avoid network spam attacks aiming for a specific ordering.
-func TestTransactionTimeSort(t *testing.T) {
-	// Generate a batch of accounts to start with
-	keys := make([]*ecdsa.PrivateKey, 5)
-	for i := 0; i < len(keys); i++ {
-		keys[i], _ = crypto.GenerateKey()
-	}
-	signer := HomesteadSigner{}
-
-	// Generate a batch of transactions with overlapping prices, but different creation times
-	groups := map[common.Address]Transactions{}
-	for start, key := range keys {
-		addr := crypto.PubkeyToAddress(key.PublicKey)
-
-		tx, _ := SignTx(NewTransaction(0, common.Address{}, big.NewInt(100), 100, big.NewInt(1), nil), signer, key)
-		tx.time = time.Unix(0, int64(len(keys)-start))
-
-		groups[addr] = append(groups[addr], tx)
-	}
-	// Sort the transactions and cross check the nonce ordering
-	txset := NewTransactionsByPriceAndNonce(signer, groups)
-
-	txs := Transactions{}
-	for tx := txset.Peek(); tx != nil; tx = txset.Peek() {
-		txs = append(txs, tx)
-		txset.Shift()
-	}
-	if len(txs) != len(keys) {
-		t.Errorf("expected %d transactions, found %d", len(keys), len(txs))
-	}
-	for i, txi := range txs {
-		fromi, _ := Sender(signer, txi)
-		if i+1 < len(txs) {
-			next := txs[i+1]
-			fromNext, _ := Sender(signer, next)
-
-			if txi.GasPrice().Cmp(next.GasPrice()) < 0 {
-				t.Errorf("invalid gasprice ordering: tx #%d (A=%x P=%v) < tx #%d (A=%x P=%v)", i, fromi[:4], txi.GasPrice(), i+1, fromNext[:4], next.GasPrice())
-			}
-			// Make sure time order is ascending if the txs have the same gas price
-			if txi.GasPrice().Cmp(next.GasPrice()) == 0 && txi.time.After(next.time) {
-				t.Errorf("invalid received time ordering: tx #%d (A=%x T=%v) > tx #%d (A=%x T=%v)", i, fromi[:4], txi.time, i+1, fromNext[:4], next.time)
-			}
-		}
-	}
-}
-
 // TestTransactionCoding tests serializing/de-serializing to/from rlp and JSON.
 func TestTransactionCoding(t *testing.T) {
 	key, err := crypto.GenerateKey()
@@ -430,14 +329,18 @@ func TestTransactionCoding(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		assertEqual(parsedTx, tx)
+		if err := assertEqual(parsedTx, tx); err != nil {
+			t.Fatal(err)
+		}
 
 		// JSON
 		parsedTx, err = encodeDecodeJSON(tx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		assertEqual(parsedTx, tx)
+		if err := assertEqual(parsedTx, tx); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -475,8 +378,76 @@ func assertEqual(orig *Transaction, cpy *Transaction) error {
 	}
 	if orig.AccessList() != nil {
 		if !reflect.DeepEqual(orig.AccessList(), cpy.AccessList()) {
-			return fmt.Errorf("access list wrong!")
+			return errors.New("access list wrong!")
 		}
 	}
 	return nil
+}
+
+func TestTransactionSizes(t *testing.T) {
+	signer := NewLondonSigner(big.NewInt(123))
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	to := common.HexToAddress("0x01")
+	for i, txdata := range []TxData{
+		&AccessListTx{
+			ChainID:  big.NewInt(123),
+			Nonce:    0,
+			To:       nil,
+			Value:    big.NewInt(1000),
+			Gas:      21000,
+			GasPrice: big.NewInt(100000),
+		},
+		&LegacyTx{
+			Nonce:    1,
+			GasPrice: big.NewInt(500),
+			Gas:      1000000,
+			To:       &to,
+			Value:    big.NewInt(1),
+		},
+		&AccessListTx{
+			ChainID:  big.NewInt(123),
+			Nonce:    1,
+			GasPrice: big.NewInt(500),
+			Gas:      1000000,
+			To:       &to,
+			Value:    big.NewInt(1),
+			AccessList: AccessList{
+				AccessTuple{
+					Address:     common.HexToAddress("0x01"),
+					StorageKeys: []common.Hash{common.HexToHash("0x01")},
+				}},
+		},
+		&DynamicFeeTx{
+			ChainID:   big.NewInt(123),
+			Nonce:     1,
+			Gas:       1000000,
+			To:        &to,
+			Value:     big.NewInt(1),
+			GasTipCap: big.NewInt(500),
+			GasFeeCap: big.NewInt(500),
+		},
+	} {
+		tx, err := SignNewTx(key, signer, txdata)
+		if err != nil {
+			t.Fatalf("test %d: %v", i, err)
+		}
+		bin, _ := tx.MarshalBinary()
+
+		// Check initial calc
+		if have, want := int(tx.Size()), len(bin); have != want {
+			t.Errorf("test %d: size wrong, have %d want %d", i, have, want)
+		}
+		// Check cached version too
+		if have, want := int(tx.Size()), len(bin); have != want {
+			t.Errorf("test %d: (cached) size wrong, have %d want %d", i, have, want)
+		}
+		// Check unmarshalled version too
+		utx := new(Transaction)
+		if err := utx.UnmarshalBinary(bin); err != nil {
+			t.Fatalf("test %d: failed to unmarshal tx: %v", i, err)
+		}
+		if have, want := int(utx.Size()), len(bin); have != want {
+			t.Errorf("test %d: (unmarshalled) size wrong, have %d want %d", i, have, want)
+		}
+	}
 }

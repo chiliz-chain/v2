@@ -53,8 +53,9 @@ func StreamHandler(wr io.Writer, fmtr Format) Handler {
 func SyncHandler(h Handler) Handler {
 	var mu sync.Mutex
 	return FuncHandler(func(r *Record) error {
-		defer mu.Unlock()
 		mu.Lock()
+		defer mu.Unlock()
+
 		return h.Log(r)
 	})
 }
@@ -74,14 +75,14 @@ func FileHandler(path string, fmtr Format) (Handler, error) {
 // RotatingFileHandler returns a handler which writes log records to file chunks
 // at the given path. When a file's size reaches the limit, the handler creates
 // a new file named after the timestamp of the first log record it will contain.
-func RotatingFileHandler(filePath string, limit uint, formatter Format) (Handler, error) {
+func RotatingFileHandler(filePath string, limit uint, formatter Format, rotateHours uint) (Handler, error) {
 	if _, err := os.Stat(path.Dir(filePath)); os.IsNotExist(err) {
 		err := os.MkdirAll(path.Dir(filePath), 0755)
 		if err != nil {
 			return nil, fmt.Errorf("could not create directory %s, %v", path.Dir(filePath), err)
 		}
 	}
-	fileWriter := NewAsyncFileWriter(filePath, int64(limit))
+	fileWriter := NewAsyncFileWriter(filePath, int64(limit), rotateHours)
 	fileWriter.Start()
 	return StreamHandler(fileWriter, formatter), nil
 }
@@ -151,15 +152,14 @@ func CallerStackHandler(format string, h Handler) Handler {
 // wrapped Handler if the given function evaluates true. For example,
 // to only log records where the 'err' key is not nil:
 //
-//    logger.SetHandler(FilterHandler(func(r *Record) bool {
-//        for i := 0; i < len(r.Ctx); i += 2 {
-//            if r.Ctx[i] == "err" {
-//                return r.Ctx[i+1] != nil
-//            }
-//        }
-//        return false
-//    }, h))
-//
+//	logger.SetHandler(FilterHandler(func(r *Record) bool {
+//	    for i := 0; i < len(r.Ctx); i += 2 {
+//	        if r.Ctx[i] == "err" {
+//	            return r.Ctx[i+1] != nil
+//	        }
+//	    }
+//	    return false
+//	}, h))
 func FilterHandler(fn func(r *Record) bool, h Handler) Handler {
 	return FuncHandler(func(r *Record) error {
 		if fn(r) {
@@ -174,8 +174,7 @@ func FilterHandler(fn func(r *Record) bool, h Handler) Handler {
 // context matches the value. For example, to only log records
 // from your ui package:
 //
-//    log.MatchFilterHandler("pkg", "app/ui", log.StdoutHandler)
-//
+//	log.MatchFilterHandler("pkg", "app/ui", log.StdoutHandler)
 func MatchFilterHandler(key string, value interface{}, h Handler) Handler {
 	return FilterHandler(func(r *Record) (pass bool) {
 		switch key {
@@ -201,8 +200,7 @@ func MatchFilterHandler(key string, value interface{}, h Handler) Handler {
 // level to the wrapped Handler. For example, to only
 // log Error/Crit records:
 //
-//     log.LvlFilterHandler(log.LvlError, log.StdoutHandler)
-//
+//	log.LvlFilterHandler(log.LvlError, log.StdoutHandler)
 func LvlFilterHandler(maxLvl Lvl, h Handler) Handler {
 	return FilterHandler(func(r *Record) (pass bool) {
 		return r.Lvl <= maxLvl
@@ -214,10 +212,9 @@ func LvlFilterHandler(maxLvl Lvl, h Handler) Handler {
 // to different locations. For example, to log to a file and
 // standard error:
 //
-//     log.MultiHandler(
-//         log.Must.FileHandler("/var/log/app.log", log.LogfmtFormat()),
-//         log.StderrHandler)
-//
+//	log.MultiHandler(
+//	    log.Must.FileHandler("/var/log/app.log", log.LogfmtFormat()),
+//	    log.StderrHandler)
 func MultiHandler(hs ...Handler) Handler {
 	return FuncHandler(func(r *Record) error {
 		for _, h := range hs {
@@ -235,10 +232,10 @@ func MultiHandler(hs ...Handler) Handler {
 // to writing to a file if the network fails, and then to
 // standard out if the file write fails:
 //
-//     log.FailoverHandler(
-//         log.Must.NetHandler("tcp", ":9090", log.JSONFormat()),
-//         log.Must.FileHandler("/var/log/app.log", log.LogfmtFormat()),
-//         log.StdoutHandler)
+//	log.FailoverHandler(
+//	    log.Must.NetHandler("tcp", ":9090", log.JSONFormat()),
+//	    log.Must.FileHandler("/var/log/app.log", log.LogfmtFormat()),
+//	    log.StdoutHandler)
 //
 // All writes that do not go to the first handler will add context with keys of
 // the form "failover_err_{idx}" which explain the error encountered while
