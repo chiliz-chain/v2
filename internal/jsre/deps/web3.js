@@ -518,7 +518,7 @@ var f = require('./formatters');
 var SolidityType = require('./type');
 
 /**
- * SolidityTypeAddress is a prootype that represents address type
+ * SolidityTypeAddress is a prototype that represents address type
  * It matches:
  * address
  * address[]
@@ -546,7 +546,7 @@ var f = require('./formatters');
 var SolidityType = require('./type');
 
 /**
- * SolidityTypeBool is a prootype that represents bool type
+ * SolidityTypeBool is a prototype that represents bool type
  * It matches:
  * bool
  * bool[]
@@ -1146,7 +1146,7 @@ var f = require('./formatters');
 var SolidityType = require('./type');
 
 /**
- * SolidityTypeInt is a prootype that represents int type
+ * SolidityTypeInt is a prototype that represents int type
  * It matches:
  * int
  * int[]
@@ -1334,7 +1334,7 @@ var f = require('./formatters');
 var SolidityType = require('./type');
 
 /**
- * SolidityTypeReal is a prootype that represents real type
+ * SolidityTypeReal is a prototype that represents real type
  * It matches:
  * real
  * real[]
@@ -1647,7 +1647,7 @@ var f = require('./formatters');
 var SolidityType = require('./type');
 
 /**
- * SolidityTypeUInt is a prootype that represents uint type
+ * SolidityTypeUInt is a prototype that represents uint type
  * It matches:
  * uint
  * uint[]
@@ -1681,7 +1681,7 @@ var f = require('./formatters');
 var SolidityType = require('./type');
 
 /**
- * SolidityTypeUReal is a prootype that represents ureal type
+ * SolidityTypeUReal is a prototype that represents ureal type
  * It matches:
  * ureal
  * ureal[]
@@ -2307,7 +2307,7 @@ var toChecksumAddress = function (address) {
 };
 
 /**
- * Transforms given string to valid 20 bytes-length addres with 0x prefix
+ * Transforms given string to valid 20 bytes-length address with 0x prefix
  *
  * @method toAddress
  * @param {String} address
@@ -3696,7 +3696,7 @@ var outputBigNumberFormatter = function (number) {
 };
 
 var isPredefinedBlockNumber = function (blockNumber) {
-    return blockNumber === 'latest' || blockNumber === 'pending' || blockNumber === 'earliest';
+    return blockNumber === 'latest' || blockNumber === 'pending' || blockNumber === 'earliest' || blockNumber === 'finalized' || blockNumber === 'safe';
 };
 
 var inputDefaultBlockNumberFormatter = function (blockNumber) {
@@ -3734,7 +3734,7 @@ var inputCallFormatter = function (options){
         options.to = inputAddressFormatter(options.to);
     }
 
-    ['gasPrice', 'gas', 'value', 'nonce'].filter(function (key) {
+    ['maxFeePerGas', 'maxPriorityFeePerGas', 'gasPrice', 'gas', 'value', 'nonce'].filter(function (key) {
         return options[key] !== undefined;
     }).forEach(function(key){
         options[key] = utils.fromDecimal(options[key]);
@@ -3759,7 +3759,7 @@ var inputTransactionFormatter = function (options){
         options.to = inputAddressFormatter(options.to);
     }
 
-    ['gasPrice', 'gas', 'value', 'nonce'].filter(function (key) {
+    ['maxFeePerGas', 'maxPriorityFeePerGas', 'gasPrice', 'gas', 'value', 'nonce'].filter(function (key) {
         return options[key] !== undefined;
     }).forEach(function(key){
         options[key] = utils.fromDecimal(options[key]);
@@ -3783,6 +3783,12 @@ var outputTransactionFormatter = function (tx){
     tx.nonce = utils.toDecimal(tx.nonce);
     tx.gas = utils.toDecimal(tx.gas);
     tx.gasPrice = utils.toBigNumber(tx.gasPrice);
+    if(tx.maxFeePerGas !== undefined) {
+      tx.maxFeePerGas = utils.toBigNumber(tx.maxFeePerGas);
+    }
+    if(tx.maxPriorityFeePerGas !== undefined) {
+      tx.maxPriorityFeePerGas = utils.toBigNumber(tx.maxPriorityFeePerGas);
+    }
     tx.value = utils.toBigNumber(tx.value);
     return tx;
 };
@@ -3801,7 +3807,9 @@ var outputTransactionReceiptFormatter = function (receipt){
         receipt.transactionIndex = utils.toDecimal(receipt.transactionIndex);
     receipt.cumulativeGasUsed = utils.toDecimal(receipt.cumulativeGasUsed);
     receipt.gasUsed = utils.toDecimal(receipt.gasUsed);
-
+    if(receipt.effectiveGasPrice !== undefined) {
+      receipt.effectiveGasPrice = utils.toBigNumber(receipt.effectiveGasPrice);
+    }
     if(utils.isArray(receipt.logs)) {
         receipt.logs = receipt.logs.map(function(log){
             return outputLogFormatter(log);
@@ -3852,8 +3860,10 @@ var outputTransactionDataAndReceiptFormatter = function (dataAndReceipt){
  * @returns {Object}
 */
 var outputBlockFormatter = function(block) {
-
     // transform to number
+    if (block.baseFeePerGas !== undefined) {
+      block.baseFeePerGas = utils.toBigNumber(block.baseFeePerGas);
+    }
     block.gasLimit = utils.toDecimal(block.gasLimit);
     block.gasUsed = utils.toDecimal(block.gasUsed);
     block.size = utils.toDecimal(block.size);
@@ -3972,10 +3982,18 @@ var outputSyncingFormatter = function(result) {
     result.startingBlock = utils.toDecimal(result.startingBlock);
     result.currentBlock = utils.toDecimal(result.currentBlock);
     result.highestBlock = utils.toDecimal(result.highestBlock);
-    if (result.knownStates) {
-        result.knownStates = utils.toDecimal(result.knownStates);
-        result.pulledStates = utils.toDecimal(result.pulledStates);
-    }
+    result.syncedAccounts = utils.toDecimal(result.syncedAccounts);
+    result.syncedAccountBytes = utils.toDecimal(result.syncedAccountBytes);
+    result.syncedBytecodes = utils.toDecimal(result.syncedBytecodes);
+    result.syncedBytecodeBytes = utils.toDecimal(result.syncedBytecodeBytes);
+    result.syncedStorage = utils.toDecimal(result.syncedStorage);
+    result.syncedStorageBytes = utils.toDecimal(result.syncedStorageBytes);
+    result.healedTrienodes = utils.toDecimal(result.healedTrienodes);
+    result.healedTrienodeBytes = utils.toDecimal(result.healedTrienodeBytes);
+    result.healedBytecodes = utils.toDecimal(result.healedBytecodes);
+    result.healedBytecodeBytes = utils.toDecimal(result.healedBytecodeBytes);
+    result.healingTrienodes = utils.toDecimal(result.healingTrienodes);
+    result.healingBytecode = utils.toDecimal(result.healingBytecode);
 
     return result;
 };
@@ -5420,6 +5438,13 @@ var methods = function () {
         inputFormatter: [null]
     });
 
+    var sendRawTransactionConditional = new Method({
+        name: 'sendRawTransactionConditional',
+        call: 'eth_sendRawTransactionConditional',
+        params: 2,
+        inputFormatter: [null]
+    });
+
     var sendTransaction = new Method({
         name: 'sendTransaction',
         call: 'eth_sendTransaction',
@@ -5505,6 +5530,7 @@ var methods = function () {
         call,
         estimateGas,
         sendRawTransaction,
+        sendRawTransactionConditional,
         signTransaction,
         sendTransaction,
         sign,
@@ -13683,4 +13709,4 @@ if (typeof window !== 'undefined' && typeof window.Web3 === 'undefined') {
 module.exports = Web3;
 
 },{"./lib/web3":22}]},{},["web3"])
-//# sourceMappingURL=web3-light.js.map
+

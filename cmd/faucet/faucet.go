@@ -23,12 +23,13 @@ package main
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"html/template"
-	"io/ioutil"
+	"io"
 	"math"
 	"math/big"
 	"net/http"
@@ -51,7 +52,6 @@ import (
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/ethereum/go-ethereum/ethstats"
 	"github.com/ethereum/go-ethereum/les"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
@@ -66,10 +66,7 @@ import (
 var (
 	genesisFlag = flag.String("genesis", "", "Genesis json file to seed the chain with")
 	apiPortFlag = flag.Int("apiport", 8080, "Listener port for the HTTP API connection")
-	ethPortFlag = flag.Int("ethport", 30303, "Listener port for the devp2p connection")
-	bootFlag    = flag.String("bootnodes", "", "Comma separated bootnode enode URLs to seed with")
-	netFlag     = flag.Uint64("network", 0, "Network ID to use for the Ethereum protocol")
-	statsFlag   = flag.String("ethstats", "", "Ethstats network monitoring auth string")
+	wsEndpoint  = flag.String("ws", "http://127.0.0.1:7777/", "Url to ws endpoint")
 
 	netnameFlag = flag.String("faucet.name", "", "Network name to assign to the faucet")
 	payoutFlag  = flag.Int("faucet.amount", 1, "Number of Ethers to pay out per user request")
@@ -106,10 +103,8 @@ var (
 	bep2eAbiJson = `[{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_from","type":"address"},{"name":"_to","type":"address[]"},{"name":"_values","type":"uint256[]"}],"name":"batchTransfer","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"name","type":"string"},{"name":"symbol","type":"string"},{"name":"decimals","type":"uint8"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"totalSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"sender","type":"address"},{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"name","type":"string"},{"name":"symbol","type":"string"},{"name":"decimals","type":"uint8"},{"name":"minters","type":"address[]"},{"name":"pausers","type":"address[]"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"addedValue","type":"uint256"}],"name":"increaseAllowance","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"unpause","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_survey","type":"address"}],"name":"unregisterSurvey","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"isPauser","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"name","type":"string"},{"name":"symbol","type":"string"},{"name":"decimals","type":"uint8"},{"name":"initialSupply","type":"uint256"},{"name":"initialHolder","type":"address"},{"name":"minters","type":"address[]"},{"name":"pausers","type":"address[]"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"offset","type":"uint256"},{"name":"count","type":"uint256"},{"name":"cap","type":"uint256"}],"name":"getCirculatingSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"version","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"pure","type":"function"},{"constant":true,"inputs":[],"name":"paused","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[],"name":"renouncePauser","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"getOwnersCount","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_survey","type":"address"}],"name":"registerSurvey","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"}],"name":"addPauser","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"pause","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"getOwner","outputs":[{"name":"tokenOwner","type":"address"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"}],"name":"addMinter","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"renounceMinter","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"},{"name":"value","type":"uint256"}],"name":"burn","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"subtractedValue","type":"uint256"}],"name":"decreaseAllowance","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"isMinter","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[{"name":"_survey","type":"address"}],"name":"isSurveyRegistered","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"sender","type":"address"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"anonymous":false,"inputs":[{"indexed":false,"name":"account","type":"address"}],"name":"Paused","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"account","type":"address"}],"name":"Unpaused","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"PauserAdded","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"PauserRemoved","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"MinterAdded","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"MinterRemoved","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Transfer","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"owner","type":"address"},{"indexed":true,"name":"spender","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Approval","type":"event"}]`
 )
 
-var (
-	gitCommit = "" // Git SHA1 commit hash of the release (set via linker flags)
-	gitDate   = "" // Git commit date YYYYMMDD of the release (set via linker flags)
-)
+//go:embed faucet.html
+var websiteTmpl string
 
 func main() {
 	// Parse the flags and set up the logger to print everything requested
@@ -224,28 +219,19 @@ func main() {
 		log.Crit("Failed to render the faucet template", "err", err)
 	}
 	// Load and parse the genesis block requested by the user
-	genesis, err := getGenesis(genesisFlag, *goerliFlag, *rinkebyFlag)
+	genesis, err := getGenesis(*genesisFlag, false, false)
 	if err != nil {
-		log.Crit("Failed to parse genesis config", "err", err)
-	}
-	// Convert the bootnodes to internal enode representations
-	var enodes []*enode.Node
-	for _, boot := range strings.Split(*bootFlag, ",") {
-		if url, err := enode.Parse(enode.ValidSchemes, boot); err == nil {
-			enodes = append(enodes, url)
-		} else {
-			log.Error("Failed to parse bootnode URL", "url", boot, "err", err)
-		}
+		log.Crit("Failed to read genesis block contents", "genesis", *genesisFlag, "err", err)
 	}
 	// Load up the account key and decrypt its password
-	blob, err := ioutil.ReadFile(*accPassFlag)
+	blob, err := os.ReadFile(*accPassFlag)
 	if err != nil {
 		log.Crit("Failed to read account password contents", "file", *accPassFlag, "err", err)
 	}
 	pass := strings.TrimSuffix(string(blob), "\n")
 
-	ks := keystore.NewKeyStore(filepath.Join(os.Getenv("HOME"), ".faucet", "keys"), keystore.StandardScryptN, keystore.StandardScryptP)
-	if blob, err = ioutil.ReadFile(*accJSONFlag); err != nil {
+	ks := keystore.NewKeyStore(filepath.Join(os.Getenv("HOME"), ".faucet", "keys_2"), keystore.StandardScryptN, keystore.StandardScryptP)
+	if blob, err = os.ReadFile(*accJSONFlag); err != nil {
 		log.Crit("Failed to read account key contents", "file", *accJSONFlag, "err", err)
 	}
 	acc, err := ks.Import(blob, pass, pass)
@@ -298,7 +284,6 @@ type bep2eInfo struct {
 // faucet represents a crypto faucet backed by an Ethereum light client.
 type faucet struct {
 	config *params.ChainConfig // Chain configurations for signing
-	stack  *node.Node          // Ethereum protocol stack
 	client *ethclient.Client   // Client connection to the Ethereum chain
 	index  []byte              // Index page to serve up on the web
 	font   []byte              // Font to serve up on the web
@@ -361,36 +346,11 @@ func newFaucet(genesis *core.Genesis, port int, enodes []*enode.Node, network ui
 
 	lesBackend, err := les.New(stack, &cfg)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to register the Ethereum service: %w", err)
-	}
-
-	// Assemble the ethstats monitoring and reporting service'
-	if stats != "" {
-		if err := ethstats.New(stack, lesBackend.ApiBackend, lesBackend.Engine(), stats); err != nil {
-			return nil, err
-		}
-	}
-	// Boot up the client and ensure it connects to bootnodes
-	if err := stack.Start(); err != nil {
 		return nil, err
 	}
-	for _, boot := range enodes {
-		old, err := enode.Parse(enode.ValidSchemes, boot.String())
-		if err == nil {
-			stack.Server().AddPeer(old)
-		}
-	}
-	// Attach to the client and retrieve and interesting metadatas
-	api, err := stack.Attach()
-	if err != nil {
-		stack.Close()
-		return nil, err
-	}
-	client := ethclient.NewClient(api)
 
 	return &faucet{
 		config:     genesis.Config,
-		stack:      stack,
 		client:     client,
 		index:      index,
 		font:       font,
@@ -404,8 +364,8 @@ func newFaucet(genesis *core.Genesis, port int, enodes []*enode.Node, network ui
 }
 
 // close terminates the Ethereum connection and tears down the faucet.
-func (f *faucet) close() error {
-	return f.stack.Close()
+func (f *faucet) close() {
+	f.client.Close()
 }
 
 // NewDebugServer provides new debug http server
@@ -447,7 +407,7 @@ func (f *faucet) fontHandler(w http.ResponseWriter, r *http.Request) {
 
 // apiHandler handles requests for Ether grants and transaction statuses.
 func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
-	upgrader := websocket.Upgrader{}
+	upgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -455,6 +415,11 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Start tracking the connection and drop at the end
 	defer conn.Close()
+	ipsStr := r.Header.Get("X-Forwarded-For")
+	ips := strings.Split(ipsStr, ",")
+	if len(ips) < 2 {
+		return
+	}
 
 	f.lock.Lock()
 	wsconn := &wsConn{conn: conn}
@@ -506,7 +471,6 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 	if err = send(wsconn, map[string]interface{}{
 		"funds":    new(big.Int).Div(balance, ether),
 		"funded":   nonce,
-		"peers":    f.stack.Server().PeerCount(),
 		"requests": reqs,
 	}, 3*time.Second); err != nil {
 		log.Warn("Failed to send initial stats to client", "err", err)
@@ -551,7 +515,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 			form.Add("secret", *captchaSecret)
 			form.Add("response", msg.Captcha)
 
-			res, err := http.PostForm("https://www.google.com/recaptcha/api/siteverify", form)
+			res, err := http.PostForm("https://hcaptcha.com/siteverify", form)
 			if err != nil {
 				if err = sendError(wsconn, err); err != nil {
 					log.Warn("Failed to send captcha post error to client", "err", err)
@@ -627,7 +591,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 			var tx *types.Transaction
 			if msg.Symbol == "CHZ" {
 				// User wasn't funded recently, create the funding transaction
-				amount := new(big.Int).Mul(big.NewInt(int64(*payoutFlag)), ether)
+				amount := new(big.Int).Div(new(big.Int).Mul(big.NewInt(int64(*payoutFlag)), ether), big.NewInt(10))
 				amount = new(big.Int).Mul(amount, new(big.Int).Exp(big.NewInt(5), big.NewInt(int64(msg.Tier)), nil))
 				amount = new(big.Int).Div(amount, new(big.Int).Exp(big.NewInt(2), big.NewInt(int64(msg.Tier)), nil))
 
@@ -735,6 +699,9 @@ func (f *faucet) refresh(head *types.Header) error {
 	f.lock.Lock()
 	f.head, f.balance = head, balance
 	f.price, f.nonce = price, nonce
+	if len(f.reqs) > 0 && f.reqs[0].Tx.Nonce() > f.nonce {
+		f.reqs = f.reqs[:0]
+	}
 	for len(f.reqs) > 0 && f.reqs[0].Tx.Nonce() < f.nonce {
 		f.reqs = f.reqs[1:]
 	}
@@ -774,13 +741,11 @@ func (f *faucet) loop() {
 			log.Info("Updated faucet state", "number", head.Number, "hash", head.Hash(), "age", common.PrettyAge(timestamp), "balance", f.balance, "nonce", f.nonce, "price", f.price)
 
 			balance := new(big.Int).Div(f.balance, ether)
-			peers := f.stack.Server().PeerCount()
 
 			for _, conn := range f.conns {
 				if err := send(conn, map[string]interface{}{
 					"funds":    balance,
 					"funded":   f.nonce,
-					"peers":    peers,
 					"requests": f.reqs,
 				}, time.Second); err != nil {
 					log.Warn("Failed to send stats to client", "err", err)
@@ -870,7 +835,7 @@ func authTwitter(url string, tokenV1, tokenV2 string) (string, string, string, c
 	case tokenV2 != "":
 		return authTwitterWithTokenV2(tweetID, tokenV2)
 	}
-	// Twiter API token isn't provided so we just load the public posts
+	// Twitter API token isn't provided so we just load the public posts
 	// and scrape it for the Ethereum address and profile URL. We need to load
 	// the mobile page though since the main page loads tweet contents via JS.
 	url = strings.Replace(url, "https://twitter.com/", "https://mobile.twitter.com/", 1)
@@ -889,7 +854,7 @@ func authTwitter(url string, tokenV1, tokenV2 string) (string, string, string, c
 	}
 	username := parts[len(parts)-3]
 
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return "", "", "", common.Address{}, err
 	}
@@ -899,7 +864,7 @@ func authTwitter(url string, tokenV1, tokenV2 string) (string, string, string, c
 		return "", "", "", common.Address{}, errors.New("No Scoville Chain address found to fund")
 	}
 	var avatar string
-	if parts = regexp.MustCompile("src=\"([^\"]+twimg.com/profile_images[^\"]+)\"").FindStringSubmatch(string(body)); len(parts) == 2 {
+	if parts = regexp.MustCompile(`src="([^"]+twimg\.com/profile_images[^"]+)"`).FindStringSubmatch(string(body)); len(parts) == 2 {
 		avatar = parts[1]
 	}
 	return username + "@twitter", username, avatar, address, nil
@@ -911,7 +876,7 @@ func authTwitter(url string, tokenV1, tokenV2 string) (string, string, string, c
 func authTwitterWithTokenV1(tweetID string, token string) (string, string, string, common.Address, error) {
 	// Query the tweet details from Twitter
 	url := fmt.Sprintf("https://api.twitter.com/1.1/statuses/show.json?id=%s", tweetID)
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return "", "", "", common.Address{}, err
 	}
@@ -948,7 +913,7 @@ func authTwitterWithTokenV1(tweetID string, token string) (string, string, strin
 func authTwitterWithTokenV2(tweetID string, token string) (string, string, string, common.Address, error) {
 	// Query the tweet details from Twitter
 	url := fmt.Sprintf("https://api.twitter.com/2/tweets/%s?expansions=author_id&user.fields=profile_image_url", tweetID)
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return "", "", "", common.Address{}, err
 	}
@@ -1015,7 +980,7 @@ func authFacebook(url string) (string, string, common.Address, error) {
 	}
 	defer res.Body.Close()
 
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return "", "", common.Address{}, err
 	}
@@ -1025,7 +990,7 @@ func authFacebook(url string) (string, string, common.Address, error) {
 		return "", "", common.Address{}, errors.New("No Scoville Chain address found to fund")
 	}
 	var avatar string
-	if parts = regexp.MustCompile("src=\"([^\"]+fbcdn.net[^\"]+)\"").FindStringSubmatch(string(body)); len(parts) == 2 {
+	if parts = regexp.MustCompile(`src="([^"]+fbcdn\.net[^"]+)"`).FindStringSubmatch(string(body)); len(parts) == 2 {
 		avatar = parts[1]
 	}
 	return username + "@facebook", avatar, address, nil
@@ -1044,17 +1009,13 @@ func authNoAuth(url string) (string, string, common.Address, error) {
 }
 
 // getGenesis returns a genesis based on input args
-func getGenesis(genesisFlag *string, goerliFlag bool, rinkebyFlag bool) (*core.Genesis, error) {
+func getGenesis(genesisFlag string, goerliFlag bool, sepoliaFlag bool) (*core.Genesis, error) {
 	switch {
-	case genesisFlag != nil:
+	case genesisFlag != "":
 		var genesis core.Genesis
-		err := common.LoadJSON(*genesisFlag, &genesis)
+		err := common.LoadJSON(genesisFlag, &genesis)
 		return &genesis, err
-	case goerliFlag:
-		return core.DefaultGoerliGenesisBlock(), nil
-	case rinkebyFlag:
-		return core.DefaultRinkebyGenesisBlock(), nil
 	default:
-		return nil, fmt.Errorf("no genesis flag provided")
+		return nil, errors.New("no genesis flag provided")
 	}
 }

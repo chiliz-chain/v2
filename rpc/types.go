@@ -29,25 +29,30 @@ import (
 
 // API describes the set of methods offered over the RPC interface
 type API struct {
-	Namespace string      // namespace under which the rpc methods of Service are exposed
-	Version   string      // api version for DApp's
-	Service   interface{} // receiver instance which holds the methods
-	Public    bool        // indication if the methods must be considered safe for public use
+	Namespace     string      // namespace under which the rpc methods of Service are exposed
+	Version       string      // deprecated - this field is no longer used, but retained for compatibility
+	Service       interface{} // receiver instance which holds the methods
+	Public        bool        // deprecated - this field is no longer used, but retained for compatibility
+	Authenticated bool        // whether the api should only be available behind authentication.
 }
 
 // ServerCodec implements reading, parsing and writing RPC messages for the server side of
 // a RPC session. Implementations must be go-routine safe since the codec can be called in
 // multiple go-routines concurrently.
 type ServerCodec interface {
+	peerInfo() PeerInfo
 	readBatch() (msgs []*jsonrpcMessage, isBatch bool, err error)
 	close()
+
 	jsonWriter
 }
 
 // jsonWriter can write JSON messages to its underlying connection.
 // Implementations must be safe for concurrent use.
 type jsonWriter interface {
-	writeJSON(context.Context, interface{}) error
+	// writeJSON writes a message to the connection.
+	writeJSON(ctx context.Context, msg interface{}, isError bool) error
+
 	// Closed returns a channel which is closed when the connection is closed.
 	closed() <-chan interface{}
 	// RemoteAddr returns the peer address of the connection.
@@ -57,13 +62,15 @@ type jsonWriter interface {
 type BlockNumber int64
 
 const (
-	PendingBlockNumber  = BlockNumber(-2)
-	LatestBlockNumber   = BlockNumber(-1)
-	EarliestBlockNumber = BlockNumber(0)
+	SafeBlockNumber      = BlockNumber(-4)
+	FinalizedBlockNumber = BlockNumber(-3)
+	LatestBlockNumber    = BlockNumber(-2)
+	PendingBlockNumber   = BlockNumber(-1)
+	EarliestBlockNumber  = BlockNumber(0)
 )
 
 // UnmarshalJSON parses the given JSON fragment into a BlockNumber. It supports:
-// - "latest", "earliest" or "pending" as string arguments
+// - "safe", "finalized", "latest", "earliest" or "pending" as string arguments
 // - the block number
 // Returned errors:
 // - an invalid block number error when the given argument isn't a known strings
@@ -84,6 +91,12 @@ func (bn *BlockNumber) UnmarshalJSON(data []byte) error {
 	case "pending":
 		*bn = PendingBlockNumber
 		return nil
+	case "finalized":
+		*bn = FinalizedBlockNumber
+		return nil
+	case "safe":
+		*bn = SafeBlockNumber
+		return nil
 	}
 
 	blckNum, err := hexutil.DecodeUint64(input)
@@ -97,8 +110,36 @@ func (bn *BlockNumber) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Int64 returns the block number as int64.
 func (bn BlockNumber) Int64() int64 {
 	return (int64)(bn)
+}
+
+// MarshalText implements encoding.TextMarshaler. It marshals:
+// - "safe", "finalized", "latest", "earliest" or "pending" as strings
+// - other numbers as hex
+func (bn BlockNumber) MarshalText() ([]byte, error) {
+	return []byte(bn.String()), nil
+}
+
+func (bn BlockNumber) String() string {
+	switch bn {
+	case EarliestBlockNumber:
+		return "earliest"
+	case LatestBlockNumber:
+		return "latest"
+	case PendingBlockNumber:
+		return "pending"
+	case FinalizedBlockNumber:
+		return "finalized"
+	case SafeBlockNumber:
+		return "safe"
+	default:
+		if bn < 0 {
+			return fmt.Sprintf("<invalid %d>", bn)
+		}
+		return hexutil.Uint64(bn).String()
+	}
 }
 
 type BlockNumberOrHash struct {
@@ -138,6 +179,14 @@ func (bnh *BlockNumberOrHash) UnmarshalJSON(data []byte) error {
 		bn := PendingBlockNumber
 		bnh.BlockNumber = &bn
 		return nil
+	case "finalized":
+		bn := FinalizedBlockNumber
+		bnh.BlockNumber = &bn
+		return nil
+	case "safe":
+		bn := SafeBlockNumber
+		bnh.BlockNumber = &bn
+		return nil
 	default:
 		if len(input) == 66 {
 			hash := common.Hash{}
@@ -167,6 +216,16 @@ func (bnh *BlockNumberOrHash) Number() (BlockNumber, bool) {
 		return *bnh.BlockNumber, true
 	}
 	return BlockNumber(0), false
+}
+
+func (bnh *BlockNumberOrHash) String() string {
+	if bnh.BlockNumber != nil {
+		return bnh.BlockNumber.String()
+	}
+	if bnh.BlockHash != nil {
+		return bnh.BlockHash.String()
+	}
+	return "nil"
 }
 
 func (bnh *BlockNumberOrHash) Hash() (common.Hash, bool) {

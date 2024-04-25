@@ -7,27 +7,29 @@ function prepare() {
         echo "geth do not exist!"
         exit 1
    fi
-   rm -rf ${workspace}/storage/*
    cd ${workspace}/genesis
-   rm -rf validators.conf
+   cp ${workspace}/storage/genesis.json ${workspace}/genesis/genesis.json
 }
 
 function init_validator() {
      node_id=$1
+     rm -rf ${workspace}/storage/${node_id}
      mkdir -p ${workspace}/storage/${node_id}
-     geth --datadir ${workspace}/storage/${node_id} account new   --password /dev/null > ${workspace}/storage/${node_id}Info
-     validatorAddr=`cat ${workspace}/storage/${node_id}Info|grep 'Public address of the key'|awk '{print $6}'`
-     echo "${validatorAddr},${validatorAddr},${validatorAddr},0x0000000010000000" >> ${workspace}/genesis/validators.conf
-     echo ${validatorAddr} > ${workspace}/storage/${node_id}/address
+     cp -r ${workspace}/storage/keystore ${workspace}/storage/${node_id}/
+     cp ${workspace}/storage/address ${workspace}/storage/${node_id}/address
 }
 
 function generate_genesis() {
+     cd ${workspace}/genesis/scripts/
+     node generate-validator.js
      INIT_HOLDER_ADDRESSES=$(ls ${workspace}/init-holders | tr '\n' ',')
      INIT_HOLDER_ADDRESSES=${INIT_HOLDER_ADDRESSES/%,/}
-     sed  "s/{{INIT_HOLDER_ADDRESSES}}/${INIT_HOLDER_ADDRESSES}/g" ${workspace}/genesis/init_holders.template | sed  "s/{{INIT_HOLDER_BALANCE}}/${INIT_HOLDER_BALANCE}/g" > ${workspace}/genesis/init_holders.js
-     node generate-validator.js
-     chainIDHex=$(printf '%04x\n' ${BSC_CHAIN_ID})
-     node generate-genesis.js --chainid ${BSC_CHAIN_ID} --bscChainId ${chainIDHex}
+     node generate-initHolders.js --initHolders ${INIT_HOLDER_ADDRESSES}
+
+     cd ${workspace}/genesis
+     #source /root/.profile && foundryup
+     #forge install --no-git --no-commit foundry-rs/forge-std@v1.1.1
+     bash ${workspace}/genesis/scripts/generate.sh local
 }
 
 function init_genesis_data() {
@@ -42,19 +44,38 @@ function init_genesis_data() {
      fi
 }
 
-prepare
+function prepareBLSWallet(){
+     node_id=$1
+     echo "1234567890" > ${workspace}/storage/${node_id}/blspassword.txt
+     geth bls account new --datadir ${workspace}/storage/${node_id} --blspassword ${workspace}/storage/${node_id}/blspassword.txt
 
-# First, generate config for each validator
+     sed -i -e 's/DataDir/BLSPasswordFile = \"{{BLSPasswordFile}}\"\nBLSWalletDir = \"{{BLSWalletDir}}\"\nDataDir/g' ${workspace}/storage/${node_id}/config.toml
+     PassWordPath="/root/.ethereum/blspassword.txt"
+     sed -i -e "s:{{BLSPasswordFile}}:${PassWordPath}:g" ${workspace}/storage/${node_id}/config.toml
+     WalletPath="/root/.ethereum/bls/wallet"
+     sed -i -e "s:{{BLSWalletDir}}:${WalletPath}:g" ${workspace}/storage/${node_id}/config.toml
+}
+
+prepare
+NUMS_OF_VALIDATOR=1
+# Step 1, generate config for each validator
 for((i=1;i<=${NUMS_OF_VALIDATOR};i++)); do
      init_validator "bsc-validator${i}"
 done
 
-# Then, use validator configs to generate genesis file
-generate_genesis
+# Step 2, use validator configs to generate genesis file
+#generate_genesis
 
-# Finally, use genesis file to init cluster data
+# Step 3, use genesis file to init cluster data
 init_genesis_data bsc-rpc bsc-rpc
 
 for((i=1;i<=${NUMS_OF_VALIDATOR};i++)); do
      init_genesis_data validator "bsc-validator${i}"
+done
+
+#Step 4, prepare bls wallet, used by fast finality vote
+prepareBLSWallet bsc-rpc
+
+for((i=1;i<=${NUMS_OF_VALIDATOR};i++)); do
+     prepareBLSWallet "bsc-validator${i}"
 done

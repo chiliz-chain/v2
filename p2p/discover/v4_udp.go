@@ -35,7 +35,6 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/discover/v4wire"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/netutil"
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 // Errors
@@ -43,7 +42,7 @@ var (
 	errExpired          = errors.New("expired")
 	errUnsolicitedReply = errors.New("unsolicited reply")
 	errUnknownNode      = errors.New("unknown node")
-	errTimeout          = errors.New("RPC timeout")
+	errTimeout          = errors.New("udp timeout")
 	errClockWarp        = errors.New("reply deadline too far in the future")
 	errClosed           = errors.New("socket closed")
 	errLowPort          = errors.New("low port")
@@ -132,7 +131,7 @@ func ListenV4(c UDPConn, ln *enode.LocalNode, cfg Config) (*UDPv4, error) {
 	cfg = cfg.withDefaults()
 	closeCtx, cancel := context.WithCancel(context.Background())
 	t := &UDPv4{
-		conn:            c,
+		conn:            newMeteredConn(c),
 		priv:            cfg.PrivateKey,
 		netrestrict:     cfg.NetRestrict,
 		localNode:       ln,
@@ -144,7 +143,7 @@ func ListenV4(c UDPConn, ln *enode.LocalNode, cfg Config) (*UDPv4, error) {
 		log:             cfg.Log,
 	}
 
-	tab, err := newTable(t, ln.Database(), cfg.Bootnodes, t.log)
+	tab, err := newMeteredTable(t, ln.Database(), cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +151,7 @@ func ListenV4(c UDPConn, ln *enode.LocalNode, cfg Config) (*UDPv4, error) {
 	go tab.loop()
 
 	t.wg.Add(2)
-	go t.loop()
+	go t.loop(cfg.IsBootnode)
 	go t.readLoop(cfg.Unhandled)
 	return t, nil
 }
@@ -218,7 +217,7 @@ func (t *UDPv4) Ping(n *enode.Node) error {
 func (t *UDPv4) ping(n *enode.Node) (seq uint64, err error) {
 	rm := t.sendPing(n.ID(), &net.UDPAddr{IP: n.IP(), Port: n.UDP()}, nil)
 	if err = <-rm.errc; err == nil {
-		seq = rm.reply.(*v4wire.Pong).ENRSeq()
+		seq = rm.reply.(*v4wire.Pong).ENRSeq
 	}
 	return seq, err
 }
@@ -249,13 +248,12 @@ func (t *UDPv4) sendPing(toid enode.ID, toaddr *net.UDPAddr, callback func()) *r
 }
 
 func (t *UDPv4) makePing(toaddr *net.UDPAddr) *v4wire.Ping {
-	seq, _ := rlp.EncodeToBytes(t.localNode.Node().Seq())
 	return &v4wire.Ping{
 		Version:    4,
 		From:       t.ourEndpoint(),
 		To:         v4wire.NewEndpoint(toaddr, 0),
 		Expiration: uint64(time.Now().Add(expiration).Unix()),
-		Rest:       []rlp.RawValue{seq},
+		ENRSeq:     t.localNode.Node().Seq(),
 	}
 }
 
@@ -331,13 +329,13 @@ func (t *UDPv4) findnode(toid enode.ID, toaddr *net.UDPAddr, target v4wire.Pubke
 	// enough nodes the reply matcher will time out waiting for the second reply, but
 	// there's no need for an error in that case.
 	err := <-rm.errc
-	if err == errTimeout && rm.reply != nil {
+	if errors.Is(err, errTimeout) && rm.reply != nil {
 		err = nil
 	}
 	return nodes, err
 }
 
-// RequestENR sends enrRequest to the given node and waits for a response.
+// RequestENR sends ENRRequest to the given node and waits for a response.
 func (t *UDPv4) RequestENR(n *enode.Node) (*enode.Node, error) {
 	addr := &net.UDPAddr{IP: n.IP(), Port: n.UDP()}
 	t.ensureBond(n.ID(), addr)
@@ -407,12 +405,13 @@ func (t *UDPv4) handleReply(from enode.ID, fromIP net.IP, req v4wire.Packet) boo
 
 // loop runs in its own goroutine. it keeps track of
 // the refresh timer and the pending reply queue.
-func (t *UDPv4) loop() {
+func (t *UDPv4) loop(isBootNode bool) {
 	defer t.wg.Done()
 
 	var (
 		plist        = list.New()
 		timeout      = time.NewTimer(0)
+		statusTicker = time.NewTicker(60 * time.Second)
 		nextTimeout  *replyMatcher // head of plist when timeout was last reset
 		contTimeouts = 0           // number of continuous timeouts to do NTP checks
 		ntpWarnTime  = time.Unix(0, 0)
@@ -440,6 +439,12 @@ func (t *UDPv4) loop() {
 		}
 		nextTimeout = nil
 		timeout.Stop()
+	}
+
+	logStatistic := func() {
+		if isBootNode {
+			t.log.Info("Discovery status", "table_size", t.tab.len(), "pending_size", plist.Len(), "db_size", t.db.Size())
+		}
 	}
 
 	for {
@@ -497,6 +502,9 @@ func (t *UDPv4) loop() {
 				}
 				contTimeouts = 0
 			}
+
+		case <-statusTicker.C:
+			logStatistic()
 		}
 	}
 }
@@ -530,8 +538,8 @@ func (t *UDPv4) readLoop(unhandled chan<- ReadPacket) {
 			t.log.Debug("Temporary UDP read error", "err", err)
 			continue
 		} else if err != nil {
-			// Shut down the loop for permament errors.
-			if err != io.EOF {
+			// Shut down the loop for permanent errors.
+			if !errors.Is(err, io.EOF) {
 				t.log.Debug("UDP read error", "err", err)
 			}
 			return
@@ -588,7 +596,7 @@ func (t *UDPv4) nodeFromRPC(sender *net.UDPAddr, rn v4wire.Node) (*node, error) 
 		return nil, err
 	}
 	if t.netrestrict != nil && !t.netrestrict.Contains(rn.IP) {
-		return nil, errors.New("not contained in netrestrict whitelist")
+		return nil, errors.New("not contained in netrestrict list")
 	}
 	key, err := v4wire.DecodePubkey(crypto.S256(), rn.ID)
 	if err != nil {
@@ -648,12 +656,12 @@ type packetHandlerV4 struct {
 func (t *UDPv4) verifyPing(h *packetHandlerV4, from *net.UDPAddr, fromID enode.ID, fromKey v4wire.Pubkey) error {
 	req := h.Packet.(*v4wire.Ping)
 
+	if v4wire.Expired(req.Expiration) {
+		return errExpired
+	}
 	senderKey, err := v4wire.DecodePubkey(crypto.S256(), fromKey)
 	if err != nil {
 		return err
-	}
-	if v4wire.Expired(req.Expiration) {
-		return errExpired
 	}
 	h.senderKey = senderKey
 	return nil
@@ -663,12 +671,11 @@ func (t *UDPv4) handlePing(h *packetHandlerV4, from *net.UDPAddr, fromID enode.I
 	req := h.Packet.(*v4wire.Ping)
 
 	// Reply.
-	seq, _ := rlp.EncodeToBytes(t.localNode.Node().Seq())
 	t.send(from, fromID, &v4wire.Pong{
 		To:         v4wire.NewEndpoint(from, req.From.TCP),
 		ReplyTok:   mac,
 		Expiration: uint64(time.Now().Add(expiration).Unix()),
-		Rest:       []rlp.RawValue{seq},
+		ENRSeq:     t.localNode.Node().Seq(),
 	})
 
 	// Ping back if our last pong on file is too far in the past.

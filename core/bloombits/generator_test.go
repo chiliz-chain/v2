@@ -18,6 +18,7 @@ package bloombits
 
 import (
 	"bytes"
+	crand "crypto/rand"
 	"math/rand"
 	"testing"
 
@@ -70,7 +71,7 @@ func BenchmarkGenerator(b *testing.B) {
 			if err != nil {
 				b.Fatalf("failed to create bloombit generator: %v", err)
 			}
-			for j, bloom := range input {
+			for j, bloom := range &input {
 				if err := gen.AddBloom(uint(j), bloom); err != nil {
 					b.Fatalf("bloom %d: failed to add: %v", i, err)
 				}
@@ -78,7 +79,7 @@ func BenchmarkGenerator(b *testing.B) {
 		}
 	})
 	for i := 0; i < types.BloomBitLength; i++ {
-		rand.Read(input[i][:])
+		crand.Read(input[i][:])
 	}
 	b.Run("random", func(b *testing.B) {
 		b.ReportAllocs()
@@ -89,7 +90,7 @@ func BenchmarkGenerator(b *testing.B) {
 			if err != nil {
 				b.Fatalf("failed to create bloombit generator: %v", err)
 			}
-			for j, bloom := range input {
+			for j, bloom := range &input {
 				if err := gen.AddBloom(uint(j), bloom); err != nil {
 					b.Fatalf("bloom %d: failed to add: %v", i, err)
 				}
