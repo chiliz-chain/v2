@@ -1749,7 +1749,9 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 		common.HexToAddress(systemcontract.ChainConfigContract),
 		common.HexToAddress(systemcontract.RuntimeUpgradeContract),
 		common.HexToAddress(systemcontract.DeployerProxyContract),
-		common.HexToAddress(systemcontract.TokenomicsContract),
+	}
+	if p.chainConfig.IsDragon8(header.Time) {
+		contracts = append(contracts, common.HexToAddress(systemcontract.TokenomicsContract))
 	}
 	for _, c := range contracts {
 		msg := p.getSystemMessage(header.Coinbase, c, data, common.Big0)
