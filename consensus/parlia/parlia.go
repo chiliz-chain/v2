@@ -1797,7 +1797,7 @@ func (p *Parlia) getSystemMessage(from, toAddress common.Address, data []byte, v
 	return callmsg{
 		ethereum.CallMsg{
 			From:     from,
-			Gas:      30000000,
+			Gas:      math.MaxUint64 / 2,
 			GasPrice: big.NewInt(0),
 			Value:    value,
 			To:       &toAddress,
