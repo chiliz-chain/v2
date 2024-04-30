@@ -440,11 +440,19 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 		effectiveTip = cmath.BigMin(msg.GasTipCap, new(big.Int).Sub(msg.GasFeeCap, st.evm.Context.BaseFee))
 	}
 
+	fullFee := new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), effectiveTip)
+
+	// this is the txn fee that is paid to the miner/validator
+	// it is half of the total fee and the rest is effectively burned
+	// quote from EIP-1559: "miner only receives the priority fee; note that the base fee is not given to anyone (it is burned)"
+	// in our case, the other half of the fullFee is burned
+	fee := fullFee.Div(fullFee, big.NewInt(2))
+
 	// consensus engine is parlia
 	if st.evm.ChainConfig().Parlia != nil {
-		st.state.AddBalance(consensus.SystemAddress, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), effectiveTip))
+		st.state.AddBalance(consensus.SystemAddress, fee)
 	} else {
-		st.state.AddBalance(st.evm.Context.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), effectiveTip))
+		st.state.AddBalance(st.evm.Context.Coinbase, fee)
 	}
 
 	return &ExecutionResult{
