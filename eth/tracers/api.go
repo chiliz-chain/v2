@@ -1004,6 +1004,9 @@ func (api *API) traceTx(ctx context.Context, message *core.Message, txctx *Conte
 			statedb.SetBalance(consensus.SystemAddress, big.NewInt(0))
 			statedb.AddBalance(vmctx.Coinbase, balance)
 		}
+		if posa.IsTokenomicsDeposit(message.To, message.Data) {
+			statedb.AddBalance(vmctx.Coinbase, message.Value)
+		}
 		intrinsicGas, _ = core.IntrinsicGas(message.Data, message.AccessList, false, true, true, false)
 	}
 
