@@ -300,7 +300,7 @@ func (p *Parlia) IsSystemTransaction(tx *types.Transaction, header *types.Header
 // starts with Tokenomics.deposit() method signature
 func (p *Parlia) IsTokenomicsDeposit(to *common.Address, data []byte) bool {
 	isDestinationTokenomics := bytes.Equal(to.Bytes(), systemcontract.TokenomicsContractAddress.Bytes())
-	isDeposit := bytes.Equal(data[:8], []byte("0efe6a8b"))
+	isDeposit := hex.EncodeToString(data)[:8] == "0efe6a8b"
 	return isDestinationTokenomics && isDeposit
 }
 
