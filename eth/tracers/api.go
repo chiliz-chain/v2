@@ -821,6 +821,9 @@ func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block
 					statedb.SetBalance(consensus.SystemAddress, big.NewInt(0))
 					statedb.AddBalance(vmctx.Coinbase, balance)
 				}
+				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) {
+					statedb.AddBalance(vmctx.Coinbase, tx.Value())
+				}
 			}
 		}
 		statedb.SetTxContext(tx.Hash(), i)
