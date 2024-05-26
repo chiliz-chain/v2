@@ -19,6 +19,7 @@
     "nielsBlock": 0,
     "mirrorSyncBlock": 0,
     "brunoBlock": 0,
+    "BurnTransactionFeeForkBlock": 0,
     "parlia": {
       "period": 3,
       "epoch": 1200

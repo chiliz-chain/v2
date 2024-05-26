@@ -231,31 +231,32 @@ var (
 	}
 
 	ParliaTestChainConfig = &ChainConfig{
-		ChainID:             big.NewInt(2),
-		HomesteadBlock:      big.NewInt(0),
-		EIP150Block:         big.NewInt(0),
-		EIP155Block:         big.NewInt(0),
-		EIP158Block:         big.NewInt(0),
-		ByzantiumBlock:      big.NewInt(0),
-		ConstantinopleBlock: big.NewInt(0),
-		PetersburgBlock:     big.NewInt(0),
-		IstanbulBlock:       big.NewInt(0),
-		MuirGlacierBlock:    big.NewInt(0),
-		RamanujanBlock:      big.NewInt(0),
-		NielsBlock:          big.NewInt(0),
-		MirrorSyncBlock:     big.NewInt(0),
-		BrunoBlock:          big.NewInt(0),
-		EulerBlock:          big.NewInt(0),
-		NanoBlock:           big.NewInt(0),
-		MoranBlock:          big.NewInt(0),
-		GibbsBlock:          big.NewInt(0),
-		PlanckBlock:         big.NewInt(0),
-		LubanBlock:          big.NewInt(0),
-		PlatoBlock:          big.NewInt(0),
-		BerlinBlock:         big.NewInt(0),
-		LondonBlock:         big.NewInt(0),
-		HertzBlock:          big.NewInt(0),
-		HertzfixBlock:       big.NewInt(0),
+		ChainID:                     big.NewInt(2),
+		HomesteadBlock:              big.NewInt(0),
+		EIP150Block:                 big.NewInt(0),
+		EIP155Block:                 big.NewInt(0),
+		EIP158Block:                 big.NewInt(0),
+		ByzantiumBlock:              big.NewInt(0),
+		ConstantinopleBlock:         big.NewInt(0),
+		PetersburgBlock:             big.NewInt(0),
+		IstanbulBlock:               big.NewInt(0),
+		MuirGlacierBlock:            big.NewInt(0),
+		RamanujanBlock:              big.NewInt(0),
+		NielsBlock:                  big.NewInt(0),
+		MirrorSyncBlock:             big.NewInt(0),
+		BrunoBlock:                  big.NewInt(0),
+		EulerBlock:                  big.NewInt(0),
+		NanoBlock:                   big.NewInt(0),
+		MoranBlock:                  big.NewInt(0),
+		GibbsBlock:                  big.NewInt(0),
+		PlanckBlock:                 big.NewInt(0),
+		LubanBlock:                  big.NewInt(0),
+		PlatoBlock:                  big.NewInt(0),
+		BerlinBlock:                 big.NewInt(0),
+		LondonBlock:                 big.NewInt(0),
+		HertzBlock:                  big.NewInt(0),
+		HertzfixBlock:               big.NewInt(0),
+		BurnTransactionFeeForkBlock: big.NewInt(0),
 		Parlia: &ParliaConfig{
 			Period: 3,
 			Epoch:  200,
@@ -463,6 +464,9 @@ type ChainConfig struct {
 	DeployerFactoryBlock   *big.Int `json:"deployerFactoryBlock,omitempty"`
 	Dragon8Time            *uint64  `json:"dragon8Time,omitempty"`
 
+	// Test fork
+	BurnTransactionFeeForkBlock *big.Int `json:"burnTransactionFeeForkBlock,omitempty"`
+
 	ShanghaiTime *uint64 `json:"shanghaiTime,omitempty" ` // Shanghai switch time (nil = no fork, 0 = already on shanghai)
 	KeplerTime   *uint64 `json:"keplerTime,omitempty"`    // Kepler switch time (nil = no fork, 0 = already activated)
 	CancunTime   *uint64 `json:"cancunTime,omitempty" `   // Cancun switch time (nil = no fork, 0 = already on cancun)
@@ -562,7 +566,7 @@ func (c *ChainConfig) String() string {
 		Dragon8Time = big.NewInt(0).SetUint64(*c.Dragon8Time)
 	}
 
-	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, Dragon8Time: %v, ShanghaiTime: %v, KeplerTime: %v, Engine: %v}",
+	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, Dragon8Time: %v, ShanghaiTime: %v, KeplerTime: %v,BurnTransactionFeeForkBlock: %v, Engine: %v}",
 		c.ChainID,
 		c.HomesteadBlock,
 		c.DAOForkBlock,
@@ -597,6 +601,7 @@ func (c *ChainConfig) String() string {
 		Dragon8Time,
 		ShanghaiTime,
 		KeplerTime,
+		c.BurnTransactionFeeForkBlock,
 		engine,
 	)
 }
@@ -604,6 +609,11 @@ func (c *ChainConfig) String() string {
 // IsDragon8 returns whether num & timestamp represents a block number after the dragon8 fork
 func (c *ChainConfig) IsDragon8(time uint64) bool {
 	return isTimestampForked(c.Dragon8Time, time)
+}
+
+// IsBurnTransactionFeeForkBlock returns whether num is either equal to the burnTransactionFeeForkBlock block or greater.
+func (c *ChainConfig) IsBurnTransactionFeeForkBlock(num *big.Int) bool {
+	return isBlockForked(c.BurnTransactionFeeForkBlock, num)
 }
 
 // IsHomestead returns whether num is either equal to the homestead block or greater.

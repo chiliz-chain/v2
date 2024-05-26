@@ -32,6 +32,7 @@
     "shanghaiTime": 1714381800,
     "keplerTime": 1714381800,
     "dragon8Time": 1714381800,
+    "BurnTransactionFeeForkBlock": 14396613,
     "parlia": {
       "period": 3,
       "epoch": 7200

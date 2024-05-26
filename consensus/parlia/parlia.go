@@ -1701,24 +1701,33 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 	if balance.Cmp(common.Big0) <= 0 {
 		return nil
 	}
+
+	// Apply the burn logic if the block is after the fork
+	if p.chainConfig.IsBurnTransactionFeeForkBlock(header.Number) {
+		burnAmount := new(big.Int).Div(balance, big.NewInt(2))
+		state.SetBalance(consensus.SystemAddress, new(big.Int).Sub(balance, burnAmount))
+		log.Trace("burned transaction fees", "block hash", header.Hash(), "burned amount", burnAmount)
+	}
+
+	remainingBalance := state.GetBalance(consensus.SystemAddress)
 	state.SetBalance(consensus.SystemAddress, big.NewInt(0))
-	state.AddBalance(coinbase, balance)
+	state.AddBalance(coinbase, remainingBalance)
 
 	doDistributeSysReward := !p.chainConfig.IsDragon8(header.Time) && state.GetBalance(common.HexToAddress(systemcontracts.SystemRewardContract)).Cmp(maxSystemBalance) < 0
 	if doDistributeSysReward {
 		var rewards = new(big.Int)
-		rewards = rewards.Div(balance, big.NewInt(systemRewardPercent))
+		rewards = rewards.Div(remainingBalance, big.NewInt(systemRewardPercent))
 		if rewards.Cmp(common.Big0) > 0 {
 			err := p.distributeToSystem(rewards, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 			if err != nil {
 				return err
 			}
 			log.Trace("distribute to system reward pool", "block hash", header.Hash(), "amount", rewards)
-			balance = balance.Sub(balance, rewards)
+			remainingBalance = remainingBalance.Sub(remainingBalance, rewards)
 		}
 	}
-	log.Trace("distribute to validator contract", "block hash", header.Hash(), "amount", balance)
-	return p.distributeToValidator(balance, val, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
+	log.Trace("distribute to validator contract", "block hash", header.Hash(), "amount", remainingBalance)
+	return p.distributeToValidator(remainingBalance, val, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 }
 
 // slash spoiled validators
