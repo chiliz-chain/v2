@@ -1564,6 +1564,7 @@ func getInflationPct(secondsPassed uint64) *big.Int {
 	return big.NewInt(int64(inflationPct * 1e18))
 }
 
+// Returns amount of chz & inflation pct for specific block (part of dragon8)
 func getNewSupplyForBlock(forkTs uint64, currentTs uint64, lastSupply *big.Int) (*big.Int, *big.Int) {
 	// Calculate the new supply
 	secondsPassed := currentTs - forkTs
@@ -1580,6 +1581,42 @@ func getNewSupplyForBlock(forkTs uint64, currentTs uint64, lastSupply *big.Int) 
 	log.Trace("inflation details", "secondsSinceFork", secondsPassed, "newIntroducedSupply", newIntroducedSupply, "blockAmount", blockAmount)
 
 	return blockAmount, inflationPct
+}
+
+// Returns inflation %, supply, amount for the block (part of dragon8Fix)
+func getNewSupplyForBlockDragon8Fix(forkBlock *big.Int, currentBlock *big.Int) (*big.Int, *big.Int, *big.Int) {
+	var (
+		// inflation %, supply, amount per block
+		inflationData = [][]*big.Int{
+			{big.NewInt(87961192355797800), cmath.MustParseBig256("8888888888000000000000000000"), cmath.MustParseBig256("74379496319128800000")},
+			{big.NewInt(72043432957447300), cmath.MustParseBig256("9670766153000000000000000000"), cmath.MustParseBig256("66278081527102500000")},
+			{big.NewInt(59646669473269800), cmath.MustParseBig256("10367481346000000000000000000"), cmath.MustParseBig256("58826648890241100000")},
+			{big.NewInt(49992060364241300), cmath.MustParseBig256("10985867079000000000000000000"), cmath.MustParseBig256("52245636433560200000")},
+			{big.NewInt(42473043229881600), cmath.MustParseBig256("11535073210000000000000000000"), cmath.MustParseBig256("46606703110067700000")},
+			{big.NewInt(36617226797714900), cmath.MustParseBig256("12025002873000000000000000000"), cmath.MustParseBig256("41887581567176800000")},
+			{big.NewInt(32056712374821100), cmath.MustParseBig256("12465325130000000000000000000"), cmath.MustParseBig256("38013445810170100000")},
+			{big.NewInt(28504980171063000), cmath.MustParseBig256("12864922473000000000000000000"), cmath.MustParseBig256("34885308217432200000")},
+			{big.NewInt(25738888349516300), cmath.MustParseBig256("13231636833000000000000000000"), cmath.MustParseBig256("32397985455982600000")},
+			{big.NewInt(23584653872848300), cmath.MustParseBig256("13572204456000000000000000000"), cmath.MustParseBig256("30450508407284500000")},
+			{big.NewInt(21906934375499800), cmath.MustParseBig256("13892300200000000000000000000"), cmath.MustParseBig256("28951456317173600000")},
+			{big.NewInt(20600325117190600), cmath.MustParseBig256("14196637909000000000000000000"), cmath.MustParseBig256("27821095556737700000")},
+			{big.NewInt(19582736803651100), cmath.MustParseBig256("14489093265000000000000000000"), cmath.MustParseBig256("26991638121944800000")},
+			{big.NewInt(18800000000000000), cmath.MustParseBig256("14772829365000000000000000000"), cmath.MustParseBig256("26420204724736900000")},
+		}
+		yearInBlocks = big.NewInt(10512000)
+		year         = big.NewInt(0)
+	)
+
+	// calculate current inflation year from block number
+	year.Sub(currentBlock, forkBlock)
+	year.Div(year, yearInBlocks)
+	yearInt64 := year.Int64()
+
+	if year.Int64() >= 13 {
+		return inflationData[13][0], inflationData[13][1], inflationData[13][2]
+	}
+
+	return inflationData[yearInt64][0], inflationData[yearInt64][1], inflationData[yearInt64][2]
 }
 
 func (p *Parlia) getLastSupplyFromTokenomics(header *types.Header) (*big.Int, error) {
@@ -1678,16 +1715,31 @@ func (p *Parlia) getCurrentValidators(blockHash common.Hash, blockNum *big.Int) 
 // slash spoiled validators
 func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, header *types.Header, chain core.ChainContext,
 	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
-	coinbase := header.Coinbase
+	var (
+		coinbase  = header.Coinbase
+		isDragon8 = p.chainConfig.IsDragon8(header.Time) || p.chainConfig.IsDragon8Fix(header.Number)
+	)
 
-	if p.chainConfig.IsDragon8(header.Time) {
+	if isDragon8 {
+		var (
+			blockAmount    *big.Int
+			inflationPct   *big.Int
+			lastSupply     *big.Int
+			newTotalSupply *big.Int
+		)
+
 		lastSupply, err := p.getLastSupplyFromTokenomics(header)
 		if err != nil {
 			return err
 		}
 
-		blockAmount, inflationPct := getNewSupplyForBlock(*p.chainConfig.Dragon8Time, header.Time, lastSupply)
-		newTotalSupply := big.NewInt(0).Add(lastSupply, blockAmount)
+		if p.chainConfig.IsDragon8Fix(header.Number) {
+			inflationPct, newTotalSupply, blockAmount = getNewSupplyForBlockDragon8Fix(p.chainConfig.Dragon8FixBlock, header.Number)
+		} else if p.chainConfig.IsDragon8(header.Time) {
+			blockAmount, inflationPct = getNewSupplyForBlock(*p.chainConfig.Dragon8Time, header.Time, lastSupply)
+			newTotalSupply = big.NewInt(0).Add(lastSupply, blockAmount)
+		}
+
 		state.AddBalance(coinbase, blockAmount)
 
 		// DEPOSIT to tokenomics
@@ -1704,7 +1756,7 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 	state.SetBalance(consensus.SystemAddress, big.NewInt(0))
 	state.AddBalance(coinbase, balance)
 
-	doDistributeSysReward := !p.chainConfig.IsDragon8(header.Time) && state.GetBalance(common.HexToAddress(systemcontracts.SystemRewardContract)).Cmp(maxSystemBalance) < 0
+	doDistributeSysReward := !isDragon8 && state.GetBalance(common.HexToAddress(systemcontracts.SystemRewardContract)).Cmp(maxSystemBalance) < 0
 	if doDistributeSysReward {
 		var rewards = new(big.Int)
 		rewards = rewards.Div(balance, big.NewInt(systemRewardPercent))
@@ -1762,7 +1814,7 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 		common.HexToAddress(systemcontract.RuntimeUpgradeContract),
 		common.HexToAddress(systemcontract.DeployerProxyContract),
 	}
-	if p.chainConfig.IsDragon8(header.Time) {
+	if p.chainConfig.IsDragon8(header.Time) || p.chainConfig.IsDragon8Fix(header.Number) {
 		contracts = append(contracts, common.HexToAddress(systemcontract.TokenomicsContract))
 	}
 	for _, c := range contracts {

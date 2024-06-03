@@ -462,6 +462,7 @@ type ChainConfig struct {
 	DeploymentHookFixBlock *big.Int `json:"deploymentHookFixBlock,omitempty"`
 	DeployerFactoryBlock   *big.Int `json:"deployerFactoryBlock,omitempty"`
 	Dragon8Time            *uint64  `json:"dragon8Time,omitempty"`
+	Dragon8FixBlock        *big.Int `json:"dragon8FixBlock,omitempty"`
 
 	ShanghaiTime *uint64 `json:"shanghaiTime,omitempty" ` // Shanghai switch time (nil = no fork, 0 = already on shanghai)
 	KeplerTime   *uint64 `json:"keplerTime,omitempty"`    // Kepler switch time (nil = no fork, 0 = already activated)
@@ -562,7 +563,7 @@ func (c *ChainConfig) String() string {
 		Dragon8Time = big.NewInt(0).SetUint64(*c.Dragon8Time)
 	}
 
-	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, Dragon8Time: %v, ShanghaiTime: %v, KeplerTime: %v, Engine: %v}",
+	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, Dragon8Time: %v, Dragon8FixBlock: %v, ShanghaiTime: %v, KeplerTime: %v, Engine: %v}",
 		c.ChainID,
 		c.HomesteadBlock,
 		c.DAOForkBlock,
@@ -595,6 +596,7 @@ func (c *ChainConfig) String() string {
 		c.HertzBlock,
 		c.HertzfixBlock,
 		Dragon8Time,
+		c.Dragon8FixBlock,
 		ShanghaiTime,
 		KeplerTime,
 		engine,
@@ -604,6 +606,11 @@ func (c *ChainConfig) String() string {
 // IsDragon8 returns whether num & timestamp represents a block number after the dragon8 fork
 func (c *ChainConfig) IsDragon8(time uint64) bool {
 	return isTimestampForked(c.Dragon8Time, time)
+}
+
+// IsDragon8Fix returns whether num is either equal to the dragon8 fix block or greater.
+func (c *ChainConfig) IsDragon8Fix(num *big.Int) bool {
+	return isBlockForked(c.Dragon8FixBlock, num)
 }
 
 // IsHomestead returns whether num is either equal to the homestead block or greater.
@@ -1199,6 +1206,7 @@ type Rules struct {
 	HasDeploymentHookFix                     bool
 	DeployerFactory                          bool
 	Dragon8                                  bool
+	Dragon8Fix                               bool
 	IsCayenne                                bool
 	IsMerge                                  bool
 	IsNano                                   bool
@@ -1249,5 +1257,6 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		HasDeploymentHookFix: isBlockForked(c.DeploymentHookFixBlock, num),
 		DeployerFactory:      isBlockForked(c.DeployerFactoryBlock, num),
 		Dragon8:              c.IsDragon8(timestamp),
+		Dragon8Fix:           c.IsDragon8Fix(num),
 	}
 }
