@@ -57,7 +57,7 @@ deploy:
   needs: 
     - build_images
   variables:
-    docker_image_geth_tag: ${CI_COMMIT_TAG:-$CI_COMMIT_REF_SLUG}
+    docker_image_geth_tag: ${CI_COMMIT_TAG:-\$CI_COMMIT_REF_SLUG}
   trigger:
     project: 'mediarex/blockchain/tools-blockchain'
     branch: 'main'
