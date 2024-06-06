@@ -1584,7 +1584,7 @@ func getNewSupplyForBlock(forkTs uint64, currentTs uint64, lastSupply *big.Int) 
 }
 
 // Returns inflation %, supply, amount for the block (part of dragon8Fix)
-func getNewSupplyForBlockDragon8Fix(forkBlock *big.Int, currentBlock *big.Int) (*big.Int, *big.Int, *big.Int) {
+func getNewSupplyForBlockDragon8Fix(forkTime uint64, currentTime uint64) (*big.Int, *big.Int, *big.Int) {
 	var (
 		// inflation %, supply, amount per block
 		inflationData = [][]*big.Int{
@@ -1603,20 +1603,19 @@ func getNewSupplyForBlockDragon8Fix(forkBlock *big.Int, currentBlock *big.Int) (
 			{big.NewInt(19582736803651100), cmath.MustParseBig256("14489093265000000000000000000"), cmath.MustParseBig256("26991638121944800000")},
 			{big.NewInt(18800000000000000), cmath.MustParseBig256("14772829365000000000000000000"), cmath.MustParseBig256("26420204724736900000")},
 		}
-		yearInBlocks = big.NewInt(10512000)
-		year         = big.NewInt(0)
+		yearInSecs = uint64(31536000)
+		year       = uint64(0)
 	)
 
 	// calculate current inflation year from block number
-	year.Sub(currentBlock, forkBlock)
-	year.Div(year, yearInBlocks)
-	yearInt64 := year.Int64()
+	year = (currentTime - forkTime) / yearInSecs
+	log.Debug("inflation year", "year", year)
 
-	if year.Int64() >= 13 {
+	if year >= 13 {
 		return inflationData[13][0], inflationData[13][1], inflationData[13][2]
 	}
 
-	return inflationData[yearInt64][0], inflationData[yearInt64][1], inflationData[yearInt64][2]
+	return inflationData[year][0], inflationData[year][1], inflationData[year][2]
 }
 
 func (p *Parlia) getLastSupplyFromTokenomics(header *types.Header) (*big.Int, error) {
@@ -1717,7 +1716,7 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
 	var (
 		coinbase  = header.Coinbase
-		isDragon8 = p.chainConfig.IsDragon8(header.Time) || p.chainConfig.IsDragon8Fix(header.Number)
+		isDragon8 = p.chainConfig.IsDragon8(header.Time) || p.chainConfig.IsDragon8Fix(header.Time)
 	)
 
 	if isDragon8 {
@@ -1733,8 +1732,8 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 			return err
 		}
 
-		if p.chainConfig.IsDragon8Fix(header.Number) {
-			inflationPct, newTotalSupply, blockAmount = getNewSupplyForBlockDragon8Fix(p.chainConfig.Dragon8FixBlock, header.Number)
+		if p.chainConfig.IsDragon8Fix(header.Time) {
+			inflationPct, newTotalSupply, blockAmount = getNewSupplyForBlockDragon8Fix(*p.chainConfig.Dragon8FixTime, header.Time)
 		} else if p.chainConfig.IsDragon8(header.Time) {
 			blockAmount, inflationPct = getNewSupplyForBlock(*p.chainConfig.Dragon8Time, header.Time, lastSupply)
 			newTotalSupply = big.NewInt(0).Add(lastSupply, blockAmount)
@@ -1814,7 +1813,7 @@ func (p *Parlia) initContract(state *state.StateDB, header *types.Header, chain 
 		common.HexToAddress(systemcontract.RuntimeUpgradeContract),
 		common.HexToAddress(systemcontract.DeployerProxyContract),
 	}
-	if p.chainConfig.IsDragon8(header.Time) || p.chainConfig.IsDragon8Fix(header.Number) {
+	if p.chainConfig.IsDragon8(header.Time) || p.chainConfig.IsDragon8Fix(header.Time) {
 		contracts = append(contracts, common.HexToAddress(systemcontract.TokenomicsContract))
 	}
 	for _, c := range contracts {
