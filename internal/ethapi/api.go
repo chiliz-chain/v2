@@ -1491,6 +1491,9 @@ func (s *BlockChainAPI) replay(ctx context.Context, block *types.Block, accounts
 					statedb.SetBalance(consensus.SystemAddress, big.NewInt(0))
 					statedb.AddBalance(block.Header().Coinbase, balance)
 				}
+				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) {
+					statedb.AddBalance(block.Header().Coinbase, tx.Value())
+				}
 			}
 		}
 
