@@ -261,6 +261,9 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 				statedb.SetBalance(consensus.SystemAddress, big.NewInt(0))
 				statedb.AddBalance(context.Coinbase, balance)
 			}
+			if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) {
+				statedb.AddBalance(context.Coinbase, tx.Value())
+			}
 		}
 		statedb.SetTxContext(tx.Hash(), idx)
 		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.Gas())); err != nil {
