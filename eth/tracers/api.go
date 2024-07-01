@@ -546,6 +546,9 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 					statedb.SetBalance(consensus.SystemAddress, big.NewInt(0))
 					statedb.AddBalance(vmctx.Coinbase, balance)
 				}
+				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) {
+					statedb.AddBalance(vmctx.Coinbase, tx.Value())
+				}
 			}
 		}
 
@@ -703,6 +706,9 @@ txloop:
 				if balance.Cmp(common.Big0) > 0 {
 					statedb.SetBalance(consensus.SystemAddress, big.NewInt(0))
 					statedb.AddBalance(block.Header().Coinbase, balance)
+				}
+				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) {
+					statedb.AddBalance(block.Header().Coinbase, tx.Value())
 				}
 			}
 		}
