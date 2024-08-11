@@ -28,6 +28,15 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 )
 
+const (
+	// Burning rate at which gas is burned
+	BurningFactor = 2 // 50 percent of the gas used will be burned
+)
+
+var (
+	// BurningAddress is the address where the burned gas is sent to
+	BurningAddress = common.HexToAddress("0x0000000000000000000000000000000000000000")
+)
 /*
 The State Transitioning Model
 
@@ -275,13 +284,26 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 		ret, st.gas, vmerr = st.evm.Call(sender, st.to(), st.data, st.gas, st.value)
 	}
 	st.refundGas()
+	
+
+	totalGas := new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice)
+	executionGas := totalGas
+	gasToBurn := new(big.Int).SetUint64(0)
+	// if burn hardfork is enabled, burn the gas
+	if st.evm.ChainConfig().BurnGas {
+		totalGas = new(big.Int).Mul(totalGas, big.NewInt(BurningFactor))
+		gasToBurn := new(big.Int).Div(totalGas, big.NewInt(BurningFactor))
+		executionGas.Sub(totalGas, gasToBurn)
+	}
 
 	// consensus engine is parlia
 	if st.evm.ChainConfig().Parlia != nil {
-		st.state.AddBalance(consensus.SystemAddress, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice))
+		st.state.AddBalance(consensus.SystemAddress, executionGas)
 	} else {
-		st.state.AddBalance(st.evm.Context.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice))
+		st.state.AddBalance(st.evm.Context.Coinbase, executionGas)
 	}
+
+	st.state.AddBalance(BurningAddress, gasToBurn)
 
 	return &ExecutionResult{
 		UsedGas:    st.gasUsed(),
