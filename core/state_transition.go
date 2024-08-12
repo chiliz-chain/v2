@@ -276,11 +276,13 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 	}
 	st.refundGas()
 
+	reward := st.reward()
+
 	// consensus engine is parlia
 	if st.evm.ChainConfig().Parlia != nil {
-		st.state.AddBalance(consensus.SystemAddress, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice))
+		st.state.AddBalance(consensus.SystemAddress, reward)
 	} else {
-		st.state.AddBalance(st.evm.Context.Coinbase, new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice))
+		st.state.AddBalance(st.evm.Context.Coinbase, reward)
 	}
 
 	return &ExecutionResult{
@@ -305,6 +307,18 @@ func (st *StateTransition) refundGas() {
 	// Also return remaining gas to the block gas counter so it is
 	// available for the next transaction.
 	st.gp.AddGas(st.gas)
+}
+
+func (st *StateTransition) reward() *big.Int {
+	reward := new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice)
+
+	// If the block belongs to the Gabriel fork, only half of the rewards are sent
+	if st.evm.ChainConfig().IsGabriel(st.evm.Context.BlockNumber) {
+		result := new(big.Int).Div(reward, big.NewInt(2))
+
+		return result
+	}
+	return reward
 }
 
 // gasUsed returns the amount of gas used up by the state transition.

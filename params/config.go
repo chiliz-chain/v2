@@ -82,6 +82,7 @@ var (
 		MirrorSyncBlock:     big.NewInt(0),
 		BrunoBlock:          big.NewInt(0),
 		BerlinBlock:         big.NewInt(12_244_000),
+		GabrielForkBlock:    big.NewInt(15_000_000),
 		Ethash:              new(EthashConfig),
 	}
 
@@ -126,6 +127,7 @@ var (
 		MirrorSyncBlock:     big.NewInt(0),
 		BrunoBlock:          big.NewInt(0),
 		BerlinBlock:         big.NewInt(9_812_189),
+		GabrielForkBlock:    big.NewInt(15_000_000),
 		Ethash:              new(EthashConfig),
 	}
 
@@ -170,6 +172,7 @@ var (
 		MirrorSyncBlock:     big.NewInt(0),
 		BrunoBlock:          big.NewInt(0),
 		BerlinBlock:         big.NewInt(8_290_928),
+		GabrielForkBlock:    big.NewInt(10_000_000),
 		Clique: &CliqueConfig{
 			Period: 15,
 			Epoch:  30000,
@@ -215,6 +218,7 @@ var (
 		IstanbulBlock:       big.NewInt(1_561_651),
 		MuirGlacierBlock:    nil,
 		BerlinBlock:         big.NewInt(4_460_644),
+		GabrielForkBlock:    big.NewInt(6_476_764),
 		Clique: &CliqueConfig{
 			Period: 15,
 			Epoch:  30000,
@@ -256,6 +260,7 @@ var (
 		NielsBlock:          big.NewInt(0),
 		MirrorSyncBlock:     big.NewInt(5184000),
 		BrunoBlock:          big.NewInt(13082000),
+		GabrielForkBlock:    big.NewInt(50000000),
 		Parlia: &ParliaConfig{
 			Period: 3,
 			Epoch:  200,
@@ -277,6 +282,7 @@ var (
 		NielsBlock:          big.NewInt(1014369),
 		MirrorSyncBlock:     big.NewInt(5582500),
 		BrunoBlock:          big.NewInt(13837000),
+		GabrielForkBlock:    big.NewInt(50000000),
 		Parlia: &ParliaConfig{
 			Period: 3,
 			Epoch:  200,
@@ -298,6 +304,7 @@ var (
 		NielsBlock:          big.NewInt(0),
 		MirrorSyncBlock:     big.NewInt(400),
 		BrunoBlock:          big.NewInt(400),
+		GabrielForkBlock:    big.NewInt(800),
 		Parlia: &ParliaConfig{
 			Period: 3,
 			Epoch:  200,
@@ -324,6 +331,7 @@ var (
 		MuirGlacierBlock:    nil,
 		BerlinBlock:         nil, // Don't enable Berlin directly, we're YOLOing it
 		YoloV3Block:         big.NewInt(0),
+		GabrielForkBlock:    big.NewInt(0),
 		Clique: &CliqueConfig{
 			Period: 15,
 			Epoch:  30000,
@@ -354,6 +362,7 @@ var (
 		big.NewInt(0),
 		nil,
 		nil, nil, nil,
+		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
@@ -390,6 +399,7 @@ var (
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
+		big.NewInt(0),
 		nil,
 		&CliqueConfig{Period: 0, Epoch: 30000},
 		nil,
@@ -414,6 +424,7 @@ var (
 		big.NewInt(0),
 		nil,
 		nil, nil, nil,
+		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
@@ -514,6 +525,9 @@ type ChainConfig struct {
 	NielsBlock      *big.Int `json:"nielsBlock,omitempty" toml:",omitempty"`      // nielsBlock switch block (nil = no fork, 0 = already activated)
 	MirrorSyncBlock *big.Int `json:"mirrorSyncBlock,omitempty" toml:",omitempty"` // mirrorSyncBlock switch block (nil = no fork, 0 = already activated)
 	BrunoBlock      *big.Int `json:"brunoBlock,omitempty" toml:",omitempty"`      // brunoBlock switch block (nil = no fork, 0 = already activated)
+
+	// Gabriel fork
+	GabrielForkBlock *big.Int `json:"gabrielForkBlock,omitempty" toml:",omitempty"`
 
 	// Various consensus engines
 	Ethash *EthashConfig `json:"ethash,omitempty" toml:",omitempty"`
@@ -694,6 +708,11 @@ func (c *ChainConfig) IsEWASM(num *big.Int) bool {
 	return isForked(c.EWASMBlock, num)
 }
 
+// isGabriel returns whether num represents a block number after the Gabriel fork
+func (c *ChainConfig) IsGabriel(num *big.Int) bool {
+	return isForked(c.GabrielForkBlock, num)
+}
+
 // CheckCompatible checks whether scheduled fork transitions have been imported
 // with a mismatching chain configuration.
 func (c *ChainConfig) CheckCompatible(newcfg *ChainConfig, height uint64) *ConfigCompatError {
@@ -806,6 +825,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, head *big.Int) *Confi
 	if isForkIncompatible(c.BrunoBlock, newcfg.BrunoBlock, head) {
 		return newCompatError("bruno fork block", c.BrunoBlock, newcfg.BrunoBlock)
 	}
+	if isForkIncompatible(c.GabrielForkBlock, newcfg.GabrielForkBlock, head) {
+		return newCompatError("gabriel fork block", c.GabrielForkBlock, newcfg.GabrielForkBlock)
+	}
 	return nil
 }
 
@@ -873,7 +895,7 @@ type Rules struct {
 	ChainID                                                 *big.Int
 	IsHomestead, IsEIP150, IsEIP155, IsEIP158               bool
 	IsByzantium, IsConstantinople, IsPetersburg, IsIstanbul bool
-	IsBerlin, IsCatalyst                                    bool
+	IsBerlin, IsCatalyst, IsGabriel                         bool
 	// features
 	HasRuntimeUpgrade    bool
 	HasDeployOrigin      bool
@@ -899,6 +921,7 @@ func (c *ChainConfig) Rules(num *big.Int) Rules {
 		IsIstanbul:       c.IsIstanbul(num),
 		IsBerlin:         c.IsBerlin(num),
 		IsCatalyst:       c.IsCatalyst(num),
+		IsGabriel:        c.IsGabriel(num),
 		// features
 		HasRuntimeUpgrade:    isForked(c.RuntimeUpgradeBlock, num),
 		HasDeployOrigin:      isForked(c.DeployOriginBlock, num),
