@@ -289,8 +289,9 @@ func (st *StateTransition) TransitionDb() (*ExecutionResult, error) {
 	totalGas := new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.gasPrice)
 	executionGas := totalGas
 	gasToBurn := new(big.Int).SetUint64(0)
+	
 	// if burn hardfork is enabled, burn the gas
-	if st.evm.ChainConfig().BurnGas {
+	if st.evm.ChainConfig().IsHalfBurnBlock(st.evm.Context.BlockNumber) {
 		totalGas = new(big.Int).Mul(totalGas, big.NewInt(BurningFactor))
 		gasToBurn := new(big.Int).Div(totalGas, big.NewInt(BurningFactor))
 		executionGas.Sub(totalGas, gasToBurn)
