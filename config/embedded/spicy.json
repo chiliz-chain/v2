@@ -19,6 +19,7 @@
     "nielsBlock": 0,
     "mirrorSyncBlock": 0,
     "brunoBlock": 0,
+    "halfBurnBlock": 18000000,
     "parlia": {
       "period": 3,
       "epoch": 7200

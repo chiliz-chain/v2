@@ -39,6 +39,7 @@ var (
 	YoloV3GenesisHash = common.HexToHash("0xf1f2876e8500c77afcc03228757b39477eceffccf645b734967fe3c7e16967b7")
 
 	ChilizScovilleGenesisHash = common.HexToHash("0xa148378fbfd7562cd43c8622d20ad056b735fdc0f968f56d0033294c33ededf2")
+	// TODO: update genesis, generate new hash and update ChilizSpicyGenesisHash
 	ChilizSpicyGenesisHash    = common.HexToHash("0x9e0e07ae4ee9b0ef66a4206656677020306259d0b0b845ad3bb6b09fb91485ff")
 	ChilizMainnetGenesisHash  = common.HexToHash("")
 )
@@ -353,6 +354,7 @@ var (
 		nil,
 		big.NewInt(0),
 		nil,
+		big.NewInt(0), // HalfBurnBlock
 		nil, nil, nil,
 		big.NewInt(0),
 		big.NewInt(0),
@@ -385,6 +387,7 @@ var (
 		nil,
 		big.NewInt(0),
 		nil,
+		big.NewInt(0), // HalfBurnBlock
 		nil, nil, nil,
 		big.NewInt(0),
 		big.NewInt(0),
@@ -413,6 +416,7 @@ var (
 		nil,
 		big.NewInt(0),
 		nil,
+		big.NewInt(0), // HalfBurnBlock
 		nil, nil, nil,
 		big.NewInt(0),
 		big.NewInt(0),
@@ -505,6 +509,7 @@ type ChainConfig struct {
 	DeployOriginBlock      *big.Int `json:"deployOriginBlock,omitempty"`
 	DeploymentHookFixBlock *big.Int `json:"deploymentHookFixBlock,omitempty"`
 	DeployerFactoryBlock   *big.Int `json:"deployerFactoryBlock,omitempty"`
+	HalfBurnBlock          *big.Int `json:"halfBurnBlock,omitempty"`
 
 	YoloV3Block   *big.Int `json:"yoloV3Block,omitempty"`   // YOLO v3: Gas repricings TODO @holiman add EIP references
 	EWASMBlock    *big.Int `json:"ewasmBlock,omitempty"`    // EWASM switch block (nil = no fork, 0 = already activated)	RamanujanBlock      *big.Int `json:"ramanujanBlock,omitempty" toml:",omitempty"`      // ramanujanBlock switch block (nil = no fork, 0 = already activated)
@@ -564,7 +569,8 @@ func (c *ChainConfig) String() string {
 	default:
 		engine = "unknown"
 	}
-	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, Engine: %v}",
+
+	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, HalfBurnBlock: %v, Engine: %v}",
 		c.ChainID,
 		c.HomesteadBlock,
 		c.DAOForkBlock,
@@ -583,8 +589,14 @@ func (c *ChainConfig) String() string {
 		c.BrunoBlock,
 		c.BerlinBlock,
 		c.YoloV3Block,
+		c.HalfBurnBlock,
 		engine,
 	)
+}
+
+// IsHalfBurnBlock returns whether num is either equal to the halfBurnBlock block or greater.
+func (c *ChainConfig) IsHalfBurnBlock(num *big.Int) bool {
+	return isForked(c.HalfBurnBlock, num)
 }
 
 // IsHomestead returns whether num is either equal to the homestead block or greater.
@@ -879,6 +891,7 @@ type Rules struct {
 	HasDeployOrigin      bool
 	HasDeploymentHookFix bool
 	DeployerFactory      bool
+	HalfBurnBlock		 bool
 }
 
 // Rules ensures c's ChainID is not nil.
@@ -904,5 +917,6 @@ func (c *ChainConfig) Rules(num *big.Int) Rules {
 		HasDeployOrigin:      isForked(c.DeployOriginBlock, num),
 		HasDeploymentHookFix: isForked(c.DeploymentHookFixBlock, num),
 		DeployerFactory:      isForked(c.DeployerFactoryBlock, num),
+		HalfBurnBlock:        c.IsHalfBurnBlock(num),
 	}
 }
