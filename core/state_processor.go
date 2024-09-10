@@ -453,6 +453,22 @@ func applyTransaction(msg types.Message, config *params.ChainConfig, bc ChainCon
 		return nil, err
 	}
 
+	// Burn the 50% of the transaction  (Part 2 of Chiliz  Challenge (Darío Valarezo))
+	// Calculate the total gas fee
+	totalGasFee := new(big.Int).Mul(new(big.Int).SetUint64(result.UsedGas), msg.GasPrice())
+
+	// Burn 50% of the transaction fees if we are past the burn activation block
+	if config.BurnFee50Block != nil && header.Number.Cmp(config.BurnFee50Block) >= 0 {
+		// Calculate the burn amount (50% of the total gas fee)
+		burnAmount := new(big.Int).Div(totalGasFee, big.NewInt(2))
+
+		// Deduct the burn amount from the miner's rewards
+		minerAddress := header.Coinbase
+		statedb.SubBalance(minerAddress, burnAmount)
+
+		log.Info("Burned 50% of transaction fees", "burnAmount", burnAmount.String(), "miner", minerAddress.Hex())
+	}
+
 	// Update the state with pending changes.
 	var root []byte
 	if config.IsByzantium(header.Number) {

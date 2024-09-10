@@ -83,6 +83,8 @@ var (
 		BrunoBlock:          big.NewInt(0),
 		BerlinBlock:         big.NewInt(12_244_000),
 		Ethash:              new(EthashConfig),
+		// Block from which the burning of 50% begins (Part 2 of Chiliz  Challenge (Darío Valarezo))
+		BurnFee50Block: big.NewInt(123456789),
 	}
 
 	// MainnetTrustedCheckpoint contains the light client trusted checkpoint for the main network.
@@ -519,6 +521,9 @@ type ChainConfig struct {
 	Ethash *EthashConfig `json:"ethash,omitempty" toml:",omitempty"`
 	Clique *CliqueConfig `json:"clique,omitempty" toml:",omitempty"`
 	Parlia *ParliaConfig `json:"parlia,omitempty" toml:",omitempty"`
+
+	// Block to activate HF to burn of 50% of fees (Part 2 of Chiliz  Challenge (Darío Valarezo))
+	BurnFee50Block *big.Int `json:"burnFee50Block,omitempty"
 }
 
 // EthashConfig is the consensus engine configs for proof-of-work based sealing.
