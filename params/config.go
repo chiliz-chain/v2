@@ -82,6 +82,7 @@ var (
 		MirrorSyncBlock:     big.NewInt(0),
 		BrunoBlock:          big.NewInt(0),
 		BerlinBlock:         big.NewInt(12_244_000),
+		PhoenixBlock:        big.NewInt(1727165349), // Tue Sep 24 2024 09:09:09 GMT+0100 (Irish Standard Time)
 		Ethash:              new(EthashConfig),
 	}
 
@@ -324,6 +325,7 @@ var (
 		MuirGlacierBlock:    nil,
 		BerlinBlock:         nil, // Don't enable Berlin directly, we're YOLOing it
 		YoloV3Block:         big.NewInt(0),
+		PhoenixBlock:        big.NewInt(0),
 		Clique: &CliqueConfig{
 			Period: 15,
 			Epoch:  30000,
@@ -354,6 +356,7 @@ var (
 		big.NewInt(0),
 		nil,
 		nil, nil, nil,
+		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
@@ -390,6 +393,7 @@ var (
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
+		big.NewInt(0),
 		nil,
 		&CliqueConfig{Period: 0, Epoch: 30000},
 		nil,
@@ -414,6 +418,7 @@ var (
 		big.NewInt(0),
 		nil,
 		nil, nil, nil,
+		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
 		big.NewInt(0),
@@ -505,6 +510,7 @@ type ChainConfig struct {
 	DeployOriginBlock      *big.Int `json:"deployOriginBlock,omitempty"`
 	DeploymentHookFixBlock *big.Int `json:"deploymentHookFixBlock,omitempty"`
 	DeployerFactoryBlock   *big.Int `json:"deployerFactoryBlock,omitempty"`
+	PhoenixBlock           *big.Int `json:"phoenixBlock,omitempty"` // Phoenix switch block (nil = no fork, 0 = already on phoenix)
 
 	YoloV3Block   *big.Int `json:"yoloV3Block,omitempty"`   // YOLO v3: Gas repricings TODO @holiman add EIP references
 	EWASMBlock    *big.Int `json:"ewasmBlock,omitempty"`    // EWASM switch block (nil = no fork, 0 = already activated)	RamanujanBlock      *big.Int `json:"ramanujanBlock,omitempty" toml:",omitempty"`      // ramanujanBlock switch block (nil = no fork, 0 = already activated)
@@ -564,7 +570,7 @@ func (c *ChainConfig) String() string {
 	default:
 		engine = "unknown"
 	}
-	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, Engine: %v}",
+	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, Phoenix: %v, Engine: %v}",
 		c.ChainID,
 		c.HomesteadBlock,
 		c.DAOForkBlock,
@@ -583,6 +589,7 @@ func (c *ChainConfig) String() string {
 		c.BrunoBlock,
 		c.BerlinBlock,
 		c.YoloV3Block,
+		c.PhoenixBlock,
 		engine,
 	)
 }
@@ -692,6 +699,16 @@ func (c *ChainConfig) IsCatalyst(num *big.Int) bool {
 // IsEWASM returns whether num represents a block number after the EWASM fork
 func (c *ChainConfig) IsEWASM(num *big.Int) bool {
 	return isForked(c.EWASMBlock, num)
+}
+
+// IsPhoenix returns whether num is either equal to the Phoenix fork block or greater.
+func (c *ChainConfig) IsPhoenix(num *big.Int) bool {
+	return isForked(c.PhoenixBlock, num)
+}
+
+// IsOnPhoenix returns whether num is equal to the Phoenix fork block
+func (c *ChainConfig) IsOnPhoenix(num *big.Int) bool {
+	return configNumEqual(c.PhoenixBlock, num)
 }
 
 // CheckCompatible checks whether scheduled fork transitions have been imported
@@ -806,6 +823,9 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, head *big.Int) *Confi
 	if isForkIncompatible(c.BrunoBlock, newcfg.BrunoBlock, head) {
 		return newCompatError("bruno fork block", c.BrunoBlock, newcfg.BrunoBlock)
 	}
+	if isForkIncompatible(c.PhoenixBlock, newcfg.PhoenixBlock, head) {
+		return newCompatError("phoenix fork block", c.PhoenixBlock, newcfg.PhoenixBlock)
+	}
 	return nil
 }
 
@@ -873,7 +893,7 @@ type Rules struct {
 	ChainID                                                 *big.Int
 	IsHomestead, IsEIP150, IsEIP155, IsEIP158               bool
 	IsByzantium, IsConstantinople, IsPetersburg, IsIstanbul bool
-	IsBerlin, IsCatalyst                                    bool
+	IsBerlin, IsCatalyst, IsPhoenix                         bool
 	// features
 	HasRuntimeUpgrade    bool
 	HasDeployOrigin      bool
@@ -899,6 +919,7 @@ func (c *ChainConfig) Rules(num *big.Int) Rules {
 		IsIstanbul:       c.IsIstanbul(num),
 		IsBerlin:         c.IsBerlin(num),
 		IsCatalyst:       c.IsCatalyst(num),
+		IsPhoenix:        c.IsPhoenix(num),
 		// features
 		HasRuntimeUpgrade:    isForked(c.RuntimeUpgradeBlock, num),
 		HasDeployOrigin:      isForked(c.DeployOriginBlock, num),

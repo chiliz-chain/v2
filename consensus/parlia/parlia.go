@@ -42,6 +42,20 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 )
 
+// Define a struct to log total CHZ supply and total burned fees
+type SupplyLog struct {
+	TotalSupplyGenesis *big.Int
+	CurrentSupply      *big.Int
+	TotalBurned        *big.Int
+}
+
+// Initialize the supply log
+var supplyLog = SupplyLog{
+	TotalSupplyGenesis: big.NewInt(8888888888), // initial total supply for Chiliz
+	TotalBurned:        big.NewInt(0),
+	CurrentSupply:      new(big.Int).Sub(big.NewInt(8888888888), big.NewInt(0)), // TotalSupplyGenesis - TotalBurned
+}
+
 const (
 	inMemorySnapshots  = 128  // Number of recent snapshots to keep in memory
 	inMemorySignatures = 4096 // Number of recent block signatures to keep in memory
@@ -59,7 +73,8 @@ const (
 	processBackOffTime   = uint64(1) // second
 
 	systemRewardPercent = 5 // it means 1/3  percentage of gas fee incoming will be distributed to system
-
+	// Define the burn percentage as a global constant
+	burnPercentage = 50
 )
 
 var (
@@ -376,7 +391,7 @@ func (p *Parlia) verifyCascadingFields(chain consensus.ChainHeaderReader, header
 	if len(parents) > 0 {
 		parent = parents[len(parents)-1]
 	} else {
-		parent = chain.GetHeader(header.ParentHash, number-1)
+		parent = chain.GetHeaderByNumber(number - 1)
 	}
 
 	if parent == nil || parent.Number.Uint64() != number-1 || parent.Hash() != header.ParentHash {
@@ -1052,18 +1067,43 @@ func (p *Parlia) getCurrentValidators(blockHash common.Hash) ([]common.Address, 
 	return valz, nil
 }
 
-// slash spoiled validators
+// Distribute Fees to Validators after burning CHZ if Phoenix hard fork is active
 func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, header *types.Header, chain core.ChainContext,
 	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
-	coinbase := header.Coinbase
-	balance := state.GetBalance(consensus.SystemAddress)
+
+	// Check for nil pointers
+	if state == nil || header == nil || chain == nil || txs == nil || receipts == nil || receivedTxs == nil || usedGas == nil {
+		return errors.New("invalid input parameters")
+	}
+
+	coinbase := header.Coinbase                          // Get the coinbase address from the header
+	balance := state.GetBalance(consensus.SystemAddress) // Get the balance of the system address
 	if balance.Cmp(common.Big0) <= 0 {
 		return nil
 	}
-	state.SetBalance(consensus.SystemAddress, big.NewInt(0))
-	state.AddBalance(coinbase, balance)
 
-	doDistributeSysReward := state.GetBalance(common.HexToAddress(systemcontract.SystemRewardContract)).Cmp(maxSystemBalance) < 0
+	// Check if the Phoenix hard fork is active
+	if p.chainConfig.IsPhoenix(header.Number) {
+		// Burn the specified percentage of the block fees
+		burnAmount := new(big.Int).Div(new(big.Int).Mul(balance, big.NewInt(burnPercentage)), big.NewInt(100))
+		state.SetBalance(consensus.SystemAddress, new(big.Int).Sub(balance, burnAmount)) // Subtract the burned amount from the system address
+		log.Trace("burned block fees", "block hash", header.Hash(), "amount", burnAmount)
+
+		// Update the total burned fees
+		supplyLog.TotalBurned.Add(supplyLog.TotalBurned, burnAmount)
+		supplyLog.CurrentSupply.Sub(supplyLog.TotalSupplyGenesis, supplyLog.TotalBurned)
+	}
+
+	// Get the balance of the system address
+	balance = state.GetBalance(consensus.SystemAddress)
+	if balance.Cmp(common.Big0) <= 0 {
+		return nil
+	}
+	// Update the balance of the system address
+	state.SetBalance(consensus.SystemAddress, big.NewInt(0))
+	state.AddBalance(coinbase, balance) // Add the balance to the coinbase
+
+	doDistributeSysReward := !p.chainConfig.IsPhoenix(header.Number) && state.GetBalance(common.HexToAddress(systemcontract.SystemRewardContract)).Cmp(maxSystemBalance) < 0
 	if doDistributeSysReward {
 		var rewards = new(big.Int)
 		rewards = rewards.Div(balance, big.NewInt(systemRewardPercent))

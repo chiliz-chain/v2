@@ -2,10 +2,20 @@ package parlia
 
 import (
 	"fmt"
+	"math/big"
 	"math/rand"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/parlia"
+	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/params"
 )
 
 func TestImpactOfValidatorOutOfService(t *testing.T) {
@@ -143,4 +153,70 @@ func randomAddress() common.Address {
 	addrBytes := make([]byte, 20)
 	rand.Read(addrBytes)
 	return common.BytesToAddress(addrBytes)
+}
+
+// TestDistributeIncomingForkAndBurn tests the distributeIncoming function with a fork in the chain and checks if the total burned and current supply are correct.
+func TestDistributeIncomingForkAndBurn(t *testing.T) {
+	// Setup the initial state
+	db := rawdb.NewMemoryDatabase()
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	address := crypto.PubkeyToAddress(key.PublicKey)
+	genesis := &core.Genesis{
+		Config: params.TestChainConfig,
+		Alloc:  core.GenesisAlloc{address: {Balance: big.NewInt(1000000000)}},
+	}
+	genesisBlock := genesis.MustCommit(db)
+
+	parliaEngine := parlia.New(nil) // Initialize Parlia engine
+	blockchain, _ := core.NewBlockChain(db, nil, genesis.Config, parliaEngine, vm.Config{}, nil, nil)
+	defer blockchain.Stop()
+
+	// Generate a chain with a fork
+	blocks, _ := core.GenerateChain(genesis.Config, genesisBlock, parliaEngine, db, 4, func(i int, block *core.BlockGen) {
+		tx, err := types.SignTx(types.NewTransaction(block.TxNonce(address), common.Address{}, big.NewInt(1), 21000, big.NewInt(1), nil), types.HomesteadSigner{}, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		block.AddTx(tx)
+	})
+
+	// Insert the chain
+	if _, err := blockchain.InsertChain(blocks); err != nil {
+		t.Fatalf("failed to insert chain: %v", err)
+	}
+
+	// Create a header for the new block
+	header := &types.Header{
+		ParentHash: blocks[len(blocks)-1].Hash(),
+		Coinbase:   address,
+		Number:     big.NewInt(5),
+		GasLimit:   8000000,
+	}
+
+	// Create a stateDB
+	state, _ := state.New(blocks[len(blocks)-1].Root(), state.NewDatabase(db), nil)
+
+	// Set the balance of the system address
+	state.SetBalance(consensus.SystemAddress, big.NewInt(1000000))
+
+	// Call distributeIncoming
+	var txs []*types.Transaction
+	var receipts []*types.Receipt
+	var systemTxs []*types.Transaction
+	var usedGas uint64
+	err := parliaEngine.DistributeIncoming(address, state, header, blockchain, &txs, &receipts, &systemTxs, &usedGas, false)
+	if err != nil {
+		t.Fatalf("distributeIncoming failed: %v", err)
+	}
+
+	// Check the total burned and current supply
+	expectedBurned := new(big.Int).Div(new(big.Int).Mul(big.NewInt(1000000), big.NewInt(burnPercentage)), big.NewInt(100))
+	expectedCurrentSupply := new(big.Int).Sub(supplyLog.TotalSupplyGenesis, expectedBurned)
+
+	if supplyLog.TotalBurned.Cmp(expectedBurned) != 0 {
+		t.Errorf("TotalBurned mismatch: got %v, want %v", supplyLog.TotalBurned, expectedBurned)
+	}
+	if supplyLog.CurrentSupply.Cmp(expectedCurrentSupply) != 0 {
+		t.Errorf("CurrentSupply mismatch: got %v, want %v", supplyLog.CurrentSupply, expectedCurrentSupply)
+	}
 }

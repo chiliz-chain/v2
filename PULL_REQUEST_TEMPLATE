@@ -1,17 +1,38 @@
 ### Description
+The aim is to burn 50% of the CHZ transaction fees per block after the Phoenix hard-fork which will be activated on Tue Sep 24 2024 09:09:09 GMT+0100 (Irish Standard Time).
 
-add a description of your changes here...
+Assuming we want to burn 50% of the CHZ transaction fees per block (not per transaction), we need to modify codebase at consensus level in `consensus/parlia/parlia.go` file. Token Burn is a mechanism to reduce the Total Supply of a token, so its important to keep track of `TotalSupplyGenesis, CurrentSupply` and `TotalBurned`.
 
 ### Rationale
-
-tell us why we need these changes...
+Burning 50% of the CHZ transaction fees per block will help in controlling the inflation of CHZ, ensuring a more stable economy for the token and potentially increasing its value over time.
 
 ### Example
-
-add an example CLI or API response...
+For a block with a total transaction fee of 100 CHZ, 50 CHZ will be burned, and the remaining 50 CHZ will be distributed to validators and the system reward pool.
 
 ### Changes
-
 Notable changes: 
-* add each change in a bullet point here
-* ...
+* Defined Unix timestamp for Phoenix hard fork as Tue Sep 24 2024 09:09:09 GMT+0100 (Irish Standard Time).
+* Added constant `burnPercentage` with value 50 in the `consensus/parlia/parlia.go` file.
+* Enhanced the `distributeIncoming` function to ensure that the burning logic is correctly applied and that the remaining balance is distributed appropriately.
+* Added new test `TestDistributeIncomingForkAndBurn` to verify that the `distributeIncoming` function correctly burns 50% of the transaction fees when the Phoenix hard fork is active.
+
+#### distributeIncoming
+- **Purpose**: This function handles the distribution of fees to validators and the system while implementing the burning mechanism.
+- **Details**:
+  - Checks for nil pointers to ensure valid input parameters.
+  - Retrieves the current balance and checks if it is greater than zero.
+  - If the Phoenix hard-fork is active, it calculates and burns 50% of the balance.
+  - Updates the state to reflect the burned amount and distributes the remaining balance to the coinbase and validators.
+  - Adds the TotalBurned and CurrentSupply amount to the `SupplyLog` struct log in the `consensus/parlia/parlia.go` file. `TotalSupplyGenesis` is the initial supply of CHZ at genesis.
+
+### Tests
+#### TestDistributeIncomingForkAndBurn
+- **Purpose**: This test verifies that the `distributeIncoming` function correctly burns 50% of the transaction fees when the Phoenix hard fork is active in the `consensus/parlia/parlia_test.go` file.
+- **Details**:
+  - Open Chiliz V2 in IDE terminal, run `go test -v ./consensus/parlia` to execute the test.
+
+
+### Additional Notes
+- The Tokenomics of CHZ will be impacted by burning, and we need to review the impact of burning on the overall tokenomics of CHZ and adjust parameters as necessary in future iterations.
+- The Test needs one of the dependency update to run successfully.
+- The codebase needs to be modified to ensure that the burning mechanism is correctly applied and that the remaining balance is distributed appropriately.
