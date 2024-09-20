@@ -239,6 +239,8 @@ type Config struct {
 	EnablePersonal bool `toml:"-"`
 
 	DBEngine string `toml:",omitempty"`
+
+	Instance int `toml:",omitempty"`
 }
 
 // IPCEndpoint resolves an IPC endpoint based on a configured value, taking into
@@ -513,6 +515,7 @@ type LogConfig struct {
 	MaxBytesSize *uint   `toml:",omitempty"`
 	Level        *string `toml:",omitempty"`
 	RotateHours  *uint   `toml:",omitempty"`
+	MaxBackups   *uint   `toml:",omitempty"`
 
 	// TermTimeFormat is the time format used for console logging.
 	TermTimeFormat *string `toml:",omitempty"`
