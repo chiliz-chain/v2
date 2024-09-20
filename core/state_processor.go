@@ -1,5 +1,5 @@
 // Copyright 2015 The go-ethereum Authors
-// This file is part of the go-ethereum library.
+// This file is part of the go-ethereum library.    state_transition.go
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
@@ -94,7 +94,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	bloomProcessors := NewAsyncReceiptBloomGenerator(txNum)
 	statedb.MarkFullProcessed()
 
-	// usually do have two tx, one for validator set contract, another for system reward contract.
+	// Usually two transactions: one for validator set contract, one for system reward contract.
 	systemTxs := make([]*types.Transaction, 0, 2)
 
 	for i, tx := range block.Transactions() {
@@ -120,12 +120,13 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 			bloomProcessors.Close()
 			return statedb, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
+
 		commonTxs = append(commonTxs, tx)
 		receipts = append(receipts, receipt)
 	}
 	bloomProcessors.Close()
 
-	// Fail if Shanghai not enabled and len(withdrawals) is non-zero.
+	// Fail if Shanghai is not enabled and there are withdrawals
 	withdrawals := block.Withdrawals()
 	if len(withdrawals) > 0 && !p.config.IsShanghai(block.Number(), block.Time()) {
 		return nil, nil, nil, 0, errors.New("withdrawals before shanghai")
@@ -143,6 +144,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	return statedb, receipts, allLogs, *usedGas, nil
 }
 
+// applyTransaction applies an individual transaction to the state.
 func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM, receiptProcessors ...ReceiptProcessor) (*types.Receipt, error) {
 	// Create a new context to be used in the EVM environment.
 	txContext := NewEVMTxContext(msg)
@@ -190,22 +192,113 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 	return receipt, err
 }
 
-// ApplyTransaction attempts to apply a transaction to the given state database
-// and uses the input parameters for its environment. It returns the receipt
-// for the transaction, gas used and an error if the transaction failed,
-// indicating the block was invalid.
-func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *common.Address, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64, cfg vm.Config, receiptProcessors ...ReceiptProcessor) (*types.Receipt, error) {
-	msg, err := TransactionToMessage(tx, types.MakeSigner(config, header.Number, header.Time), header.BaseFee)
-	if err != nil {
-		return nil, err
+// Apply the transaction fee burn after processing
+func (p *StateProcessor) applyFeeBurn(statedb *state.StateDB, header *types.Header, usedGas uint64, tx *types.Transaction) {
+	// Apply a burn to 50% of the transaction fees if the burn mechanism is activated at the block height
+	if p.config.IsBurnFee50Block(header.Number) {
+		// Calculate total gas fees
+		totalGasFee := new(big.Int).Mul(new(big.Int).SetUint64(usedGas), tx.GasPrice())
+
+		// 50% of the total gas fee is burned
+		burnAmount := new(big.Int).Div(totalGasFee, big.NewInt(2))
+
+		// Reduce miner's rewards by the burn amount
+		minerAddress := header.Coinbase
+		statedb.SubBalance(minerAddress, burnAmount)
+
+		// Log the burn event for reference
+		log.Info("Applied 50% burn to transaction fees", "burnAmount", burnAmount.String(), "miner", minerAddress.Hex())
 	}
-	// Create a new context to be used in the EVM environment
-	blockContext := NewEVMBlockContext(header, bc, author)
-	vmenv := vm.NewEVM(blockContext, vm.TxContext{BlobHashes: tx.BlobHashes()}, statedb, config, cfg)
-	defer func() {
-		ite := vmenv.Interpreter()
-		vm.EVMInterpreterPool.Put(ite)
-		vm.EvmPool.Put(vmenv)
-	}()
-	return applyTransaction(msg, config, gp, statedb, header.Number, header.Hash(), tx, usedGas, vmenv, receiptProcessors...)
+}
+
+// Process processes the state changes according to the Ethereum rules by running
+// the transaction messages using the statedb and applying any rewards to both
+// the processor (coinbase) and any included uncles.
+func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (*state.StateDB, types.Receipts, []*types.Log, uint64, error) {
+	var (
+		usedGas     = new(uint64)
+		header      = block.Header()
+		blockHash   = block.Hash()
+		blockNumber = block.Number()
+		allLogs     []*types.Log
+		gp          = new(GasPool).AddGas(block.GasLimit())
+	)
+
+	var receipts = make([]*types.Receipt, 0)
+	// Mutate the block and state according to any hard-fork specs
+	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
+		misc.ApplyDAOHardFork(statedb)
+	}
+	// Handle upgrade build-in system contract code
+	lastBlock := p.bc.GetBlockByHash(block.ParentHash())
+	if lastBlock == nil {
+		return statedb, nil, nil, 0, fmt.Errorf("could not get parent block")
+	}
+	systemcontracts.UpgradeBuildInSystemContract(p.config, blockNumber, lastBlock.Time(), block.Time(), statedb)
+
+	var (
+		context = NewEVMBlockContext(header, p.bc, nil)
+		vmenv   = vm.NewEVM(context, vm.TxContext{}, statedb, p.config, cfg)
+		signer  = types.MakeSigner(p.config, header.Number, header.Time)
+		txNum   = len(block.Transactions())
+	)
+	// Iterate over and process the individual transactions
+	posa, isPoSA := p.engine.(consensus.PoSA)
+	commonTxs := make([]*types.Transaction, 0, txNum)
+
+	// initialise bloom processors
+	bloomProcessors := NewAsyncReceiptBloomGenerator(txNum)
+	statedb.MarkFullProcessed()
+
+	// Usually two transactions: one for validator set contract, one for system reward contract.
+	systemTxs := make([]*types.Transaction, 0, 2)
+
+	for i, tx := range block.Transactions() {
+		if isPoSA {
+			if isSystemTx, err := posa.IsSystemTransaction(tx, block.Header()); err != nil {
+				bloomProcessors.Close()
+				return statedb, nil, nil, 0, err
+			} else if isSystemTx {
+				systemTxs = append(systemTxs, tx)
+				continue
+			}
+		}
+
+		msg, err := TransactionToMessage(tx, signer, header.BaseFee)
+		if err != nil {
+			bloomProcessors.Close()
+			return statedb, nil, nil, 0, err
+		}
+		statedb.SetTxContext(tx.Hash(), i)
+
+		receipt, err := applyTransaction(msg, p.config, gp, statedb, blockNumber, blockHash, tx, usedGas, vmenv, bloomProcessors)
+		if err != nil {
+			bloomProcessors.Close()
+			return statedb, nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+		}
+
+		// Apply the burn mechanism here for each transaction
+		p.applyFeeBurn(statedb, header, *usedGas, tx)
+
+		commonTxs = append(commonTxs, tx)
+		receipts = append(receipts, receipt)
+	}
+	bloomProcessors.Close()
+
+	// Fail if Shanghai is not enabled and there are withdrawals
+	withdrawals := block.Withdrawals()
+	if len(withdrawals) > 0 && !p.config.IsShanghai(block.Number(), block.Time()) {
+		return nil, nil, nil, 0, errors.New("withdrawals before shanghai")
+	}
+
+	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
+	err := p.engine.Finalize(p.bc, header, statedb, &commonTxs, block.Uncles(), withdrawals, &receipts, &systemTxs, usedGas)
+	if err != nil {
+		return statedb, receipts, allLogs, *usedGas, err
+	}
+	for _, receipt := range receipts {
+		allLogs = append(allLogs, receipt.Logs...)
+	}
+
+	return statedb, receipts, allLogs, *usedGas, nil
 }
