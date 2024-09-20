@@ -3,7 +3,8 @@
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Lesser General Public License as published by
-// the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
 //
 // The go-ethereum library is distributed in the hope that it will be useful,
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -41,7 +42,6 @@ var (
 		ChainID:        big.NewInt(1),
 		HomesteadBlock: big.NewInt(1_150_000),
 		EIP150Block:    big.NewInt(2_463_000),
-		BurnFee50Block: big.NewInt(13_000_000), // Block where the burn will be activated (replace with actual block number)
 		Ethash:         new(EthashConfig),
 	}
 
@@ -49,7 +49,7 @@ var (
 	ChilizChainConfig = &ChainConfig{
 		ChainID:        big.NewInt(56),
 		BurnFee50Block: big.NewInt(13_000_000), // Block where the burn will be activated (replace with actual block number)
-		// Other Chiliz V2 config settings...
+		Ethash:         new(EthashConfig),
 	}
 )
 
