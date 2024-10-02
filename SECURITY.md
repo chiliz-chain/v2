@@ -1,22 +1,15 @@
-# Security Policy
+# Security Policy 
 
-## Supported Versions
+## Reporting a Vulnerability 
 
-Please see [Releases](https://github.com/bnb-chain/bsc/releases). We recommend using the [most recently released version](https://github.com/bnb-chain/bsc/releases/latest).
+We take the security of our project seriously. If you discover a vulnerability, please do **not** open a public issue. Instead, report it to us confidentially via email. 
 
-## Audit reports
+**Email:** [security@chiliz.com](mailto:security@chiliz.com) 
 
-Audit reports are published in the `docs` folder: https://github.com/bnb-chain/bsc/tree/master/docs/audits
+Please include the following in your report: 
 
-| Scope  | Date     | Report Link                                                                                              |
-| ------ | -------- | -------------------------------------------------------------------------------------------------------- |
-| `geth` | 20170425 | [pdf](https://github.com/ethereum/go-ethereum/blob/master/docs/audits/2017-04-25_Geth-audit_Truesec.pdf) |
-| `clef` | 20180914 | [pdf](https://github.com/ethereum/go-ethereum/blob/master/docs/audits/2018-09-14_Clef-audit_NCC.pdf)     |
+- **Description of the vulnerability** 
+- **Steps to reproduce the issue** 
+- **Potential impact** 
 
-## Reporting a Vulnerability
-
-**Please do not file a public ticket** mentioning the vulnerability.
-
-To find out how to disclose a vulnerability in Ethereum visit [https://bugcrowd.com/binance](https://bugcrowd.com/binance) or email bounty@ethereum.org. Please read the [disclosure page](https://github.com/bnb-chain/bsc/security/advisories) for more information about publicly disclosed security vulnerabilities.
-
-Use the built-in `geth version-check` feature to check whether the software is affected by any known vulnerability. This command will fetch the latest [`vulnerabilities.json`](https://geth.ethereum.org/docs/vulnerabilities/vulnerabilities.json) file which contains known security vulnerabilities concerning `geth`, and cross-check the data against its own version number.
+We will acknowledge your report within **1 business day** and work with you to promptly understand and resolve the issue. Thank you for helping us maintain the security of our project.
