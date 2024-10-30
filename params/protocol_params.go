@@ -29,19 +29,19 @@ const (
 	GenesisGasLimit      uint64 = 4712388            // Gas limit of the Genesis block.
 	PayBidTxGasLimit     uint64 = 25000              // Gas limit of the PayBidTx in the types.BidArgs.
 
-	MaximumExtraDataSize  uint64 = 32       // Maximum size extra data may be after Genesis.
-	ForkIDSize            uint64 = 4        // The length of fork id
-	ExpByteGas            uint64 = 10       // Times ceil(log256(exponent)) for the EXP instruction.
-	SloadGas              uint64 = 50       // Multiplied by the number of 32-byte words that are copied (round up) for any *COPY operation and added.
-	CallValueTransferGas  uint64 = 9000     // Paid for CALL when the value transfer is non-zero.
-	CallNewAccountGas     uint64 = 25000    // Paid for CALL when the destination address didn't exist prior.
-	TxGas                 uint64 = 21000    // Per transaction not creating a contract. NOTE: Not payable on data of calls between transactions.
-	SystemTxsGas          uint64 = 20000000 // The gas reserved for system txs; only for parlia consensus
-	TxGasContractCreation uint64 = 53000    // Per transaction that creates a contract. NOTE: Not payable on data of calls between transactions.
-	TxDataZeroGas         uint64 = 4        // Per byte of data attached to a transaction that equals zero. NOTE: Not payable on data of calls between transactions.
-	QuadCoeffDiv          uint64 = 512      // Divisor for the quadratic particle of the memory cost equation.
-	LogDataGas            uint64 = 8        // Per byte in a LOG* operation's data.
-	CallStipend           uint64 = 2300     // Free gas given at beginning of call.
+	MaximumExtraDataSize  uint64 = 32      // Maximum size extra data may be after Genesis.
+	ForkIDSize            uint64 = 4       // The length of fork id
+	ExpByteGas            uint64 = 10      // Times ceil(log256(exponent)) for the EXP instruction.
+	SloadGas              uint64 = 50      // Multiplied by the number of 32-byte words that are copied (round up) for any *COPY operation and added.
+	CallValueTransferGas  uint64 = 9000    // Paid for CALL when the value transfer is non-zero.
+	CallNewAccountGas     uint64 = 25000   // Paid for CALL when the destination address didn't exist prior.
+	TxGas                 uint64 = 21000   // Per transaction not creating a contract. NOTE: Not payable on data of calls between transactions.
+	SystemTxsGas          uint64 = 5000000 // The gas reserved for system txs; only for parlia consensus
+	TxGasContractCreation uint64 = 53000   // Per transaction that creates a contract. NOTE: Not payable on data of calls between transactions.
+	TxDataZeroGas         uint64 = 4       // Per byte of data attached to a transaction that equals zero. NOTE: Not payable on data of calls between transactions.
+	QuadCoeffDiv          uint64 = 512     // Divisor for the quadratic particle of the memory cost equation.
+	LogDataGas            uint64 = 8       // Per byte in a LOG* operation's data.
+	CallStipend           uint64 = 2300    // Free gas given at beginning of call.
 
 	Keccak256Gas     uint64 = 30 // Once per KECCAK256 operation.
 	Keccak256WordGas uint64 = 6  // Once per word of the KECCAK256 operation's data.
@@ -130,7 +130,6 @@ const (
 	DefaultBaseFeeChangeDenominator = 8             // Bounds the amount the base fee can change between blocks.
 	DefaultElasticityMultiplier     = 2             // Bounds the maximum gas limit an EIP-1559 block may have.
 	InitialBaseFee                  = 2500000000000 // Initial base fee for EIP-1559 blocks.
-	InitialBaseFeeForBSC            = 0             // Initial base fee for BSC
 
 	MaxCodeSize     = 24576           // Maximum bytecode to permit for a contract
 	MaxInitCodeSize = 2 * MaxCodeSize // Maximum initcode to permit in a creation transaction and create instructions

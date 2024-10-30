@@ -1243,12 +1243,17 @@ func setNodeUserIdent(ctx *cli.Context, cfg *node.Config) {
 // 4. default to mainnet nodes
 func setBootstrapNodes(ctx *cli.Context, cfg *p2p.Config) {
 	urls := params.MainnetBootnodes
-	if ctx.IsSet(BootnodesFlag.Name) {
+	switch {
+	case ctx.IsSet(BootnodesFlag.Name):
 		urls = SplitAndTrim(ctx.String(BootnodesFlag.Name))
-	} else {
-		if cfg.BootstrapNodes != nil {
-			return // Already set by config file, don't apply defaults.
-		}
+	case ctx.Bool(ChilizMainnetFlag.Name):
+		urls = params.ChilizMainnetBootnodes
+	case ctx.Bool(ChilizTestnetFlag.Name):
+		urls = params.ChilizScovilleBootnodes
+	case ctx.Bool(ChilizSpicyFlag.Name):
+		urls = params.ChilizSpicyBootnodes
+	case cfg.BootstrapNodes != nil:
+		return // already set, don't apply defaults.
 	}
 	cfg.BootstrapNodes = mustParseBootnodes(urls)
 }

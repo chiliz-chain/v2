@@ -271,7 +271,7 @@ var genesis = &core.Genesis{
 	Alloc:     types.GenesisAlloc{testAddr: {Balance: testBalance}},
 	ExtraData: []byte("test genesis"),
 	Timestamp: 9000,
-	BaseFee:   big.NewInt(params.InitialBaseFeeForBSC),
+	BaseFee:   big.NewInt(0),
 }
 
 var testTx1 = types.MustSignNewTx(testKey, types.LatestSigner(genesis.Config), &types.LegacyTx{
@@ -673,8 +673,8 @@ func testStatusFunctions(t *testing.T, client *rpc.Client) {
 			},
 		},
 		BaseFee: []*big.Int{
-			big.NewInt(params.InitialBaseFeeForBSC),
-			big.NewInt(params.InitialBaseFeeForBSC),
+			big.NewInt(0),
+			big.NewInt(0),
 		},
 		GasUsedRatio: []float64{0.008912678667376286},
 	}

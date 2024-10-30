@@ -1983,15 +1983,15 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 
 	doDistributeSysReward := !isDragon8 && state.GetBalance(common.HexToAddress(systemcontracts.SystemRewardContract)).Cmp(maxSystemBalance) < 0
 	if doDistributeSysReward {
-		rewards := new(uint256.Int)
-		rewards = rewards.Rsh(balance, systemRewardPercent)
-		if rewards.Cmp(common.U2560) > 0 {
-			err := p.distributeToSystem(rewards.ToBig(), state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
+		rewards := new(big.Int)
+		rewards = rewards.Div(balance.ToBig(), big.NewInt(systemRewardPercent))
+		if rewards.Cmp(common.Big0) > 0 {
+			err := p.distributeToSystem(rewards, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 			if err != nil {
 				return err
 			}
 			log.Trace("distribute to system reward pool", "block hash", header.Hash(), "amount", rewards)
-			balance = balance.Sub(balance, rewards)
+			balance = balance.Sub(balance, uint256.MustFromBig(rewards))
 		}
 	}
 	log.Trace("distribute to validator contract", "block hash", header.Hash(), "amount", balance)
