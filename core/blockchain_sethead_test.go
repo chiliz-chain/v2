@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/ethdb"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -34,9 +36,9 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/trie"
-	"github.com/ethereum/go-ethereum/trie/triedb/hashdb"
-	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
+	"github.com/ethereum/go-ethereum/triedb"
+	"github.com/ethereum/go-ethereum/triedb/hashdb"
+	"github.com/ethereum/go-ethereum/triedb/pathdb"
 )
 
 // rewindTest is a test case for chain rollback upon user request.
@@ -1971,6 +1973,7 @@ func testSetHeadWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme 
 	db, err := rawdb.Open(rawdb.OpenOptions{
 		Directory:         datadir,
 		AncientsDirectory: ancient,
+		Ephemeral:         true,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create persistent database: %v", err)
@@ -1997,6 +2000,13 @@ func testSetHeadWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme 
 		config.SnapshotWait = true
 	}
 	config.TriesInMemory = 128
+
+	if err = db.SetupFreezerEnv(&ethdb.FreezerEnv{
+		ChainCfg:         gspec.Config,
+		BlobExtraReserve: params.DefaultExtraReserveForBlobRequests,
+	}); err != nil {
+		t.Fatalf("Failed to create chain: %v", err)
+	}
 	chain, err := NewBlockChain(db, config, gspec, nil, engine, vm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
@@ -2033,13 +2043,13 @@ func testSetHeadWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme 
 	}
 	// Reopen the trie database without persisting in-memory dirty nodes.
 	chain.triedb.Close()
-	dbconfig := &trie.Config{}
+	dbconfig := &triedb.Config{}
 	if scheme == rawdb.PathScheme {
 		dbconfig.PathDB = pathdb.Defaults
 	} else {
 		dbconfig.HashDB = hashdb.Defaults
 	}
-	chain.triedb = trie.NewDatabase(chain.db, dbconfig)
+	chain.triedb = triedb.NewDatabase(chain.db, dbconfig)
 	chain.stateCache = state.NewDatabaseWithNodeDB(chain.db, chain.triedb)
 
 	// Force run a freeze cycle

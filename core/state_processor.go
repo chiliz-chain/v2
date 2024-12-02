@@ -73,12 +73,15 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(statedb)
 	}
-	// Handle upgrade build-in system contract code
+
 	lastBlock := p.bc.GetBlockByHash(block.ParentHash())
 	if lastBlock == nil {
-		return statedb, nil, nil, 0, fmt.Errorf("could not get parent block")
+		return statedb, nil, nil, 0, errors.New("could not get parent block")
 	}
-	systemcontracts.UpgradeBuildInSystemContract(p.config, blockNumber, lastBlock.Time(), block.Time(), statedb)
+	if !p.config.IsFeynman(block.Number(), block.Time()) {
+		// Handle upgrade build-in system contract code
+		systemcontracts.UpgradeBuildInSystemContract(p.config, blockNumber, lastBlock.Time(), block.Time(), statedb)
+	}
 
 	var (
 		context = NewEVMBlockContext(header, p.bc, nil)
@@ -86,6 +89,9 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		signer  = types.MakeSigner(p.config, header.Number, header.Time)
 		txNum   = len(block.Transactions())
 	)
+	if beaconRoot := block.BeaconRoot(); beaconRoot != nil {
+		ProcessBeaconBlockRoot(*beaconRoot, vmenv, statedb)
+	}
 	// Iterate over and process the individual transactions
 	posa, isPoSA := p.engine.(consensus.PoSA)
 	commonTxs := make([]*types.Transaction, 0, txNum)
@@ -105,6 +111,12 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 			} else if isSystemTx {
 				systemTxs = append(systemTxs, tx)
 				continue
+			}
+		}
+		if p.config.IsCancun(block.Number(), block.Time()) {
+			if len(systemTxs) > 0 {
+				// systemTxs should be always at the end of block.
+				return statedb, nil, nil, 0, fmt.Errorf("normal tx %d [%v] after systemTx", i, tx.Hash().Hex())
 			}
 		}
 
@@ -174,6 +186,11 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 	receipt.TxHash = tx.Hash()
 	receipt.GasUsed = result.UsedGas
 
+	if tx.Type() == types.BlobTxType {
+		receipt.BlobGasUsed = uint64(len(tx.BlobHashes()) * params.BlobTxBlobGasPerBlob)
+		receipt.BlobGasPrice = evm.Context.BlobBaseFee
+	}
+
 	// If the transaction created a contract, store the creation address in the receipt.
 	if msg.To == nil {
 		receipt.ContractAddress = crypto.CreateAddress(evm.TxContext.Origin, tx.Nonce())
@@ -201,11 +218,39 @@ func ApplyTransaction(config *params.ChainConfig, bc ChainContext, author *commo
 	}
 	// Create a new context to be used in the EVM environment
 	blockContext := NewEVMBlockContext(header, bc, author)
-	vmenv := vm.NewEVM(blockContext, vm.TxContext{BlobHashes: tx.BlobHashes()}, statedb, config, cfg)
+	txContext := NewEVMTxContext(msg)
+	vmenv := vm.NewEVM(blockContext, txContext, statedb, config, cfg)
 	defer func() {
 		ite := vmenv.Interpreter()
 		vm.EVMInterpreterPool.Put(ite)
 		vm.EvmPool.Put(vmenv)
 	}()
 	return applyTransaction(msg, config, gp, statedb, header.Number, header.Hash(), tx, usedGas, vmenv, receiptProcessors...)
+}
+
+// ProcessBeaconBlockRoot applies the EIP-4788 system call to the beacon block root
+// contract. This method is exported to be used in tests.
+func ProcessBeaconBlockRoot(beaconRoot common.Hash, vmenv *vm.EVM, statedb *state.StateDB) {
+	// Return immediately if beaconRoot equals the zero hash when using the Parlia engine.
+	if beaconRoot == (common.Hash{}) {
+		if chainConfig := vmenv.ChainConfig(); chainConfig != nil && chainConfig.Parlia != nil {
+			return
+		}
+	}
+
+	// If EIP-4788 is enabled, we need to invoke the beaconroot storage contract with
+	// the new root
+	msg := &Message{
+		From:      params.SystemAddress,
+		GasLimit:  30_000_000,
+		GasPrice:  common.Big0,
+		GasFeeCap: common.Big0,
+		GasTipCap: common.Big0,
+		To:        &params.BeaconRootsAddress,
+		Data:      beaconRoot[:],
+	}
+	vmenv.Reset(NewEVMTxContext(msg), statedb)
+	statedb.AddAddressToAccessList(params.BeaconRootsAddress)
+	_, _, _ = vmenv.Call(vm.AccountRef(msg.From), *msg.To, msg.Data, 30_000_000, common.U2560)
+	statedb.Finalise(true)
 }

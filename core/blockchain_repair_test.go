@@ -26,6 +26,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ethereum/go-ethereum/ethdb"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -1767,6 +1769,7 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 	db, err := rawdb.Open(rawdb.OpenOptions{
 		Directory:         datadir,
 		AncientsDirectory: ancient,
+		Ephemeral:         true,
 	})
 	if err != nil {
 		t.Fatalf("Failed to create persistent database: %v", err)
@@ -1794,6 +1797,13 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 		config.SnapshotWait = true
 	}
 	config.TriesInMemory = 128
+
+	if err = db.SetupFreezerEnv(&ethdb.FreezerEnv{
+		ChainCfg:         gspec.Config,
+		BlobExtraReserve: params.DefaultExtraReserveForBlobRequests,
+	}); err != nil {
+		t.Fatalf("Failed to create chain: %v", err)
+	}
 	chain, err := NewBlockChain(db, config, gspec, nil, engine, vm.Config{}, nil, nil)
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
@@ -1849,6 +1859,7 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 	db, err = rawdb.Open(rawdb.OpenOptions{
 		Directory:         datadir,
 		AncientsDirectory: ancient,
+		Ephemeral:         true,
 	})
 	if err != nil {
 		t.Fatalf("Failed to reopen persistent database: %v", err)
@@ -1970,6 +1981,7 @@ func testIssue23496(t *testing.T, scheme string) {
 	db, err = rawdb.Open(rawdb.OpenOptions{
 		Directory:         datadir,
 		AncientsDirectory: ancient,
+		Ephemeral:         true,
 	})
 	if err != nil {
 		t.Fatalf("Failed to reopen persistent database: %v", err)

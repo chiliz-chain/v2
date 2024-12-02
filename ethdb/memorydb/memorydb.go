@@ -39,6 +39,9 @@ var (
 	// errSnapshotReleased is returned if callers want to retrieve data from a
 	// released snapshot.
 	errSnapshotReleased = errors.New("snapshot released")
+
+	// errNotSupported is returned if the database doesn't support the required operation.
+	errNotSupported = errors.New("this operation is not supported")
 )
 
 // Database is an ephemeral key-value store. Apart from basic data storage
@@ -47,6 +50,84 @@ var (
 type Database struct {
 	db   map[string][]byte
 	lock sync.RWMutex
+
+	stateStore ethdb.Database
+	blockStore ethdb.Database
+}
+
+func (db *Database) ModifyAncients(f func(ethdb.AncientWriteOp) error) (int64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) TruncateHead(n uint64) (uint64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) TruncateTail(n uint64) (uint64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) Sync() error {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) TruncateTableTail(kind string, tail uint64) (uint64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) ResetTable(kind string, startAt uint64, onlyEmpty bool) error {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) HasAncient(kind string, number uint64) (bool, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) Ancient(kind string, number uint64) ([]byte, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) AncientRange(kind string, start, count, maxBytes uint64) ([][]byte, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) Ancients() (uint64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) Tail() (uint64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) AncientSize(kind string) (uint64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) ItemAmountInAncient() (uint64, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) AncientOffSet() uint64 {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (db *Database) ReadAncients(fn func(ethdb.AncientReaderOp) error) (err error) {
+	//TODO implement me
+	panic("implement me")
 }
 
 // New returns a wrapped map with all the required database interface methods
@@ -204,10 +285,41 @@ func (db *Database) Len() int {
 	return len(db.db)
 }
 
+func (db *Database) StateStoreReader() ethdb.Reader {
+	if db.stateStore == nil {
+		return db
+	}
+	return db.stateStore
+}
+
+func (db *Database) BlockStoreReader() ethdb.Reader {
+	if db.blockStore == nil {
+		return db
+	}
+	return db.blockStore
+}
+
+func (db *Database) BlockStoreWriter() ethdb.Writer {
+	if db.blockStore == nil {
+		return db
+	}
+	return db.blockStore
+}
+
+// convertLegacyFn takes a raw freezer entry in an older format and
+// returns it in the new format.
+type convertLegacyFn = func([]byte) ([]byte, error)
+
+// MigrateTable processes the entries in a given table in sequence
+// converting them to a new format if they're of an old format.
+func (db *Database) MigrateTable(kind string, convert convertLegacyFn) error {
+	return errNotSupported
+}
+
 // keyvalue is a key-value tuple tagged with a deletion field to allow creating
 // memory-database write batches.
 type keyvalue struct {
-	key    []byte
+	key    string
 	value  []byte
 	delete bool
 }
@@ -222,14 +334,14 @@ type batch struct {
 
 // Put inserts the given value into the batch for later committing.
 func (b *batch) Put(key, value []byte) error {
-	b.writes = append(b.writes, keyvalue{common.CopyBytes(key), common.CopyBytes(value), false})
+	b.writes = append(b.writes, keyvalue{string(key), common.CopyBytes(value), false})
 	b.size += len(key) + len(value)
 	return nil
 }
 
 // Delete inserts the a key removal into the batch for later committing.
 func (b *batch) Delete(key []byte) error {
-	b.writes = append(b.writes, keyvalue{common.CopyBytes(key), nil, true})
+	b.writes = append(b.writes, keyvalue{string(key), nil, true})
 	b.size += len(key)
 	return nil
 }
@@ -249,10 +361,10 @@ func (b *batch) Write() error {
 	}
 	for _, keyvalue := range b.writes {
 		if keyvalue.delete {
-			delete(b.db.db, string(keyvalue.key))
+			delete(b.db.db, keyvalue.key)
 			continue
 		}
-		b.db.db[string(keyvalue.key)] = keyvalue.value
+		b.db.db[keyvalue.key] = keyvalue.value
 	}
 	return nil
 }
@@ -267,12 +379,12 @@ func (b *batch) Reset() {
 func (b *batch) Replay(w ethdb.KeyValueWriter) error {
 	for _, keyvalue := range b.writes {
 		if keyvalue.delete {
-			if err := w.Delete(keyvalue.key); err != nil {
+			if err := w.Delete([]byte(keyvalue.key)); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := w.Put(keyvalue.key, keyvalue.value); err != nil {
+		if err := w.Put([]byte(keyvalue.key), keyvalue.value); err != nil {
 			return err
 		}
 	}

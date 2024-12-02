@@ -28,11 +28,14 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/systemcontracts"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/triedb"
+	"github.com/holiman/uint256"
 )
 
 // noopReleaser is returned in case there is no operation expected
@@ -43,7 +46,7 @@ func (eth *Ethereum) hashState(ctx context.Context, block *types.Block, reexec u
 	var (
 		current  *types.Block
 		database state.Database
-		triedb   *trie.Database
+		tdb      *triedb.Database
 		report   = true
 		origin   = block.NumberU64()
 	)
@@ -69,14 +72,14 @@ func (eth *Ethereum) hashState(ctx context.Context, block *types.Block, reexec u
 			// the internal junks created by tracing will be persisted into the disk.
 			// TODO(rjl493456442), clean cache is disabled to prevent memory leak,
 			// please re-enable it for better performance.
-			database = state.NewDatabaseWithConfig(eth.chainDb, trie.HashDefaults)
+			database = state.NewDatabaseWithConfig(eth.chainDb, triedb.HashDefaults)
 			if statedb, err = state.New(block.Root(), database, nil); err == nil {
 				log.Info("Found disk backend for state trie", "root", block.Root(), "number", block.Number())
 				return statedb, noopReleaser, nil
 			}
 		}
 		// The optional base statedb is given, mark the start point as parent block
-		statedb, database, triedb, report = base, base.Database(), base.Database().TrieDB(), false
+		statedb, database, tdb, report = base, base.Database(), base.Database().TrieDB(), false
 		current = eth.blockchain.GetBlock(block.ParentHash(), block.NumberU64()-1)
 		if current == nil {
 			return nil, nil, fmt.Errorf("missing parent block %v %d", block.ParentHash(), block.NumberU64()-1)
@@ -89,8 +92,8 @@ func (eth *Ethereum) hashState(ctx context.Context, block *types.Block, reexec u
 		// the internal junks created by tracing will be persisted into the disk.
 		// TODO(rjl493456442), clean cache is disabled to prevent memory leak,
 		// please re-enable it for better performance.
-		triedb = trie.NewDatabase(eth.chainDb, trie.HashDefaults)
-		database = state.NewDatabaseWithNodeDB(eth.chainDb, triedb)
+		tdb = triedb.NewDatabase(eth.chainDb, triedb.HashDefaults)
+		database = state.NewDatabaseWithNodeDB(eth.chainDb, tdb)
 
 		// If we didn't check the live database, do check state over ephemeral database,
 		// otherwise we would rewind past a persisted block (specific corner case is
@@ -168,17 +171,17 @@ func (eth *Ethereum) hashState(ctx context.Context, block *types.Block, reexec u
 		}
 		// Hold the state reference and also drop the parent state
 		// to prevent accumulating too many nodes in memory.
-		triedb.Reference(root, common.Hash{})
+		tdb.Reference(root, common.Hash{})
 		if parent != (common.Hash{}) {
-			triedb.Dereference(parent)
+			tdb.Dereference(parent)
 		}
 		parent = root
 	}
 	if report {
-		diff, nodes, immutablenodes, imgs := triedb.Size()
+		diff, nodes, immutablenodes, imgs := tdb.Size() // all memory is contained within the nodes return in hashdb
 		log.Info("Historical state regenerated", "block", current.NumberU64(), "elapsed", time.Since(start), "layer", diff, "nodes", nodes, "immutablenodes", immutablenodes, "preimages", imgs)
 	}
-	return statedb, func() { triedb.Dereference(block.Root()) }, nil
+	return statedb, func() { tdb.Dereference(block.Root()) }, nil
 }
 
 func (eth *Ethereum) pathState(block *types.Block) (*state.StateDB, func(), error) {
@@ -239,12 +242,37 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 	if err != nil {
 		return nil, vm.BlockContext{}, nil, nil, err
 	}
+	// upgrade build-in system contract before normal txs if Feynman is not enabled
+	if !eth.blockchain.Config().IsFeynman(block.Number(), block.Time()) {
+		systemcontracts.UpgradeBuildInSystemContract(eth.blockchain.Config(), block.Number(), parent.Time(), block.Time(), statedb)
+	}
 	if txIndex == 0 && len(block.Transactions()) == 0 {
 		return nil, vm.BlockContext{}, statedb, release, nil
 	}
 	// Recompute transactions up to the target index.
-	signer := types.MakeSigner(eth.blockchain.Config(), block.Number(), block.Time())
+	var (
+		signer         = types.MakeSigner(eth.blockchain.Config(), block.Number(), block.Time())
+		beforeSystemTx = true
+	)
 	for idx, tx := range block.Transactions() {
+		// upgrade build-in system contract before system txs if Feynman is enabled
+		if beforeSystemTx {
+			if posa, ok := eth.Engine().(consensus.PoSA); ok {
+				if isSystem, _ := posa.IsSystemTransaction(tx, block.Header()); isSystem {
+					balance := statedb.GetBalance(consensus.SystemAddress)
+					if balance.Cmp(common.U2560) > 0 {
+						statedb.SetBalance(consensus.SystemAddress, uint256.NewInt(0))
+						statedb.AddBalance(block.Header().Coinbase, balance)
+					}
+
+					if eth.blockchain.Config().IsFeynman(block.Number(), block.Time()) {
+						systemcontracts.UpgradeBuildInSystemContract(eth.blockchain.Config(), block.Number(), parent.Time(), block.Time(), statedb)
+					}
+					beforeSystemTx = false
+				}
+			}
+		}
+
 		// Assemble the transaction call message and return if the requested offset
 		msg, _ := core.TransactionToMessage(tx, signer, block.BaseFee())
 		txContext := core.NewEVMTxContext(msg)
@@ -257,12 +285,12 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 		if posa, ok := eth.Engine().(consensus.PoSA); ok && msg.From == context.Coinbase &&
 			posa.IsSystemContract(msg.To) && msg.GasPrice.Cmp(big.NewInt(0)) == 0 {
 			balance := statedb.GetBalance(consensus.SystemAddress)
-			if balance.Cmp(common.Big0) > 0 {
-				statedb.SetBalance(consensus.SystemAddress, big.NewInt(0))
+			if balance.Cmp(common.U2560) > 0 {
+				statedb.SetBalance(consensus.SystemAddress, uint256.MustFromBig(big.NewInt(0)))
 				statedb.AddBalance(context.Coinbase, balance)
 			}
 			if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) {
-				statedb.AddBalance(context.Coinbase, tx.Value())
+				statedb.AddBalance(context.Coinbase, uint256.MustFromBig(tx.Value()))
 			}
 		}
 		statedb.SetTxContext(tx.Hash(), idx)

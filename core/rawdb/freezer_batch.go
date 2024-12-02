@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"sync/atomic"
 
+	"golang.org/x/exp/slices"
+
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/golang/snappy"
@@ -65,6 +67,10 @@ func (batch *freezerBatch) commit() (item uint64, writeSize int64, err error) {
 	// Check that count agrees on all batches.
 	item = uint64(math.MaxUint64)
 	for name, tb := range batch.tables {
+		// skip empty addition tables
+		if slices.Contains(additionTables, name) && EmptyTable(tb.t) {
+			continue
+		}
 		if item < math.MaxUint64 && tb.curItem != item {
 			return 0, 0, fmt.Errorf("table %s is at item %d, want %d", name, tb.curItem, item)
 		}
@@ -188,17 +194,25 @@ func (batch *freezerTableBatch) maybeCommit() error {
 
 // commit writes the batched items to the backing freezerTable.
 func (batch *freezerTableBatch) commit() error {
-	// Write data.
+	// Write data. The head file is fsync'd after write to ensure the
+	// data is truly transferred to disk.
 	_, err := batch.t.head.Write(batch.dataBuffer)
 	if err != nil {
+		return err
+	}
+	if err := batch.t.head.Sync(); err != nil {
 		return err
 	}
 	dataSize := int64(len(batch.dataBuffer))
 	batch.dataBuffer = batch.dataBuffer[:0]
 
-	// Write indices.
+	// Write indices. The index file is fsync'd after write to ensure the
+	// data indexes are truly transferred to disk.
 	_, err = batch.t.index.Write(batch.indexBuffer)
 	if err != nil {
+		return err
+	}
+	if err := batch.t.index.Sync(); err != nil {
 		return err
 	}
 	indexSize := int64(len(batch.indexBuffer))
