@@ -37,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/pruner"
 	"github.com/ethereum/go-ethereum/core/txpool"
+	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -63,7 +64,13 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
-	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
+	"github.com/ethereum/go-ethereum/triedb/pathdb"
+)
+
+const (
+	ChainDBNamespace = "eth/db/chaindata/"
+	JournalFileName  = "trie.journal"
+	ChainData        = "chaindata"
 )
 
 // Config contains the configuration options of the ETH protocol.
@@ -132,8 +139,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 
 	// Assemble the Ethereum object
-	chainDb, err := stack.OpenAndMergeDatabase("chaindata", config.DatabaseCache, config.DatabaseHandles,
-		config.DatabaseFreezer, config.DatabaseDiff, "eth/db/chaindata/", false, config.PersistDiff, config.PruneAncientData)
+	chainDb, err := stack.OpenAndMergeDatabase(ChainData, ChainDBNamespace, false, config)
 	if err != nil {
 		return nil, err
 	}
@@ -155,12 +161,18 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	// Optimize memory distribution by reallocating surplus allowance from the
 	// dirty cache to the clean cache.
 	if config.StateScheme == rawdb.PathScheme && config.TrieDirtyCache > pathdb.MaxDirtyBufferSize/1024/1024 {
-		log.Info("Capped dirty cache size", "provided", common.StorageSize(config.TrieDirtyCache)*1024*1024, "adjusted", common.StorageSize(pathdb.MaxDirtyBufferSize))
-		log.Info("Clean cache size", "provided", common.StorageSize(config.TrieCleanCache)*1024*1024)
+		log.Info("Capped dirty cache size", "provided", common.StorageSize(config.TrieDirtyCache)*1024*1024,
+			"adjusted", common.StorageSize(pathdb.MaxDirtyBufferSize))
+		log.Info("Clean cache size", "provided", common.StorageSize(config.TrieCleanCache)*1024*1024,
+			"adjusted", common.StorageSize(config.TrieCleanCache+config.TrieDirtyCache-pathdb.MaxDirtyBufferSize/1024/1024)*1024*1024)
+		config.TrieCleanCache += config.TrieDirtyCache - pathdb.MaxDirtyBufferSize/1024/1024
 		config.TrieDirtyCache = pathdb.MaxDirtyBufferSize / 1024 / 1024
 	}
-	log.Info("Allocated trie memory caches", "clean", common.StorageSize(config.TrieCleanCache)*1024*1024, "dirty", common.StorageSize(config.TrieDirtyCache)*1024*1024)
-
+	log.Info("Allocated memory caches",
+		"state_scheme", config.StateScheme,
+		"trie_clean_cache", common.StorageSize(config.TrieCleanCache)*1024*1024,
+		"trie_dirty_cache", common.StorageSize(config.TrieDirtyCache)*1024*1024,
+		"snapshot_cache", common.StorageSize(config.SnapshotCache)*1024*1024)
 	// Try to recover offline state pruning only in hash-based.
 	if config.StateScheme == rawdb.HashScheme {
 		if err := pruner.RecoverPruning(stack.ResolvePath(""), chainDb, config.TriesInMemory); err != nil {
@@ -173,23 +185,37 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	// Override the chain config with provided settings.
 	var overrides core.ChainOverrides
-	if config.OverrideShanghai != nil {
-		chainConfig.ShanghaiTime = config.OverrideShanghai
-		overrides.OverrideShanghai = config.OverrideShanghai
+	if config.OverridePassedForkTime != nil {
+		chainConfig.ShanghaiTime = config.OverridePassedForkTime
+		chainConfig.KeplerTime = config.OverridePassedForkTime
+		chainConfig.FeynmanTime = config.OverridePassedForkTime
+		chainConfig.FeynmanFixTime = config.OverridePassedForkTime
+		chainConfig.CancunTime = config.OverridePassedForkTime
+		chainConfig.HaberTime = config.OverridePassedForkTime
+		chainConfig.HaberFixTime = config.OverridePassedForkTime
+		overrides.OverridePassedForkTime = config.OverridePassedForkTime
 	}
-	if config.OverrideKepler != nil {
-		chainConfig.KeplerTime = config.OverrideKepler
-		overrides.OverrideKepler = config.OverrideKepler
-	}
-	if config.OverrideCancun != nil {
-		chainConfig.CancunTime = config.OverrideCancun
-		overrides.OverrideCancun = config.OverrideCancun
+	if config.OverrideBohr != nil {
+		chainConfig.BohrTime = config.OverrideBohr
+		overrides.OverrideBohr = config.OverrideBohr
 	}
 	if config.OverrideVerkle != nil {
 		chainConfig.VerkleTime = config.OverrideVerkle
 		overrides.OverrideVerkle = config.OverrideVerkle
 	}
 
+	// startup ancient freeze
+	if err = chainDb.SetupFreezerEnv(&ethdb.FreezerEnv{
+		ChainCfg:         chainConfig,
+		BlobExtraReserve: config.BlobExtraReserve,
+	}); err != nil {
+		return nil, err
+	}
+
+	networkID := config.NetworkId
+	if networkID == 0 {
+		networkID = chainConfig.ChainID.Uint64()
+	}
 	eth := &Ethereum{
 		config:            config,
 		merger:            consensus.NewMerger(chainDb),
@@ -197,7 +223,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		eventMux:          stack.EventMux(),
 		accountManager:    stack.AccountManager(),
 		closeBloomHandler: make(chan struct{}),
-		networkID:         config.NetworkId,
+		networkID:         networkID,
 		gasPrice:          config.Miner.GasPrice,
 		etherbase:         config.Miner.Etherbase,
 		bloomRequests:     make(chan chan *bloombits.Retrieval),
@@ -221,7 +247,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if bcVersion != nil {
 		dbVer = fmt.Sprintf("%d", *bcVersion)
 	}
-	log.Info("Initialising Ethereum protocol", "network", config.NetworkId, "dbversion", dbVer)
+	log.Info("Initialising Ethereum protocol", "network", networkID, "dbversion", dbVer)
 
 	if !config.SkipBcVersionCheck {
 		if bcVersion != nil && *bcVersion > core.BlockChainVersion {
@@ -233,6 +259,16 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			rawdb.WriteDatabaseVersion(chainDb, core.BlockChainVersion)
 		}
 	}
+	var (
+		journalFilePath string
+		path            string
+	)
+	if stack.CheckIfMultiDataBase() {
+		path = ChainData + "/state"
+	} else {
+		path = ChainData
+	}
+	journalFilePath = stack.ResolvePath(path) + "/" + JournalFileName
 	var (
 		vmConfig = vm.Config{
 			EnablePreimageRecording: config.EnablePreimageRecording,
@@ -250,6 +286,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			StateHistory:        config.StateHistory,
 			StateScheme:         config.StateScheme,
 			PathSyncFlush:       config.PathSyncFlush,
+			JournalFilePath:     journalFilePath,
+			JournalFile:         config.JournalFileEnabled,
 		}
 	)
 	bcOps := make([]core.BlockChainOption, 0)
@@ -274,16 +312,14 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if config.BlobPool.Datadir != "" {
 		config.BlobPool.Datadir = stack.ResolvePath(config.BlobPool.Datadir)
 	}
-	// TODO(Nathan): blob is not ready now, it will cause panic.
-	// blobPool := blobpool.New(config.BlobPool, eth.blockchain)
+	blobPool := blobpool.New(config.BlobPool, eth.blockchain)
 
 	if config.TxPool.Journal != "" {
 		config.TxPool.Journal = stack.ResolvePath(config.TxPool.Journal)
 	}
 	legacyPool := legacypool.New(config.TxPool, eth.blockchain)
 
-	// TODO(Nathan): eth.txPool, err = txpool.New(new(big.Int).SetUint64(config.TxPool.PriceLimit), eth.blockchain, []txpool.SubPool{legacyPool, blobPool})
-	eth.txPool, err = txpool.New(new(big.Int).SetUint64(config.TxPool.PriceLimit), eth.blockchain, []txpool.SubPool{legacyPool})
+	eth.txPool, err = txpool.New(config.TxPool.PriceLimit, eth.blockchain, []txpool.SubPool{legacyPool, blobPool})
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +330,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		Chain:                  eth.blockchain,
 		TxPool:                 eth.txPool,
 		Merger:                 eth.merger,
-		Network:                config.NetworkId,
+		Network:                networkID,
 		Sync:                   config.SyncMode,
 		BloomCache:             uint64(cacheLimit),
 		EventMux:               eth.eventMux,
@@ -320,7 +356,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 				parlia.VotePool = votePool
 			}
 		} else {
-			return nil, fmt.Errorf("Engine is not Parlia type")
+			return nil, errors.New("Engine is not Parlia type")
 		}
 		log.Info("Create votePool successfully")
 		eth.handler.votepool = votePool
@@ -368,7 +404,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 
 	// Start the RPC service
-	eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, config.NetworkId)
+	eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, networkID)
 
 	// Register the backend on the node
 	stack.RegisterAPIs(eth.APIs())
@@ -416,7 +452,7 @@ func (s *Ethereum) APIs() []rpc.API {
 			Service:   NewMinerAPI(s),
 		}, {
 			Namespace: "eth",
-			Service:   downloader.NewDownloaderAPI(s.handler.downloader, s.eventMux),
+			Service:   downloader.NewDownloaderAPI(s.handler.downloader, s.blockchain, s.eventMux),
 		}, {
 			Namespace: "eth",
 			Service:   filters.NewFilterAPI(filters.NewFilterSystem(s.APIBackend, filters.Config{}), s.config.RangeLimit),
@@ -492,7 +528,7 @@ func (s *Ethereum) shouldPreserve(header *types.Header) bool {
 	// r5   A      [X] F G
 	// r6    [X]
 	//
-	// In the round5, the inturn signer E is offline, so the worst case
+	// In the round5, the in-turn signer E is offline, so the worst case
 	// is A, F and G sign the block of round5 and reject the block of opponents
 	// and in the round6, the last available signer B is offline, the whole
 	// network is stuck.
@@ -596,7 +632,7 @@ func (s *Ethereum) Engine() consensus.Engine           { return s.engine }
 func (s *Ethereum) ChainDb() ethdb.Database            { return s.chainDb }
 func (s *Ethereum) IsListening() bool                  { return true } // Always listening
 func (s *Ethereum) Downloader() *downloader.Downloader { return s.handler.downloader }
-func (s *Ethereum) Synced() bool                       { return s.handler.acceptTxs.Load() }
+func (s *Ethereum) Synced() bool                       { return s.handler.synced.Load() }
 func (s *Ethereum) SetSynced()                         { s.handler.enableSyncedFeatures() }
 func (s *Ethereum) ArchiveMode() bool                  { return s.config.NoPruning }
 func (s *Ethereum) BloomIndexer() *core.ChainIndexer   { return s.bloomIndexer }
