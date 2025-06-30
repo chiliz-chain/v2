@@ -518,7 +518,11 @@ type ChainConfig struct {
 	DeployerFactoryBlock   *big.Int `json:"deployerFactoryBlock,omitempty"`
 	Dragon8Time            *uint64  `json:"dragon8Time,omitempty"`
 	Dragon8FixTime         *uint64  `json:"dragon8FixTime,omitempty"`
+<<<<<<< HEAD
 	Pepper8Time            *uint64  `json:"pepper8Time,omitempty"`
+=======
+	FireTime               *uint64  `json:"fireTime,omitempty"`
+>>>>>>> 5ccf3b9a2 (Fix sync issues with validator reward logic fork)
 
 	ShanghaiTime   *uint64 `json:"shanghaiTime,omitempty"`   // Shanghai switch time (nil = no fork, 0 = already on shanghai)
 	KeplerTime     *uint64 `json:"keplerTime,omitempty"`     // Kepler switch time (nil = no fork, 0 = already activated)
@@ -633,6 +637,11 @@ func (c *ChainConfig) String() string {
 		Pepper8Time = big.NewInt(0).SetUint64(*c.Pepper8Time)
 	}
 
+	var FireTime *big.Int
+	if c.FireTime != nil {
+		FireTime = big.NewInt(0).SetUint64(*c.FireTime)
+	}
+
 	var FeynmanTime *big.Int
 	if c.FeynmanTime != nil {
 		FeynmanTime = big.NewInt(0).SetUint64(*c.FeynmanTime)
@@ -663,7 +672,7 @@ func (c *ChainConfig) String() string {
 		BohrTime = big.NewInt(0).SetUint64(*c.BohrTime)
 	}
 
-	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, Dragon8Time: %v, Dragon8FixTime: %v, Pepper8Time: %v, ShanghaiTime: %v, KeplerTime: %v, FeynmanTime: %v, FeynmanFixTime: %v, CancunTime: %v, HaberTime: %v, HaberFixTime: %v, BohrTime: %v, Engine: %v}",
+	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, Dragon8Time: %v, Dragon8FixTime: %v, Pepper8Time: %v, FireTime: %v, ShanghaiTime: %v, KeplerTime: %v, FeynmanTime: %v, FeynmanFixTime: %v, CancunTime: %v, HaberTime: %v, HaberFixTime: %v, BohrTime: %v, Engine: %v}",
 		c.ChainID,
 		c.HomesteadBlock,
 		c.DAOForkBlock,
@@ -698,6 +707,7 @@ func (c *ChainConfig) String() string {
 		Dragon8Time,
 		Dragon8FixTime,
 		Pepper8Time,
+		FireTime,
 		ShanghaiTime,
 		KeplerTime,
 		FeynmanTime,
@@ -723,6 +733,11 @@ func (c *ChainConfig) IsDragon8Fix(time uint64) bool {
 // IsPepper8Time returns whether num is either equal to the Pepper8 fix fork block or greater.
 func (c *ChainConfig) IsPepper8Time(time uint64) bool {
 	return isTimestampForked(c.Pepper8Time, time)
+}
+
+// IsFire returns whether num is either equal to the fire fix fork block or greater.
+func (c *ChainConfig) IsFire(time uint64) bool {
+	return isTimestampForked(c.FireTime, time)
 }
 
 // IsHomestead returns whether num is either equal to the homestead block or greater.
@@ -1424,6 +1439,7 @@ type Rules struct {
 	DeployerFactory                                    bool
 	Dragon8                                            bool
 	Dragon8Fix                                         bool
+	Fire                                               bool
 	IsCayenne                                          bool
 	IsMerge                                            bool
 	IsNano                                             bool
@@ -1480,5 +1496,6 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		DeployerFactory:      isBlockForked(c.DeployerFactoryBlock, num),
 		Dragon8:              c.IsDragon8(timestamp),
 		Dragon8Fix:           c.IsDragon8Fix(timestamp),
+		Fire:                 c.IsFire(timestamp),
 	}
 }

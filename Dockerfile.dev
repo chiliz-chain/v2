@@ -1,0 +1,12 @@
+FROM golang:1.21-alpine as builder
+
+WORKDIR /go-ethereum
+
+ENV CGO_CFLAGS="-O -D__BLST_PORTABLE__" 
+ENV CGO_CFLAGS_ALLOW="-O -D__BLST_PORTABLE__"
+
+RUN apk add --no-cache make cmake gcc musl-dev linux-headers git bash build-base libc-dev libstdc++ ca-certificates curl jq tini
+RUN go install github.com/bokwoon95/wgo@latest
+
+EXPOSE 8545 8546 8547 30303 30303/udp
+ENTRYPOINT ["wgo", "run", "-verbose", "build/ci.go", "install", "-static", "./cmd/geth", "::", "/go-ethereum/build/bin/geth"]
