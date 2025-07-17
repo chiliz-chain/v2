@@ -1454,6 +1454,9 @@ func (s *BlockChainAPI) replay(ctx context.Context, block *types.Block, accounts
 				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) {
 					statedb.AddBalance(block.Header().Coinbase, uint256.MustFromBig(tx.Value()))
 				}
+				if posa.IsPepper8Block(block.Header().Time, parent.Time()) {
+					statedb.AddBalance(block.Header().Coinbase, uint256.MustFromBig(posa.GetPepper8MintAmount()))
+				}
 			}
 		}
 
