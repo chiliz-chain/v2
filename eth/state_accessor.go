@@ -292,6 +292,10 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 			if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) {
 				statedb.AddBalance(context.Coinbase, uint256.MustFromBig(tx.Value()))
 			}
+
+			if posa.IsPepper8Block(block.Time(), parent.Time()) {
+				statedb.AddBalance(context.Coinbase, uint256.MustFromBig(posa.GetPepper8MintAmount()))
+			}
 		}
 		statedb.SetTxContext(tx.Hash(), idx)
 		if _, err := core.ApplyMessage(vmenv, msg, new(core.GasPool).AddGas(tx.Gas())); err != nil {
