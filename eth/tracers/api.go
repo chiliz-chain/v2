@@ -584,6 +584,10 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 					statedb.AddBalance(vmctx.Coinbase, uint256.MustFromBig(tx.Value()))
 				}
 
+				if posa.IsPepper8Block(vmctx.Time, parent.Time()) {
+					statedb.AddBalance(vmctx.Coinbase, uint256.MustFromBig(posa.GetPepper8MintAmount()))
+				}
+
 				if beforeSystemTx && api.backend.ChainConfig().IsFeynman(block.Number(), block.Time()) {
 					systemcontracts.UpgradeBuildInSystemContract(api.backend.ChainConfig(), block.Number(), parent.Time(), block.Time(), statedb)
 					beforeSystemTx = false
@@ -800,6 +804,9 @@ txloop:
 				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) {
 					statedb.AddBalance(block.Header().Coinbase, uint256.MustFromBig(tx.Value()))
 				}
+				if posa.IsPepper8Block(block.Header().Time, parent.Time()) {
+					statedb.AddBalance(block.Header().Coinbase, uint256.MustFromBig(posa.GetPepper8MintAmount()))
+				}
 			}
 		}
 		statedb.SetTxContext(tx.Hash(), i)
@@ -944,6 +951,9 @@ func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block
 				}
 				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) {
 					statedb.AddBalance(vmctx.Coinbase, uint256.MustFromBig(tx.Value()))
+				}
+				if posa.IsPepper8Block(vmctx.Time, parent.Time()) {
+					statedb.AddBalance(vmctx.Coinbase, uint256.MustFromBig(posa.GetPepper8MintAmount()))
 				}
 			}
 		}
@@ -1159,6 +1169,11 @@ func (api *API) traceTx(ctx context.Context, message *core.Message, txctx *Conte
 		}
 		if posa.IsTokenomicsDeposit(message.To, message.Data) {
 			statedb.AddBalance(vmctx.Coinbase, uint256.MustFromBig(message.Value))
+		}
+
+		parent := api.chainContext(ctx).GetHeader(vmctx.GetHash(vmctx.BlockNumber.Uint64()-1), vmctx.BlockNumber.Uint64()-1)
+		if posa.IsPepper8Block(vmctx.Time, parent.Time) {
+			statedb.AddBalance(vmctx.Coinbase, uint256.MustFromBig(posa.GetPepper8MintAmount()))
 		}
 	}
 	if isSystemTx {

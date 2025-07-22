@@ -165,7 +165,7 @@ type SignerFn func(accounts.Account, string, []byte) ([]byte, error)
 type SignerTxFn func(accounts.Account, *types.Transaction, *big.Int) (*types.Transaction, error)
 
 func isToSystemContract(to common.Address) bool {
-	return systemcontract.IsSystemContract(to)
+	return systemcontract.IsSystemContract(to) || to == getPepper8RecipientAddress()
 }
 
 // ecrecover extracts the Ethereum account address from a signed header.
@@ -281,6 +281,9 @@ func New(
 		panic(err)
 	}
 	tABI, err := abi.JSON(strings.NewReader(tokenomicsABI))
+	if err != nil {
+		panic(err)
+	}
 	stABI, err := abi.JSON(strings.NewReader(stakeABI))
 	if err != nil {
 		panic(err)
@@ -1817,12 +1820,16 @@ func getNewSupplyForBlockDragon8Fix(forkTime uint64, currentTime uint64) (*big.I
 		inflationData = [][]*big.Int{
 			{big.NewInt(87961192355797800), cmath.MustParseBig256("8888888888000000000000000000"), cmath.MustParseBig256("74379496319128800000")},
 			{big.NewInt(72043432957447300), cmath.MustParseBig256("9670766153000000000000000000"), cmath.MustParseBig256("66278081527102500000")},
-			{big.NewInt(59646669473269800), cmath.MustParseBig256("10367481346000000000000000000"), cmath.MustParseBig256("58826648890241100000")},
-			{big.NewInt(49992060364241300), cmath.MustParseBig256("10985867079000000000000000000"), cmath.MustParseBig256("52245636433560200000")},
-			{big.NewInt(42473043229881600), cmath.MustParseBig256("11535073210000000000000000000"), cmath.MustParseBig256("46606703110067700000")},
-			{big.NewInt(36617226797714900), cmath.MustParseBig256("12025002873000000000000000000"), cmath.MustParseBig256("41887581567176800000")},
-			{big.NewInt(32056712374821100), cmath.MustParseBig256("12465325130000000000000000000"), cmath.MustParseBig256("38013445810170100000")},
-			{big.NewInt(28504980171063000), cmath.MustParseBig256("12864922473000000000000000000"), cmath.MustParseBig256("34885308217432200000")},
+			// one time inflation of 148600000 CHZ during year 1 + og schedule
+			// new supply after year1 = 10367481346 + 148600000 = 10516081346
+			// year 3 to year 8 have changed
+			{big.NewInt(55304937824698300), cmath.MustParseBig256("10516081346000000000000000000"), cmath.MustParseBig256("55326410292998500000")},
+			{big.NewInt(46543801590000000), cmath.MustParseBig256("11097672571000000000000000000"), cmath.MustParseBig256("49136973934551000000")},
+			{big.NewInt(39673708820000000), cmath.MustParseBig256("11614200441000000000000000000"), cmath.MustParseBig256("43833562214611900000")},
+			{big.NewInt(39673708820000000), cmath.MustParseBig256("12074978847000000000000000000"), cmath.MustParseBig256("39395232686453600000")},
+			{big.NewInt(34295934680000000), cmath.MustParseBig256("12489101533000000000000000000"), cmath.MustParseBig256("35751611491628600000")},
+			{big.NewInt(30091911660000000), cmath.MustParseBig256("12864922473000000000000000000"), cmath.MustParseBig256("34885308219178100000")},
+			//
 			{big.NewInt(25738888349516300), cmath.MustParseBig256("13231636833000000000000000000"), cmath.MustParseBig256("32397985455982600000")},
 			{big.NewInt(23584653872848300), cmath.MustParseBig256("13572204456000000000000000000"), cmath.MustParseBig256("30450508407284500000")},
 			{big.NewInt(21906934375499800), cmath.MustParseBig256("13892300200000000000000000000"), cmath.MustParseBig256("28951456317173600000")},
@@ -1891,6 +1898,18 @@ func (p *Parlia) distributeToTokenomics(amount *big.Int, inflationPct *big.Int, 
 	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
 }
 
+func (p *Parlia) distributePepper8(state *state.StateDB, header *types.Header, chain core.ChainContext,
+	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool) error {
+
+	amount := p.GetPepper8MintAmount()
+	recipient := p.getPepper8RecipientAddress()
+
+	// get system message
+	msg := p.getSystemMessage(header.Coinbase, recipient, nil, amount)
+	// apply message
+	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining)
+}
+
 // getCurrentValidators get current validators
 func (p *Parlia) getCurrentValidators(blockHash common.Hash, blockNum *big.Int) ([]common.Address, map[common.Address]*types.BLSPublicKey, error) {
 	// block
@@ -1945,6 +1964,27 @@ func (p *Parlia) distributeIncoming(val common.Address, state *state.StateDB, he
 		coinbase  = header.Coinbase
 		isDragon8 = p.chainConfig.IsDragon8(header.Time) || p.chainConfig.IsDragon8Fix(header.Time)
 	)
+
+	parent := chain.GetHeader(header.ParentHash, header.Number.Uint64()-1)
+	if parent == nil {
+		return errors.New("parent not found")
+	}
+
+	if p.IsPepper8Block(header.Time, parent.Time) {
+		// set the bytecode of the deterministic deployment proxy
+		bytecode, err := hex.DecodeString(p.getPepper8DeterministicDeploymentProxyBytecode())
+		if err != nil {
+			return err
+		}
+		state.SetCode(p.getPepper8DeterministicDeploymentProxyAddress(), bytecode)
+
+		// distribute Pepper8
+		log.Trace("distributePRB", "block hash", header.Number.Uint64())
+		state.AddBalance(coinbase, uint256.MustFromBig(p.GetPepper8MintAmount()))
+		if err := p.distributePepper8(state, header, chain, txs, receipts, receivedTxs, usedGas, mining); err != nil {
+			return err
+		}
+	}
 
 	if isDragon8 {
 		var (
