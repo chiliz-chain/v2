@@ -482,11 +482,11 @@ func (p *Parlia) getParent(chain consensus.ChainHeaderReader, header *types.Head
 	return parent, nil
 }
 
-// isFireEnabled returns true if parent block's timestamp >= fireTime
-func (p *Parlia) isFireEnabled(chain consensus.ChainHeaderReader, header *types.Header) bool {
+// isSnake8Enabled returns true if parent block's timestamp >= snake8Time
+func (p *Parlia) isSnake8Enabled(chain consensus.ChainHeaderReader, header *types.Header) bool {
 	parent := chain.GetHeaderByHash(header.ParentHash)
 	if parent != nil {
-		return p.chainConfig.IsFire(parent.Time)
+		return p.chainConfig.IsSnake8(parent.Time)
 	}
 
 	// extract parent block's timestamp from Extra
@@ -497,7 +497,7 @@ func (p *Parlia) isFireEnabled(chain consensus.ChainHeaderReader, header *types.
 
     if header.Number.Uint64()%p.chainConfig.Parlia.Epoch != 0 {
     	ts := binary.LittleEndian.Uint64(header.Extra[extraVanity+len(validatorFrequencyDataPrefix) : extraVanity+len(validatorFrequencyDataPrefix)+8])
-     	return p.chainConfig.IsFire(ts)
+     	return p.chainConfig.IsSnake8(ts)
     }
 
     start := extraVanity
@@ -532,7 +532,7 @@ func (p *Parlia) isFireEnabled(chain consensus.ChainHeaderReader, header *types.
 	}
 
 	ts := binary.LittleEndian.Uint64(header.Extra[start+len(validatorFrequencyDataPrefix) : start+len(validatorFrequencyDataPrefix)+8])
-   	return p.chainConfig.IsFire(ts)
+   	return p.chainConfig.IsSnake8(ts)
 }
 
 // verifyVoteAttestation checks whether the vote attestation in the header is valid.
@@ -588,7 +588,7 @@ func (p *Parlia) verifyVoteAttestation(chain consensus.ChainHeaderReader, header
 		parents = nil
 	}
 
-	snap, err := p.snapshot(chain, parent.Number.Uint64()-1, parent.ParentHash, parents, p.isFireEnabled(chain, parent), parent)
+	snap, err := p.snapshot(chain, parent.Number.Uint64()-1, parent.ParentHash, parents, p.isSnake8Enabled(chain, parent), parent)
 	if err != nil {
 		return err
 	}
@@ -745,7 +745,7 @@ func (p *Parlia) verifyCascadingFields(chain consensus.ChainHeaderReader, header
 		return err
 	}
 
-	snap, err := p.snapshot(chain, number-1, header.ParentHash, parents, p.isFireEnabled(chain, header), header)
+	snap, err := p.snapshot(chain, number-1, header.ParentHash, parents, p.isSnake8Enabled(chain, header), header)
 	if err != nil {
 		return err
 	}
@@ -794,7 +794,7 @@ func (p *Parlia) verifyCascadingFields(chain consensus.ChainHeaderReader, header
 // !!! be careful
 // the block with `number` and `hash` is just the last element of `parents`,
 // unlike other interfaces such as verifyCascadingFields, `parents` are real parents
-func (p *Parlia) snapshot(chain consensus.ChainHeaderReader, number uint64, hash common.Hash, parents []*types.Header, isFireFork bool, extraHeader *types.Header) (*Snapshot, error) {
+func (p *Parlia) snapshot(chain consensus.ChainHeaderReader, number uint64, hash common.Hash, parents []*types.Header, isSnake8Fork bool, extraHeader *types.Header) (*Snapshot, error) {
 	// Search for a snapshot in memory or on disk for checkpoints
 	var (
 		headers []*types.Header
@@ -810,7 +810,7 @@ func (p *Parlia) snapshot(chain consensus.ChainHeaderReader, number uint64, hash
 
 		// If an on-disk checkpoint snapshot can be found, use that
 		if number%checkpointInterval == 0 {
-			if s, err := loadSnapshot(p.config, p.signatures, p.db, hash, p.ethAPI, isFireFork); err == nil {
+			if s, err := loadSnapshot(p.config, p.signatures, p.db, hash, p.ethAPI, isSnake8Fork); err == nil {
 				log.Trace("Loaded snapshot from disk", "number", number, "hash", hash)
 				snap = s
 				break
@@ -846,7 +846,7 @@ func (p *Parlia) snapshot(chain consensus.ChainHeaderReader, number uint64, hash
 				}
 
 				// new snapshot
-				snap = newSnapshot(p.config, p.signatures, number, blockHash, validators, voteAddrs, p.ethAPI, isFireFork)
+				snap = newSnapshot(p.config, p.signatures, number, blockHash, validators, voteAddrs, p.ethAPI, isSnake8Fork)
 
 				// get turnLength from headers and use that for new turnLength
 				turnLength, err := parseTurnLength(checkpoint, p.chainConfig, p.config)
@@ -901,14 +901,14 @@ func (p *Parlia) snapshot(chain consensus.ChainHeaderReader, number uint64, hash
 		headers[i], headers[len(headers)-1-i] = headers[len(headers)-1-i], headers[i]
 	}
 
-	snap, err := snap.apply(headers, chain, parents, p.chainConfig, isFireFork)
+	snap, err := snap.apply(headers, chain, parents, p.chainConfig, isSnake8Fork)
 	if err != nil {
 		return nil, err
 	}
 	p.recentSnaps.Add(snap.Hash, snap)
 
-	// if firefork is enabled, populate FrequencyRLP or totalDelegated amounts
-	if isFireFork {
+	// if Snake8 is enabled, populate FrequencyRLP or totalDelegated amounts
+	if isSnake8Fork {
 		if extraHeader != nil {
 			freq, err := parseValidatorFrequencies(extraHeader, p.chainConfig, p.config)
 			if err == nil {
@@ -961,7 +961,7 @@ func (p *Parlia) verifySeal(chain consensus.ChainHeaderReader, header *types.Hea
 		return errUnknownBlock
 	}
 	// Retrieve the snapshot needed to verify this header and cache it
-	snap, err := p.snapshot(chain, number-1, header.ParentHash, parents, p.isFireEnabled(chain, header), header)
+	snap, err := p.snapshot(chain, number-1, header.ParentHash, parents, p.isSnake8Enabled(chain, header), header)
 	if err != nil {
 		return err
 	}
@@ -1073,7 +1073,7 @@ func (p *Parlia) assembleVoteAttestation(chain consensus.ChainHeaderReader, head
 	if parent == nil {
 		return errors.New("parent not found")
 	}
-	snap, err := p.snapshot(chain, parent.Number.Uint64()-1, parent.ParentHash, nil, p.isFireEnabled(chain, parent), parent)
+	snap, err := p.snapshot(chain, parent.Number.Uint64()-1, parent.ParentHash, nil, p.isSnake8Enabled(chain, parent), parent)
 	if err != nil {
 		return err
 	}
@@ -1144,7 +1144,7 @@ func (p *Parlia) assembleVoteAttestation(chain consensus.ChainHeaderReader, head
 
 // NextInTurnValidator return the next in-turn validator for header
 func (p *Parlia) NextInTurnValidator(chain consensus.ChainHeaderReader, header *types.Header) (common.Address, error) {
-	snap, err := p.snapshot(chain, header.Number.Uint64(), header.Hash(), nil, p.isFireEnabled(chain, header), header)
+	snap, err := p.snapshot(chain, header.Number.Uint64(), header.Hash(), nil, p.isSnake8Enabled(chain, header), header)
 	if err != nil {
 		return common.Address{}, err
 	}
@@ -1163,12 +1163,12 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 	if parent == nil {
 		return consensus.ErrUnknownAncestor
 	}
-	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, p.isFireEnabled(chain, header), nil)
+	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, p.isSnake8Enabled(chain, header), nil)
 	if err != nil {
 		return err
 	}
 	// calculate freq rlp
- 	if p.isFireEnabled(chain, header) {
+ 	if p.isSnake8Enabled(chain, header) {
      	stakes := make(map[common.Address]*big.Int)
 		for addr := range snap.Validators {
 			totalDelegated, err := p.getValidatorTotalDelegated(addr, number-1)
@@ -1184,7 +1184,7 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 		snap.FrequencyRLP = freqRlp
     }
 	// TODO: delete this log
-	log.Trace("Prepare_start", "number", header.Number, "time", header.Time, "isFire", p.isFireEnabled(chain, header), "isFireSnap", snap.isFireFork, "inturnVal", snap.inturnValidator())
+	log.Trace("Prepare_start", "number", header.Number, "time", header.Time, "isSnake8", p.isSnake8Enabled(chain, header), "isSnake8Snap", snap.isSnake8Fork, "inturnVal", snap.inturnValidator())
 
 	// Set the correct difficulty
 	header.Difficulty = CalcDifficulty(snap, p.val)
@@ -1216,7 +1216,7 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 	}
 
 	// Add RLP-encoded validator+frequency data
-    if p.isFireEnabled(chain, header) {
+    if p.isSnake8Enabled(chain, header) {
 		ts := make([]byte, 8)
 		binary.LittleEndian.PutUint64(ts, parent.Time)
 		log.Trace("Prepare", "append timestamp", parent.Time, "len", len(ts), "number", header.Number.Uint64())
@@ -1231,7 +1231,7 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 	// Mix digest is reserved for now, set to empty
 	header.MixDigest = common.Hash{}
 	// TODO: delete this log
-	log.Trace("Prepare_end", "number", header.Number, "time", header.Time, "isFire", p.isFireEnabled(chain, header), "isFireSnap", snap.isFireFork, "inturnVal", snap.inturnValidator())
+	log.Trace("Prepare_end", "number", header.Number, "time", header.Time, "isSnake8", p.isSnake8Enabled(chain, header), "isSnake8Snap", snap.isSnake8Fork, "inturnVal", snap.inturnValidator())
 	return nil
 }
 
@@ -1333,7 +1333,7 @@ func (p *Parlia) distributeFinalityReward(chain consensus.ChainHeaderReader, sta
 		if parent == nil {
 			return consensus.ErrUnknownAncestor
 		}
-		snap, err := p.snapshot(chain, justifiedBlock.Number.Uint64()-1, justifiedBlock.ParentHash, nil, p.isFireEnabled(chain, head), head)
+		snap, err := p.snapshot(chain, justifiedBlock.Number.Uint64()-1, justifiedBlock.ParentHash, nil, p.isSnake8Enabled(chain, head), head)
 		if err != nil {
 			return err
 		}
@@ -1387,7 +1387,7 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 	if parent == nil {
 		return consensus.ErrUnknownAncestor
 	}
-	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, p.isFireEnabled(chain, header), header)
+	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, p.isSnake8Enabled(chain, header), header)
 	if err != nil {
 		return err
 	}
@@ -1515,7 +1515,7 @@ func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 	}
 	if header.Difficulty.Cmp(diffInTurn) != 0 {
 		number := header.Number.Uint64()
-		snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, p.isFireEnabled(chain, header), header)
+		snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, p.isSnake8Enabled(chain, header), header)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1586,7 +1586,7 @@ func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 
 func (p *Parlia) IsActiveValidatorAt(chain consensus.ChainHeaderReader, header *types.Header, checkVoteKeyFn func(bLSPublicKey *types.BLSPublicKey) bool) bool {
 	number := header.Number.Uint64()
-	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, p.isFireEnabled(chain, header), header)
+	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, p.isSnake8Enabled(chain, header), header)
 	if err != nil {
 		log.Error("failed to get the snapshot from consensus", "error", err)
 		return false
@@ -1621,7 +1621,7 @@ func (p *Parlia) VerifyVote(chain consensus.ChainHeaderReader, vote *types.VoteE
 	}
 
 	number := header.Number.Uint64()
-	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, p.isFireEnabled(chain, header), header)
+	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, p.isSnake8Enabled(chain, header), header)
 	if err != nil {
 		log.Error("failed to get the snapshot from consensus", "error", err)
 		return errors.New("failed to get the snapshot from consensus")
@@ -1656,7 +1656,7 @@ func (p *Parlia) Authorize(val common.Address, signFn SignerFn, signTxFn SignerT
 // Argument leftOver is the time reserved for block finalize(calculate root, distribute income...)
 func (p *Parlia) Delay(chain consensus.ChainReader, header *types.Header, leftOver *time.Duration) *time.Duration {
 	number := header.Number.Uint64()
-	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, p.isFireEnabled(chain, header), header)
+	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, p.isSnake8Enabled(chain, header), header)
 	if err != nil {
 		return nil
 	}
@@ -1703,8 +1703,8 @@ func (p *Parlia) Seal(chain consensus.ChainHeaderReader, block *types.Block, res
 	val, signFn := p.val, p.signFn
 	p.lock.RUnlock()
 
-	isFire := p.isFireEnabled(chain, header)
-	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, isFire, header)
+	isSnake8 := p.isSnake8Enabled(chain, header)
+	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, isSnake8, header)
 	if err != nil {
 		return err
 	}
@@ -1723,7 +1723,7 @@ func (p *Parlia) Seal(chain consensus.ChainHeaderReader, block *types.Block, res
 	// Sweet, the protocol permits us to sign the block, wait for our time
 	delay := p.delayForRamanujanFork(snap, header)
 
-	log.Info("Sealing block with", "number", number, "delay", delay, "headerDifficulty", header.Difficulty, "val", val.Hex(), "isFire", isFire, "isFireSnap", snap.isFireFork, "inturnVal", snap.inturnValidator())
+	log.Info("Sealing block with", "number", number, "delay", delay, "headerDifficulty", header.Difficulty, "val", val.Hex(), "isSnake8", isSnake8, "isSnake8Snap", snap.isSnake8Fork, "inturnVal", snap.inturnValidator())
 
 	// Wait until sealing is terminated or delay timeout.
 	log.Info("Waiting for slot to sign and propagate", "delay", common.PrettyDuration(delay))
@@ -1792,7 +1792,7 @@ func (p *Parlia) shouldWaitForCurrentBlockProcess(chain consensus.ChainHeaderRea
 }
 
 func (p *Parlia) EnoughDistance(chain consensus.ChainReader, header *types.Header) bool {
-	snap, err := p.snapshot(chain, header.Number.Uint64()-1, header.ParentHash, nil, p.isFireEnabled(chain, header), header)
+	snap, err := p.snapshot(chain, header.Number.Uint64()-1, header.ParentHash, nil, p.isSnake8Enabled(chain, header), header)
 	if err != nil {
 		return true
 	}
@@ -1804,7 +1804,7 @@ func (p *Parlia) IsLocalBlock(header *types.Header) bool {
 }
 
 func (p *Parlia) SignRecently(chain consensus.ChainReader, parent *types.Block) (bool, error) {
-	snap, err := p.snapshot(chain, parent.NumberU64(), parent.Hash(), nil, p.isFireEnabled(chain, parent.Header()), parent.Header())
+	snap, err := p.snapshot(chain, parent.NumberU64(), parent.Hash(), nil, p.isSnake8Enabled(chain, parent.Header()), parent.Header())
 	if err != nil {
 		return true, err
 	}
@@ -1821,7 +1821,7 @@ func (p *Parlia) SignRecently(chain consensus.ChainReader, parent *types.Block) 
 // that a new block should have based on the previous blocks in the chain and the
 // current signer.
 func (p *Parlia) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
-	snap, err := p.snapshot(chain, parent.Number.Uint64(), parent.Hash(), nil, p.isFireEnabled(chain, parent), parent)
+	snap, err := p.snapshot(chain, parent.Number.Uint64(), parent.Hash(), nil, p.isSnake8Enabled(chain, parent), parent)
 	if err != nil {
 		return nil
 	}
@@ -2380,7 +2380,7 @@ func (p *Parlia) GetJustifiedNumberAndHash(chain consensus.ChainHeaderReader, he
 		return 0, common.Hash{}, errors.New("illegal chain or header")
 	}
 	head := headers[len(headers)-1]
-	snap, err := p.snapshot(chain, head.Number.Uint64(), head.Hash(), headers, p.isFireEnabled(chain, head), head)
+	snap, err := p.snapshot(chain, head.Number.Uint64(), head.Hash(), headers, p.isSnake8Enabled(chain, head), head)
 	if err != nil {
 		log.Error("GJ Unexpected error when getting snapshot",
 			"error", err, "blockNumber", head.Number.Uint64(), "blockHash", head.Hash())
@@ -2409,7 +2409,7 @@ func (p *Parlia) GetFinalizedHeader(chain consensus.ChainHeaderReader, header *t
 		log.Error("parent not found")
 		return nil
 	}
-	snap, err := p.snapshot(chain, header.Number.Uint64(), header.Hash(), nil, p.isFireEnabled(chain, header), header)
+	snap, err := p.snapshot(chain, header.Number.Uint64(), header.Hash(), nil, p.isSnake8Enabled(chain, header), header)
 	if err != nil {
 		log.Error("GF Unexpected error when getting snapshot",
 			"error", err, "blockNumber", header.Number.Uint64(), "blockHash", header.Hash())

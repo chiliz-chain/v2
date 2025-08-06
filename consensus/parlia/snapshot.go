@@ -55,7 +55,7 @@ type Snapshot struct {
 	Recents          map[uint64]common.Address         `json:"recents"`               	// Set of recent validators for spam protections
 	RecentForkHashes map[uint64]string                 `json:"recent_fork_hashes"`    	// Set of recent forkHash
 	Attestation      *types.VoteData                   `json:"attestation:omitempty"` 	// Attestation for fast finality, but `Source` used as `Finalized`
-	isFireFork       bool                              `json:"is_fire_fork"`          	// Flag indicating whether fire fork activated
+	isSnake8Fork     bool                              `json:"is_snake8_fork"`          // Flag indicating whether Snake8 fork activated
 	FrequencyRLP    []byte                             `json:"frequency_rlp,omitempty"` // RLP encoded frequency data for validator selection
 }
 
@@ -75,7 +75,7 @@ func newSnapshot(
 	validators []common.Address,
 	voteAddrs []types.BLSPublicKey,
 	ethAPI *ethapi.BlockChainAPI,
-	isFireFork bool,
+	isSnake8Fork bool,
 ) *Snapshot {
 	snap := &Snapshot{
 		config:           config,
@@ -87,7 +87,7 @@ func newSnapshot(
 		Recents:          make(map[uint64]common.Address),
 		RecentForkHashes: make(map[uint64]string),
 		Validators:       make(map[common.Address]*ValidatorInfo),
-		isFireFork:       isFireFork,
+		isSnake8Fork:       isSnake8Fork,
 	}
 	for idx, v := range validators {
 		// The luban fork from the genesis block
@@ -118,7 +118,7 @@ func (s validatorsAscending) Less(i, j int) bool { return bytes.Compare(s[i][:],
 func (s validatorsAscending) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
 // loadSnapshot loads an existing snapshot from the database.
-func loadSnapshot(config *params.ParliaConfig, sigCache *lru.ARCCache, db ethdb.Database, hash common.Hash, ethAPI *ethapi.BlockChainAPI, isFireFork bool) (*Snapshot, error) {
+func loadSnapshot(config *params.ParliaConfig, sigCache *lru.ARCCache, db ethdb.Database, hash common.Hash, ethAPI *ethapi.BlockChainAPI, isSnake8Fork bool) (*Snapshot, error) {
 	blob, err := db.Get(append([]byte("parlia-"), hash[:]...))
 	if err != nil {
 		return nil, err
@@ -131,14 +131,14 @@ func loadSnapshot(config *params.ParliaConfig, sigCache *lru.ARCCache, db ethdb.
 		snap.TurnLength = defaultTurnLength
 	}
 
-	if isFireFork {
+	if isSnake8Fork {
 		snap.TurnLength = 50
 	}
 
 	snap.config = config
 	snap.sigCache = sigCache
 	snap.ethAPI = ethAPI
-	snap.isFireFork = isFireFork
+	snap.isSnake8Fork = isSnake8Fork
 
 	return snap, nil
 }
@@ -164,7 +164,7 @@ func (s *Snapshot) copy() *Snapshot {
 		Validators:       make(map[common.Address]*ValidatorInfo),
 		Recents:          make(map[uint64]common.Address),
 		RecentForkHashes: make(map[uint64]string),
-		isFireFork:       s.isFireFork,
+		isSnake8Fork:       s.isSnake8Fork,
 	}
 
 	for v := range s.Validators {
@@ -273,8 +273,8 @@ func (s *Snapshot) SignRecently(validator common.Address) bool {
 	return s.signRecentlyByCounts(validator, s.countRecents())
 }
 
-func (s *Snapshot) apply(headers []*types.Header, chain consensus.ChainHeaderReader, parents []*types.Header, chainConfig *params.ChainConfig, isFireFork bool) (*Snapshot, error) {
-	s.isFireFork = isFireFork
+func (s *Snapshot) apply(headers []*types.Header, chain consensus.ChainHeaderReader, parents []*types.Header, chainConfig *params.ChainConfig, isSnake8Fork bool) (*Snapshot, error) {
+	s.isSnake8Fork = isSnake8Fork
 	// Allow passing in no headers for cleaner code
 	if len(headers) == 0 {
 		return s, nil
@@ -319,7 +319,7 @@ func (s *Snapshot) apply(headers []*types.Header, chain consensus.ChainHeaderRea
 				return nil, errRecentlySigned
 			}
 		} else {
-			if !snap.isFireFork {
+			if !snap.isSnake8Fork {
 				for _, recent := range snap.Recents {
 					if recent == validator {
 						return nil, errRecentlySigned
@@ -428,7 +428,7 @@ func (s *Snapshot) inturnValidator() common.Address {
 	// as it depends on validator stakes, which will not
 	// be available until block 0 is validated
 	// (stakes are stored in staking system contract)
-	if s.Number == 0 || !s.isFireFork {
+	if s.Number == 0 || !s.isSnake8Fork {
 		return s.selectValidatorRoundRobin()
 	}
 
@@ -458,7 +458,7 @@ func (s *Snapshot) enoughDistance(validator common.Address, header *types.Header
 		return false
 	}
 
-	if s.isFireFork {
+	if s.isSnake8Fork {
 		return !s.SignRecently(validator)
 	}
 
@@ -487,7 +487,7 @@ func (s *Snapshot) indexOfVal(validator common.Address) int {
 // getValidatorBytesFromHeader retrieves the validator frequency data bytes from the header.Extra
 // Header.Extra after fire fork:   |---Extra Vanity---|---Validators Bytes (or Empty) ---|---Turn Length (or Empty)---/---Vote Attestation (or Empty)---/---Frequency Data Prefix---|---Parent Timestamp---|---Frequency data---|---Extra Seal---|
 func parseValidatorFrequencies(header *types.Header, chainConfig *params.ChainConfig, parliaConfig *params.ParliaConfig) ([]byte, error) {
-    if !chainConfig.IsFire(header.Time) {
+    if !chainConfig.IsSnake8(header.Time) {
         return nil, fmt.Errorf("block %d: not a Fire fork block", header.Number.Uint64())
     }
 
