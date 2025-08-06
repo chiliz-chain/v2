@@ -485,10 +485,10 @@ func (s *Snapshot) indexOfVal(validator common.Address) int {
 }
 
 // getValidatorBytesFromHeader retrieves the validator frequency data bytes from the header.Extra
-// Header.Extra after fire fork:   |---Extra Vanity---|---Validators Bytes (or Empty) ---|---Turn Length (or Empty)---/---Vote Attestation (or Empty)---/---Frequency Data Prefix---|---Parent Timestamp---|---Frequency data---|---Extra Seal---|
+// Header.Extra after snake8 fork:   |---Extra Vanity---|---Validators Bytes (or Empty) ---|---Turn Length (or Empty)---/---Vote Attestation (or Empty)---/---Frequency Data Prefix---|---Parent Timestamp---|---Frequency data---|---Extra Seal---|
 func parseValidatorFrequencies(header *types.Header, chainConfig *params.ChainConfig, parliaConfig *params.ParliaConfig) ([]byte, error) {
     if !chainConfig.IsSnake8(header.Time) {
-        return nil, fmt.Errorf("block %d: not a Fire fork block", header.Number.Uint64())
+        return nil, fmt.Errorf("block %d: not a Snake8 fork block", header.Number.Uint64())
     }
 
     if len(header.Extra) <= extraVanity+extraSeal {
