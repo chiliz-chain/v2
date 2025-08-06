@@ -27,6 +27,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"strings"
 
 	mapset "github.com/deckarep/golang-set/v2"
 	exlru "github.com/hashicorp/golang-lru"
@@ -106,6 +107,18 @@ var (
 	errInvalidOldChain             = errors.New("invalid old chain")
 	errInvalidNewChain             = errors.New("invalid new chain")
 )
+
+var validatorCounters sync.Map
+func incValidatorBlockCount(addr common.Address) {
+    key := strings.ToLower(addr.Hex())
+    val, loaded := validatorCounters.Load(key)
+    if !loaded {
+        counter := metrics.NewRegisteredCounter(fmt.Sprintf("chain/inserts.%s", key), nil)
+        validatorCounters.Store(key, counter)
+        val = counter
+    }
+    val.(metrics.Counter).Inc(1)
+}
 
 const (
 	bodyCacheLimit      = 256
@@ -2330,6 +2343,9 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 
 		blockWriteTimer.Update(time.Since(wstart) - statedb.AccountCommits - statedb.StorageCommits - statedb.SnapshotCommits - statedb.TrieDBCommits)
 		blockInsertTimer.UpdateSince(start)
+
+		// increment validator block count
+		incValidatorBlockCount(block.Coinbase())
 
 		// Report the import stats before returning the various results
 		stats.processed++

@@ -9,7 +9,7 @@ RUN cd /go-ethereum && go mod download
 
 ADD . /go-ethereum
 
-ENV CGO_CFLAGS="-O -D__BLST_PORTABLE__" 
+ENV CGO_CFLAGS="-O -D__BLST_PORTABLE__"
 ENV CGO_CFLAGS_ALLOW="-O -D__BLST_PORTABLE__"
 RUN cd /go-ethereum && go run build/ci.go install -static ./cmd/geth
 
@@ -19,5 +19,5 @@ FROM alpine:latest
 RUN apk add --no-cache ca-certificates curl jq tini
 COPY --from=builder /go-ethereum/build/bin/geth /usr/local/bin/
 
-EXPOSE 8545 8546 8547 30303 30303/udp
+EXPOSE 6060 8545 8546 8547 30303 30303/udp
 ENTRYPOINT ["geth"]

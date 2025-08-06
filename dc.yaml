@@ -44,6 +44,7 @@ services:
       - "--networkid=17243"
       - "--nodekeyhex=633ab917d09441de38ae9251e79ced41df39a1c338842b826c18fb1773246e18"
       - "--syncmode=full"
+      - "--gcmode=archive"
       - "--http"
       - "--http.addr=0.0.0.0"
       - "--http.api=eth,net,web3,debug,trace,txpool"
@@ -54,11 +55,16 @@ services:
       # - "--verbosity=4"
       - "--maxpeers=10"
       - "--netrestrict=172.0.0.0/16"
+      - "--metrics"
+      - "--metrics.expensive"
+      - "--metrics.addr=0.0.0.0"
+      - "--metrics.port=6060"
     volumes:
       - "./genesis/devnet.json:/datadir/devnet.json"
     ports:
       - "8545:8545"
       - "8546:8546"
+      - "6060:6060"
     networks:
         - devnet
 
@@ -122,7 +128,7 @@ services:
     cap_add:
       - SYS_PTRACE
     volumes:
-      - "./datadir:/datadir"
+      # - "./datadir:/datadir"
       - "./genesis/devnet.json:/datadir/devnet.json"
       - "./genesis/keystore:/datadir/keystore"
       - "./genesis/password.txt:/datadir/password.txt"
@@ -155,76 +161,86 @@ services:
       - "./genesis/password.txt:/datadir/password.txt"
     networks:
         - devnet
-  validator_4:
-    # build: "./"
-    build:
-      context: ./
-      platforms:
-        - linux/arm64
-    platform: linux/arm64
-    command:
-      - "--datadir=/datadir"
-      - "--genesis=/datadir/devnet.json"
-      - "--mine"
-      - "--password=/datadir/password.txt"
-      - "--allow-insecure-unlock"
-      - "--unlock=0x49c0f7c8c11a4c80dc6449efe1010bb166818da8"
-      - "--miner.etherbase=0x49c0f7c8c11a4c80dc6449efe1010bb166818da8"
-      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
-      - "--gcmode=archive"
-      - "--syncmode=full"
-      - "--networkid=17243"
-      - "--maxpeers=10"
-      - "--netrestrict=172.0.0.0/16"
-    volumes:
-      - "./genesis/devnet.json:/datadir/devnet.json"
-      - "./genesis/keystore:/datadir/keystore"
-      - "./genesis/password.txt:/datadir/password.txt"
-    networks:
-        - devnet
-  validator_5:
-    # build: "./"
-    build:
-      context: ./
-      platforms:
-        - linux/arm64
-    platform: linux/arm64
-    command:
-      - "--datadir=/datadir"
-      - "--genesis=/datadir/devnet.json"
-      - "--mine"
-      - "--password=/datadir/password.txt"
-      - "--allow-insecure-unlock"
-      - "--unlock=0x8e1ea6eaa09c3b40f4a51fcd056a031870a0549a"
-      - "--miner.etherbase=0x8e1ea6eaa09c3b40f4a51fcd056a031870a0549a"
-      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
-      - "--gcmode=archive"
-      - "--syncmode=full"
-      - "--networkid=17243"
-      - "--maxpeers=10"
-      - "--netrestrict=172.0.0.0/16"
-    volumes:
-      - "./genesis/devnet.json:/datadir/devnet.json"
-      - "./genesis/keystore:/datadir/keystore"
-      - "./genesis/password.txt:/datadir/password.txt"
-    networks:
-        - devnet
+  # validator_4:
+  #   # build: "./"
+  #   build:
+  #     context: ./
+  #     platforms:
+  #       - linux/arm64
+  #   platform: linux/arm64
+  #   command:
+  #     - "--datadir=/datadir"
+  #     - "--genesis=/datadir/devnet.json"
+  #     - "--mine"
+  #     - "--password=/datadir/password.txt"
+  #     - "--allow-insecure-unlock"
+  #     - "--unlock=0x49c0f7c8c11a4c80dc6449efe1010bb166818da8"
+  #     - "--miner.etherbase=0x49c0f7c8c11a4c80dc6449efe1010bb166818da8"
+  #     - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+  #     - "--gcmode=archive"
+  #     - "--syncmode=full"
+  #     - "--networkid=17243"
+  #     - "--maxpeers=10"
+  #     - "--netrestrict=172.0.0.0/16"
+  #   volumes:
+  #     - "./genesis/devnet.json:/datadir/devnet.json"
+  #     - "./genesis/keystore:/datadir/keystore"
+  #     - "./genesis/password.txt:/datadir/password.txt"
+  #   networks:
+  #       - devnet
+  # validator_5:
+  #   # build: "./"
+  #   build:
+  #     context: ./
+  #     platforms:
+  #       - linux/arm64
+  #   platform: linux/arm64
+  #   command:
+  #     - "--datadir=/datadir"
+  #     - "--genesis=/datadir/devnet.json"
+  #     - "--mine"
+  #     - "--password=/datadir/password.txt"
+  #     - "--allow-insecure-unlock"
+  #     - "--unlock=0x8e1ea6eaa09c3b40f4a51fcd056a031870a0549a"
+  #     - "--miner.etherbase=0x8e1ea6eaa09c3b40f4a51fcd056a031870a0549a"
+  #     - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+  #     - "--gcmode=archive"
+  #     - "--syncmode=full"
+  #     - "--networkid=17243"
+  #     - "--maxpeers=10"
+  #     - "--netrestrict=172.0.0.0/16"
+  #   volumes:
+  #     - "./genesis/devnet.json:/datadir/devnet.json"
+  #     - "./genesis/keystore:/datadir/keystore"
+  #     - "./genesis/password.txt:/datadir/password.txt"
+  #   networks:
+  #       - devnet
 
-  rpc_1:
-    build: "./"
+  # rpc_1:
+  #   build: "./"
+  #   command:
+  #     - "--datadir=/datadir"
+  #     - "--genesis=/datadir/devnet.json"
+  #     - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+  #     - "--gcmode=full"
+  #     - "--syncmode=snap"
+  #     - "--networkid=17243"
+  #     - "--maxpeers=10"
+  #     - "--netrestrict=172.0.0.0/16"
+  #   volumes:
+  #     - "./genesis/devnet.json:/datadir/devnet.json"
+  #   networks:
+  #       - devnet
+  prometheus:
+    image: prom/prometheus:latest
     command:
-      - "--datadir=/datadir"
-      - "--genesis=/datadir/devnet.json"
-      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
-      - "--gcmode=full"
-      - "--syncmode=snap"
-      - "--networkid=17243"
-      - "--maxpeers=10"
-      - "--netrestrict=172.0.0.0/16"
+      - "--config.file=/etc/prometheus/prometheus.yml"
     volumes:
-      - "./genesis/devnet.json:/datadir/devnet.json"
+      - "./prometheus.yml:/etc/prometheus/prometheus.yml"
+    ports:
+      - "9090:9090"
     networks:
-        - devnet
+      - devnet
 
 networks:
   devnet:
