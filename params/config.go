@@ -518,6 +518,7 @@ type ChainConfig struct {
 	DeployerFactoryBlock   *big.Int `json:"deployerFactoryBlock,omitempty"`
 	Dragon8Time            *uint64  `json:"dragon8Time,omitempty"`
 	Dragon8FixTime         *uint64  `json:"dragon8FixTime,omitempty"`
+	Snake8Time             *uint64  `json:"snake8Time,omitempty"`
 	Pepper8Time            *uint64  `json:"pepper8Time,omitempty"`
 
 	ShanghaiTime   *uint64 `json:"shanghaiTime,omitempty"`   // Shanghai switch time (nil = no fork, 0 = already on shanghai)
@@ -628,6 +629,11 @@ func (c *ChainConfig) String() string {
 		Dragon8FixTime = big.NewInt(0).SetUint64(*c.Dragon8FixTime)
 	}
 
+	var Snake8Time *big.Int
+	if c.Snake8Time != nil {
+		Snake8Time = big.NewInt(0).SetUint64(*c.Snake8Time)
+	}
+
 	var Pepper8Time *big.Int
 	if c.Pepper8Time != nil {
 		Pepper8Time = big.NewInt(0).SetUint64(*c.Pepper8Time)
@@ -663,7 +669,7 @@ func (c *ChainConfig) String() string {
 		BohrTime = big.NewInt(0).SetUint64(*c.BohrTime)
 	}
 
-	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, Dragon8Time: %v, Dragon8FixTime: %v, Pepper8Time: %v, ShanghaiTime: %v, KeplerTime: %v, FeynmanTime: %v, FeynmanFixTime: %v, CancunTime: %v, HaberTime: %v, HaberFixTime: %v, BohrTime: %v, Engine: %v}",
+	return fmt.Sprintf("{ChainID: %v Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, Dragon8Time: %v, Dragon8FixTime: %v, Snake8Time: %v, Pepper8Time: %v, ShanghaiTime: %v, KeplerTime: %v, FeynmanTime: %v, FeynmanFixTime: %v, CancunTime: %v, HaberTime: %v, HaberFixTime: %v, BohrTime: %v, Engine: %v}",
 		c.ChainID,
 		c.HomesteadBlock,
 		c.DAOForkBlock,
@@ -697,6 +703,7 @@ func (c *ChainConfig) String() string {
 		c.HertzfixBlock,
 		Dragon8Time,
 		Dragon8FixTime,
+		Snake8Time,
 		Pepper8Time,
 		ShanghaiTime,
 		KeplerTime,
@@ -718,6 +725,11 @@ func (c *ChainConfig) IsDragon8(time uint64) bool {
 // IsDragon8Fix returns whether num is either equal to the dragon8 fix block or greater.
 func (c *ChainConfig) IsDragon8Fix(time uint64) bool {
 	return isTimestampForked(c.Dragon8FixTime, time)
+}
+
+// IsSnake8 returns whether num is either equal to the Snake8 fork timestamp or greater.
+func (c *ChainConfig) IsSnake8(time uint64) bool {
+	return isTimestampForked(c.Snake8Time, time)
 }
 
 // IsPepper8Time returns whether num is either equal to the Pepper8 fix fork block or greater.
@@ -1424,6 +1436,7 @@ type Rules struct {
 	DeployerFactory                                    bool
 	Dragon8                                            bool
 	Dragon8Fix                                         bool
+	Snake8                                             bool
 	IsCayenne                                          bool
 	IsMerge                                            bool
 	IsNano                                             bool
@@ -1480,5 +1493,6 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		DeployerFactory:      isBlockForked(c.DeployerFactoryBlock, num),
 		Dragon8:              c.IsDragon8(timestamp),
 		Dragon8Fix:           c.IsDragon8Fix(timestamp),
+		Snake8:               c.IsSnake8(timestamp),
 	}
 }

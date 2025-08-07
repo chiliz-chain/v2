@@ -36,7 +36,7 @@ func (api *API) GetSnapshot(number *rpc.BlockNumber) (*Snapshot, error) {
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	return api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil)
+	return api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, api.parlia.chainConfig.IsSnake8(header.Time), header)
 }
 
 // GetSnapshotAtHash retrieves the state snapshot at a given block.
@@ -45,7 +45,7 @@ func (api *API) GetSnapshotAtHash(hash common.Hash) (*Snapshot, error) {
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	return api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil)
+	return api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, api.parlia.chainConfig.IsSnake8(header.Time), header)
 }
 
 // GetValidators retrieves the list of validators at the specified block.
@@ -55,7 +55,7 @@ func (api *API) GetValidators(number *rpc.BlockNumber) ([]common.Address, error)
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snap, err := api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil)
+	snap, err := api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, api.parlia.chainConfig.IsSnake8(header.Time), header)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func (api *API) GetValidatorsAtHash(hash common.Hash) ([]common.Address, error) 
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snap, err := api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil)
+	snap, err := api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, api.parlia.chainConfig.IsSnake8(header.Time), header)
 	if err != nil {
 		return nil, err
 	}
@@ -81,7 +81,7 @@ func (api *API) GetJustifiedNumber(number *rpc.BlockNumber) (uint64, error) {
 	if header == nil {
 		return 0, errUnknownBlock
 	}
-	snap, err := api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil)
+	snap, err := api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, api.parlia.chainConfig.IsSnake8(header.Time), header)
 	if err != nil || snap.Attestation == nil {
 		return 0, err
 	}
@@ -94,7 +94,7 @@ func (api *API) GetTurnLength(number *rpc.BlockNumber) (uint8, error) {
 	if header == nil {
 		return 0, errUnknownBlock
 	}
-	snap, err := api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil)
+	snap, err := api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, api.parlia.chainConfig.IsSnake8(header.Time), header)
 	if err != nil || snap.TurnLength == 0 {
 		return 0, err
 	}
@@ -107,7 +107,7 @@ func (api *API) GetFinalizedNumber(number *rpc.BlockNumber) (uint64, error) {
 	if header == nil {
 		return 0, errUnknownBlock
 	}
-	snap, err := api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil)
+	snap, err := api.parlia.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, api.parlia.chainConfig.IsSnake8(header.Time), header)
 	if err != nil || snap.Attestation == nil {
 		return 0, err
 	}

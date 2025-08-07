@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"strings"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -206,6 +207,14 @@ func (exp *exp) publishLabel(name string, metric metrics.Label) {
 	}
 }
 
+func (exp *exp) publishLabelledCounter(name string, lc *metrics.LabelledCounter) {
+    m := exp.getMap(name)
+    lc.Each(func(labelValues []string, counter metrics.Counter) {
+        key := strings.Join(labelValues, "|")
+        m.Set(key, exp.interfaceToExpVal(counter.Snapshot().Count()))
+    })
+}
+
 func (exp *exp) interfaceToExpVal(v interface{}) expvar.Var {
 	switch i := v.(type) {
 	case string:
@@ -276,6 +285,8 @@ func (exp *exp) syncToExpvar() {
 			exp.publishResettingTimer(name, i)
 		case metrics.Label:
 			exp.publishLabel(name, i)
+		case *metrics.LabelledCounter:
+            exp.publishLabelledCounter(name, i)
 		default:
 			panic(fmt.Sprintf("unsupported type for '%s': %T", name, i))
 		}

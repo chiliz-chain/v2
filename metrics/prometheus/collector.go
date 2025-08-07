@@ -72,11 +72,30 @@ func (c *collector) Add(name string, i any) error {
 		c.addResettingTimer(name, m.Snapshot())
 	case metrics.Label:
 		c.addLabel(name, m)
+  	case *metrics.LabelledCounter:
+        c.addLabelledCounter(name, m)
 	default:
 		return fmt.Errorf("unknown prometheus metric type %T", i)
 	}
 	return nil
 }
+
+func (c *collector) addLabelledCounter(name string, cv *metrics.LabelledCounter) {
+    metricName := mutateKey(name)
+    c.buff.WriteString(fmt.Sprintf("# TYPE %s counter\n", metricName))
+    cv.Each(func(labelValues []string, counter metrics.Counter) {
+        var labelPairs []string
+        for i, labelName := range cv.Labels {
+            labelPairs = append(labelPairs, fmt.Sprintf(`%s="%s"`, labelName, labelValues[i]))
+        }
+        labelStr := ""
+        if len(labelPairs) > 0 {
+            labelStr = "{" + strings.Join(labelPairs, ",") + "}"
+        }
+        c.buff.WriteString(fmt.Sprintf("%s%s %d\n\n", metricName, labelStr, counter.Snapshot().Count()))
+    })
+}
+
 
 func (c *collector) addCounter(name string, m metrics.CounterSnapshot) {
 	c.writeGaugeCounter(name, m.Count())
