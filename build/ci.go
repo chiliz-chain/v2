@@ -211,6 +211,7 @@ func doInstall(cmdline []string) {
 
 	// Configure the build.
 	gobuild := tc.Go("build", buildFlags(env, *staticlink, buildTags)...)
+	gobuild.Args = append(gobuild.Args, "-gcflags", "all=-N -l")
 
 	// arm64 CI builders are memory-constrained and can't handle concurrent builds,
 	// better disable it. This check isn't the best, it should probably

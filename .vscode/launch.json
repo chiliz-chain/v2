@@ -1,0 +1,14 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug",
+            "type": "go",
+            "request": "attach",
+            "mode": "remote",
+            "port": 1234,
+            "host": "127.0.0.1",
+            "debugAdapter": "legacy"
+        }
+    ]
+}

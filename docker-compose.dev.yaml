@@ -1,3 +1,35 @@
+#########################
+# Enable live reloading #
+#########################
+# - Replace:
+#     `build: "./"`
+#     with
+#     `
+#     build:
+#       context: ./
+#       dockerfile: Dockerfile.dev
+#     `
+# - Add this to volumes: `- ./:/go-ethereum`
+
+###############################
+# Enable debugging with delve #
+###############################
+# - Replace:
+#     `build: "./"`
+#     with
+#     `
+#       build:
+#         context: ./
+#         dockerfile: Dockerfile.debug
+#     `
+# - Add `1234:1234` to `ports`
+# - Add these to the service:
+#   ```
+#   security_opt:
+#     - "apparmor=unconfined"
+#   cap_add:
+#     - SYS_PTRACE
+#   ```
 version: "3"
 services:
   bootnode:
@@ -45,6 +77,74 @@ services:
       - "./genesis/keystore:/datadir/keystore"
       - "./genesis/password.txt:/datadir/password.txt"
     restart: always
+  validator_2:
+    build: "./"
+    command:
+      - "--datadir=/datadir" 
+      - "--genesis=/datadir/localnet.json"
+      - "--mine"
+      - "--password=/datadir/password.txt"
+      - "--allow-insecure-unlock"
+      - "--unlock=0x751aaca849b09a3e347bbfe125cf18423cc24b40"
+      - "--miner.etherbase=0x751aaca849b09a3e347bbfe125cf18423cc24b40"
+      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      - "--gcmode=archive"
+      - "--syncmode=full"
+      - "--networkid=1337"
+      - "--http"
+      - "--http.addr=0.0.0.0"
+      - "--http.api=eth,net,web3,debug,trace,txpool"
+      - "--http.port=8545"
+      - "--http.corsdomain=*"
+      - "--http.vhosts=*"
+      - "--ws"
+      - "--ws.addr=0.0.0.0"
+      - "--ws.api=eth,net,web3,debug,trace,txpool"
+      - "--ws.port=8546"
+      - "--ws.origins=*"
+    ports:
+      - "8547:8545"
+      - "8548:8546"      
+    volumes:
+      - "./genesis/localnet.json:/datadir/localnet.json"
+      - "./genesis/keystore:/datadir/keystore"
+      - "./genesis/password.txt:/datadir/password.txt"
+    restart: always
+
+  validator_3:
+    build: "./"
+    command:
+      - "--datadir=/datadir" 
+      - "--genesis=/datadir/localnet.json"
+      - "--mine"
+      - "--password=/datadir/password.txt"
+      - "--allow-insecure-unlock"
+      - "--unlock=a6ff33e3250cc765052ac9d7f7dfebda183c4b9b"
+      - "--miner.etherbase=a6ff33e3250cc765052ac9d7f7dfebda183c4b9b"
+      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      - "--gcmode=archive"
+      - "--syncmode=full"
+      - "--networkid=1337"
+      - "--http"
+      - "--http.addr=0.0.0.0"
+      - "--http.api=eth,net,web3,debug,trace,txpool"
+      - "--http.port=8545"
+      - "--http.corsdomain=*"
+      - "--http.vhosts=*"
+      - "--ws"
+      - "--ws.addr=0.0.0.0"
+      - "--ws.api=eth,net,web3,debug,trace,txpool"
+      - "--ws.port=8546"
+      - "--ws.origins=*"
+    ports:
+      - "8549:8545"
+      - "8550:8546"      
+    volumes:
+      - "./genesis/localnet.json:/datadir/localnet.json"
+      - "./genesis/keystore:/datadir/keystore"
+      - "./genesis/password.txt:/datadir/password.txt"
+    restart: always
+
   # faucet:
   #   build:
   #     context: "./"

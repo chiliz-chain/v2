@@ -200,6 +200,17 @@ func (r *StandardRegistry) GetAll() map[string]map[string]interface{} {
 			values["5m.rate"] = t.Rate5()
 			values["15m.rate"] = t.Rate15()
 			values["mean.rate"] = t.RateMean()
+		case *LabelledCounter:
+            metric.Each(func(labelValues []string, c Counter) {
+                key := ""
+                for i, label := range metric.Labels {
+                    if i > 0 {
+                        key += ","
+                    }
+                    key += fmt.Sprintf("%s=%s", label, labelValues[i])
+                }
+                values[key] = c.Snapshot().Count()
+            })
 		}
 		data[name] = values
 	})
@@ -214,7 +225,7 @@ func (r *StandardRegistry) Unregister(name string) {
 
 func (r *StandardRegistry) loadOrRegister(name string, i interface{}) (interface{}, bool, bool) {
 	switch i.(type) {
-	case Counter, CounterFloat64, Gauge, GaugeFloat64, GaugeInfo, Healthcheck, Histogram, Meter, Timer, ResettingTimer, Label:
+	case Counter, CounterFloat64, Gauge, GaugeFloat64, GaugeInfo, Healthcheck, Histogram, Meter, Timer, ResettingTimer, Label, *LabelledCounter:
 	default:
 		return nil, false, false
 	}

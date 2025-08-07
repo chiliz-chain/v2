@@ -1,0 +1,6 @@
+scrape_configs:
+  - job_name: 'geth'
+    metrics_path: /debug/metrics/prometheus
+    static_configs:
+      - targets: ['bootnode:6060']
+    scrape_interval: 3s
