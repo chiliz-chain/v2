@@ -24,9 +24,11 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"unicode"
 
+	"github.com/ethereum/go-ethereum/eth/catalyst"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -34,11 +36,13 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/accounts/scwallet"
 	"github.com/ethereum/go-ethereum/accounts/usbwallet"
+	"github.com/ethereum/go-ethereum/beacon/fakebeacon"
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/config"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/internal/flags"
@@ -57,7 +61,7 @@ var (
 		Name:        "dumpconfig",
 		Usage:       "Export configuration values in a TOML format",
 		ArgsUsage:   "<dumpfile (optional)>",
-		Flags:       flags.Merge(nodeFlags, rpcFlags),
+		Flags:       slices.Concat(nodeFlags, rpcFlags),
 		Description: `Export configuration values in TOML format (to stdout by default).`,
 	}
 
@@ -78,8 +82,8 @@ var tomlSettings = toml.Config{
 	},
 	MissingField: func(rt reflect.Type, field string) error {
 		id := fmt.Sprintf("%s.%s", rt.String(), field)
-		if deprecated(id) {
-			log.Warn("Config field is deprecated and won't have an effect", "name", id)
+		if deprecatedConfigFields[id] {
+			log.Warn(fmt.Sprintf("Config field '%s' is deprecated and won't have any effect.", id))
 			return nil
 		}
 		var link string
@@ -90,15 +94,29 @@ var tomlSettings = toml.Config{
 	},
 }
 
+var deprecatedConfigFields = map[string]bool{
+	"ethconfig.Config.EVMInterpreter":          true,
+	"ethconfig.Config.EWASMInterpreter":        true,
+	"ethconfig.Config.TrieCleanCacheJournal":   true,
+	"ethconfig.Config.TrieCleanCacheRejournal": true,
+	"ethconfig.Config.LightServ":               true,
+	"ethconfig.Config.LightIngress":            true,
+	"ethconfig.Config.LightEgress":             true,
+	"ethconfig.Config.LightPeers":              true,
+	"ethconfig.Config.LightNoPrune":            true,
+	"ethconfig.Config.LightNoSyncServe":        true,
+}
+
 type ethstatsConfig struct {
 	URL string `toml:",omitempty"`
 }
 
 type gethConfig struct {
-	Eth      ethconfig.Config
-	Node     node.Config
-	Ethstats ethstatsConfig
-	Metrics  metrics.Config
+	Eth        ethconfig.Config
+	Node       node.Config
+	Ethstats   ethstatsConfig
+	Metrics    metrics.Config
+	FakeBeacon fakebeacon.Config
 }
 
 func loadConfig(file string, cfg *gethConfig) error {
@@ -120,10 +138,10 @@ func defaultNodeConfig() node.Config {
 	git, _ := version.VCS()
 	cfg := node.DefaultConfig
 	cfg.Name = clientIdentifier
-	cfg.Version = params.VersionWithCommit(git.Commit, git.Date)
+	cfg.Version = version.WithCommit(git.Commit, git.Date)
 	cfg.HTTPModules = append(cfg.HTTPModules, "eth")
 	cfg.WSModules = append(cfg.WSModules, "eth")
-	cfg.IPCPath = "geth.ipc"
+	cfg.IPCPath = clientIdentifier + ".ipc"
 	return cfg
 }
 
@@ -173,6 +191,9 @@ func loadBaseConfig(ctx *cli.Context) gethConfig {
 		if err := loadConfig(file, &cfg); err != nil {
 			utils.Fatalf("%v", err)
 		}
+		// some default options could be overwritten after `loadConfig()`
+		// apply the default value if the options are not specified in config.toml file.
+		ethconfig.ApplyDefaultEthConfig(&cfg.Eth)
 	}
 
 	cfg.Eth.Genesis = readGenesisConfig(ctx)
@@ -210,7 +231,55 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
 	}
 	applyMetricConfig(ctx, &cfg)
 
+	// do some post loading config logic
+	if cfg.Eth.PruneAncientData {
+		if cfg.Eth.SyncMode != ethconfig.FullSync {
+			log.Warn("pruneancient parameter can only be used with syncmode=full, force to full sync")
+			cfg.Eth.SyncMode = ethconfig.FullSync
+		}
+		cfg.Eth.BlockHistory = params.FullImmutabilityThreshold
+	}
+
 	return stack, cfg
+}
+
+// constructs the disclaimer text block which will be printed in the logs upon
+// startup when Geth is running in dev mode.
+func constructDevModeBanner(ctx *cli.Context, cfg gethConfig) string {
+	devModeBanner := `You are running Geth in --dev mode. Please note the following:
+
+  1. This mode is only intended for fast, iterative development without assumptions on
+     security or persistence.
+  2. The database is created in memory unless specified otherwise. Therefore, shutting down
+     your computer or losing power will wipe your entire block data and chain state for
+     your dev environment.
+  3. A random, pre-allocated developer account will be available and unlocked as
+     eth.coinbase, which can be used for testing. The random dev account is temporary,
+     stored on a ramdisk, and will be lost if your machine is restarted.
+  4. Mining is enabled by default. However, the client will only seal blocks if transactions
+     are pending in the mempool. The miner's minimum accepted gas price is 1.
+  5. Networking is disabled; there is no listen-address, the maximum number of peers is set
+     to 0, and discovery is disabled.
+`
+	if !ctx.IsSet(utils.DataDirFlag.Name) {
+		devModeBanner += fmt.Sprintf(`
+
+ Running in ephemeral mode.  The following account has been prefunded in the genesis:
+
+       Account
+       ------------------
+       0x%x (10^49 ETH)
+`, cfg.Eth.Miner.Etherbase)
+		if cfg.Eth.Miner.Etherbase == utils.DeveloperAddr {
+			devModeBanner += fmt.Sprintf(` 
+       Private Key
+       ------------------
+       0x%x
+`, crypto.FromECDSA(utils.DeveloperKey))
+		}
+	}
+
+	return devModeBanner
 }
 
 // makeFullNode loads geth configuration and creates the Ethereum backend.
@@ -225,9 +294,17 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		v := ctx.Uint64(utils.OverridePassedForkTime.Name)
 		cfg.Eth.OverridePassedForkTime = &v
 	}
-	if ctx.IsSet(utils.OverrideBohr.Name) {
-		v := ctx.Uint64(utils.OverrideBohr.Name)
-		cfg.Eth.OverrideBohr = &v
+	if ctx.IsSet(utils.OverrideLorentz.Name) {
+		v := ctx.Uint64(utils.OverrideLorentz.Name)
+		cfg.Eth.OverrideLorentz = &v
+	}
+	if ctx.IsSet(utils.OverrideMaxwell.Name) {
+		v := ctx.Uint64(utils.OverrideMaxwell.Name)
+		cfg.Eth.OverrideMaxwell = &v
+	}
+	if ctx.IsSet(utils.OverrideFermi.Name) {
+		v := ctx.Uint64(utils.OverrideFermi.Name)
+		cfg.Eth.OverrideFermi = &v
 	}
 	if ctx.IsSet(utils.OverrideVerkle.Name) {
 		v := ctx.Uint64(utils.OverrideVerkle.Name)
@@ -239,6 +316,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 	}
 	if ctx.IsSet(utils.OverrideMinBlocksForBlobRequests.Name) {
 		params.MinBlocksForBlobRequests = ctx.Uint64(utils.OverrideMinBlocksForBlobRequests.Name)
+		params.MinTimeDurationForBlobRequests = uint64(float64(params.MinBlocksForBlobRequests) * 0.45 /*fermiBlockInterval*/)
 	}
 	if ctx.IsSet(utils.OverrideDefaultExtraReserveForBlobRequests.Name) {
 		params.DefaultExtraReserveForBlobRequests = ctx.Uint64(utils.OverrideDefaultExtraReserveForBlobRequests.Name)
@@ -278,11 +356,37 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		utils.RegisterEthStatsService(stack, backend, cfg.Ethstats.URL)
 	}
 
+	if ctx.IsSet(utils.DeveloperFlag.Name) {
+		// Start dev mode.
+		simBeacon, err := catalyst.NewSimulatedBeacon(ctx.Uint64(utils.DeveloperPeriodFlag.Name), cfg.Eth.Miner.Etherbase, eth)
+		if err != nil {
+			utils.Fatalf("failed to register dev mode catalyst service: %v", err)
+		}
+		catalyst.RegisterSimulatedBeaconAPIs(stack, simBeacon)
+		stack.RegisterLifecycle(simBeacon)
+
+		banner := constructDevModeBanner(ctx, cfg)
+		for _, line := range strings.Split(banner, "\n") {
+			log.Warn(line)
+		}
+	}
+
+	if ctx.IsSet(utils.FakeBeaconAddrFlag.Name) {
+		cfg.FakeBeacon.Addr = ctx.String(utils.FakeBeaconAddrFlag.Name)
+	}
+	if ctx.IsSet(utils.FakeBeaconPortFlag.Name) {
+		cfg.FakeBeacon.Port = ctx.Int(utils.FakeBeaconPortFlag.Name)
+	}
+	if cfg.FakeBeacon.Enable || ctx.IsSet(utils.FakeBeaconEnabledFlag.Name) {
+		go fakebeacon.NewService(&cfg.FakeBeacon, backend).Run()
+	}
+
 	git, _ := version.VCS()
-	utils.SetupMetrics(ctx,
+	utils.SetupMetrics(&cfg.Metrics,
 		utils.EnableBuildInfo(git.Commit, git.Date),
 		utils.EnableMinerInfo(ctx, &cfg.Eth.Miner),
 		utils.EnableNodeInfo(&cfg.Eth.TxPool, stack.Server().NodeInfo()),
+		utils.EnableNodeTrack(ctx, &cfg.Eth, stack),
 	)
 	return stack, backend
 }
@@ -321,6 +425,7 @@ func applyMetricConfig(ctx *cli.Context, cfg *gethConfig) {
 		cfg.Metrics.Enabled = ctx.Bool(utils.MetricsEnabledFlag.Name)
 	}
 	if ctx.IsSet(utils.MetricsEnabledExpensiveFlag.Name) {
+		log.Warn("Expensive metrics will remain in BSC and may be removed in the future", "flag", utils.MetricsEnabledExpensiveFlag.Name)
 		cfg.Metrics.EnabledExpensive = ctx.Bool(utils.MetricsEnabledExpensiveFlag.Name)
 	}
 	if ctx.IsSet(utils.MetricsHTTPFlag.Name) {
@@ -359,20 +464,26 @@ func applyMetricConfig(ctx *cli.Context, cfg *gethConfig) {
 	if ctx.IsSet(utils.MetricsInfluxDBOrganizationFlag.Name) {
 		cfg.Metrics.InfluxDBOrganization = ctx.String(utils.MetricsInfluxDBOrganizationFlag.Name)
 	}
-}
+	// Sanity-check the commandline flags. It is fine if some unused fields is part
+	// of the toml-config, but we expect the commandline to only contain relevant
+	// arguments, otherwise it indicates an error.
+	var (
+		enableExport   = ctx.Bool(utils.MetricsEnableInfluxDBFlag.Name)
+		enableExportV2 = ctx.Bool(utils.MetricsEnableInfluxDBV2Flag.Name)
+	)
+	if enableExport || enableExportV2 {
+		v1FlagIsSet := ctx.IsSet(utils.MetricsInfluxDBUsernameFlag.Name) ||
+			ctx.IsSet(utils.MetricsInfluxDBPasswordFlag.Name)
 
-func deprecated(field string) bool {
-	switch field {
-	case "ethconfig.Config.EVMInterpreter":
-		return true
-	case "ethconfig.Config.EWASMInterpreter":
-		return true
-	case "ethconfig.Config.TrieCleanCacheJournal":
-		return true
-	case "ethconfig.Config.TrieCleanCacheRejournal":
-		return true
-	default:
-		return false
+		v2FlagIsSet := ctx.IsSet(utils.MetricsInfluxDBTokenFlag.Name) ||
+			ctx.IsSet(utils.MetricsInfluxDBOrganizationFlag.Name) ||
+			ctx.IsSet(utils.MetricsInfluxDBBucketFlag.Name)
+
+		if enableExport && v2FlagIsSet {
+			utils.Fatalf("Flags --influxdb.metrics.organization, --influxdb.metrics.token, --influxdb.metrics.bucket are only available for influxdb-v2")
+		} else if enableExportV2 && v1FlagIsSet {
+			utils.Fatalf("Flags --influxdb.metrics.username, --influxdb.metrics.password are only available for influxdb-v1")
+		}
 	}
 }
 

@@ -22,7 +22,7 @@ package core
 import (
 	"fmt"
 	"math/big"
-	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -34,7 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/ethdb/pebble"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/hashdb"
@@ -1963,20 +1963,20 @@ func testSetHead(t *testing.T, tt *rewindTest, snapshots bool) {
 
 func testSetHeadWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme string) {
 	// It's hard to follow the test case, visualize the input
-	// log.Root().SetHandler(log.LvlFilterHandler(log.LvlTrace, log.StreamHandler(os.Stderr, log.TerminalFormat(true))))
+	// log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.LevelInfo, true)))
 	// fmt.Println(tt.dump(false))
 
 	// Create a temporary persistent database
 	datadir := t.TempDir()
-	ancient := path.Join(datadir, "ancient")
+	ancient := filepath.Join(datadir, "ancient")
 
-	db, err := rawdb.Open(rawdb.OpenOptions{
-		Directory:         datadir,
-		AncientsDirectory: ancient,
-		Ephemeral:         true,
-	})
+	pdb, err := pebble.New(datadir, 0, 0, "", false)
 	if err != nil {
-		t.Fatalf("Failed to create persistent database: %v", err)
+		t.Fatalf("Failed to create persistent key-value database: %v", err)
+	}
+	db, err := rawdb.Open(pdb, rawdb.OpenOptions{Ancient: ancient})
+	if err != nil {
+		t.Fatalf("Failed to create persistent freezer database: %v", err)
 	}
 	defer db.Close()
 
@@ -1986,28 +1986,29 @@ func testSetHeadWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme 
 			BaseFee: big.NewInt(params.InitialBaseFee),
 			Config:  params.AllEthashProtocolChanges,
 		}
-		engine = ethash.NewFullFaker()
-		config = &CacheConfig{
+		engine  = ethash.NewFullFaker()
+		options = &BlockChainConfig{
 			TrieCleanLimit: 256,
 			TrieDirtyLimit: 256,
 			TrieTimeLimit:  5 * time.Minute,
-			SnapshotLimit:  0, // Disable snapshot
+			SnapshotLimit:  0,  // disable snapshot
+			TxLookupLimit:  -1, // disable tx indexing
 			StateScheme:    scheme,
 		}
 	)
 	if snapshots {
-		config.SnapshotLimit = 256
-		config.SnapshotWait = true
+		options.SnapshotLimit = 256
+		options.SnapshotWait = true
 	}
-	config.TriesInMemory = 128
+	options.TriesInMemory = 128
 
 	if err = db.SetupFreezerEnv(&ethdb.FreezerEnv{
 		ChainCfg:         gspec.Config,
 		BlobExtraReserve: params.DefaultExtraReserveForBlobRequests,
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
 	}
-	chain, err := NewBlockChain(db, config, gspec, nil, engine, vm.Config{}, nil, nil)
+	chain, err := NewBlockChain(db, gspec, engine, options)
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
 	}
@@ -2032,7 +2033,7 @@ func testSetHeadWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme 
 	}
 	if tt.commitBlock > 0 {
 		chain.triedb.Commit(canonblocks[tt.commitBlock-1].Root(), false)
-		if snapshots {
+		if snapshots && scheme == rawdb.HashScheme {
 			if err := chain.snaps.Cap(canonblocks[tt.commitBlock-1].Root(), 0); err != nil {
 				t.Fatalf("Failed to flatten snapshots: %v", err)
 			}
@@ -2050,12 +2051,16 @@ func testSetHeadWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme 
 		dbconfig.HashDB = hashdb.Defaults
 	}
 	chain.triedb = triedb.NewDatabase(chain.db, dbconfig)
-	chain.stateCache = state.NewDatabaseWithNodeDB(chain.db, chain.triedb)
+	chain.statedb = state.NewDatabase(chain.triedb, chain.snaps)
 
 	// Force run a freeze cycle
 	type freezer interface {
 		Freeze(threshold uint64) error
 		Ancients() (uint64, error)
+	}
+	if tt.freezeThreshold < uint64(tt.canonicalBlocks) {
+		final := uint64(tt.canonicalBlocks) - tt.freezeThreshold
+		chain.SetFinalized(canonblocks[int(final)-1].Header())
 	}
 	db.(freezer).Freeze(tt.freezeThreshold)
 

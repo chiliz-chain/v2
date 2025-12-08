@@ -39,14 +39,10 @@ var DeprecatedFlags = []cli.Flag{
 	CacheTrieRejournalFlag,
 	LegacyDiscoveryV5Flag,
 	TxLookupLimitFlag,
-	LightServeFlag,
-	LightIngressFlag,
-	LightEgressFlag,
-	LightMaxPeersFlag,
-	LightNoPruneFlag,
-	LightNoSyncServeFlag,
 	LogBacktraceAtFlag,
 	LogDebugFlag,
+	MinerNewPayloadTimeoutFlag,
+	PruneAncientDataFlag,
 }
 
 var (
@@ -85,41 +81,6 @@ var (
 		Value:    ethconfig.Defaults.TransactionHistory,
 		Category: flags.DeprecatedCategory,
 	}
-	// Light server and client settings, Deprecated November 2023
-	LightServeFlag = &cli.IntFlag{
-		Name:     "light.serve",
-		Usage:    "Maximum percentage of time allowed for serving LES requests (deprecated)",
-		Value:    ethconfig.Defaults.LightServ,
-		Category: flags.LightCategory,
-	}
-	LightIngressFlag = &cli.IntFlag{
-		Name:     "light.ingress",
-		Usage:    "Incoming bandwidth limit for serving light clients (deprecated)",
-		Value:    ethconfig.Defaults.LightIngress,
-		Category: flags.LightCategory,
-	}
-	LightEgressFlag = &cli.IntFlag{
-		Name:     "light.egress",
-		Usage:    "Outgoing bandwidth limit for serving light clients (deprecated)",
-		Value:    ethconfig.Defaults.LightEgress,
-		Category: flags.LightCategory,
-	}
-	LightMaxPeersFlag = &cli.IntFlag{
-		Name:     "light.maxpeers",
-		Usage:    "Maximum number of light clients to serve, or light servers to attach to (deprecated)",
-		Value:    ethconfig.Defaults.LightPeers,
-		Category: flags.LightCategory,
-	}
-	LightNoPruneFlag = &cli.BoolFlag{
-		Name:     "light.nopruning",
-		Usage:    "Disable ancient light chain data pruning (deprecated)",
-		Category: flags.LightCategory,
-	}
-	LightNoSyncServeFlag = &cli.BoolFlag{
-		Name:     "light.nosyncserve",
-		Usage:    "Enables serving light clients before syncing (deprecated)",
-		Category: flags.LightCategory,
-	}
 	// Deprecated November 2023
 	LogBacktraceAtFlag = &cli.StringFlag{
 		Name:     "log.backtrace",
@@ -131,6 +92,30 @@ var (
 		Name:     "log.debug",
 		Usage:    "Prepends log messages with call-site location (deprecated)",
 		Category: flags.DeprecatedCategory,
+	}
+	// Deprecated February 2024
+	MinerNewPayloadTimeoutFlag = &cli.DurationFlag{
+		Name:     "miner.newpayload-timeout",
+		Usage:    "Specify the maximum time allowance for creating a new payload (deprecated)",
+		Value:    *ethconfig.Defaults.Miner.Recommit,
+		Category: flags.DeprecatedCategory,
+	}
+	MetricsEnabledExpensiveFlag = &cli.BoolFlag{
+		Name:     "metrics.expensive",
+		Usage:    "Enable expensive metrics collection and reporting (deprecated)",
+		Category: flags.DeprecatedCategory,
+	}
+	// Deprecated Oct 2024
+	EnablePersonal = &cli.BoolFlag{
+		Name:     "rpc.enabledeprecatedpersonal",
+		Usage:    "This used to enable the 'personal' namespace.",
+		Category: flags.DeprecatedCategory,
+	}
+	// Deprecated Dec 2024
+	PruneAncientDataFlag = &cli.BoolFlag{
+		Name:     "pruneancient",
+		Usage:    "Prune ancient data, is an optional config and disabled by default. Only keep the latest 9w blocks' data,the older blocks' data will be permanently pruned. Notice:the geth/chaindata/ancient dir will be removed, if restart without the flag, the ancient data will start with the previous point that the oldest unpruned block number. Recommends to the user who don't care about the ancient data.",
+		Category: flags.BlockHistoryCategory,
 	}
 )
 

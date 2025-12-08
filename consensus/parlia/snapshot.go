@@ -28,9 +28,8 @@ import (
 	"math/big"
 	"sort"
 
-	lru "github.com/hashicorp/golang-lru"
-
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -46,22 +45,24 @@ const validatorFrequencyPrecision = 1e3
 type Snapshot struct {
 	config   *params.ParliaConfig // Consensus engine parameters to fine tune behavior
 	ethAPI   *ethapi.BlockChainAPI
-	sigCache *lru.ARCCache // Cache of recent block signatures to speed up ecrecover
+	sigCache *lru.Cache[common.Hash, common.Address] // Cache of recent block signatures to speed up ecrecover
 
-	Number           uint64                            `json:"number"`                	// Block number where the snapshot was created
-	Hash             common.Hash                       `json:"hash"`                  	// Block hash where the snapshot was created
-	TurnLength       uint8                             `json:"turn_length"`           	// Length of `turn`, meaning the consecutive number of blocks a validator receives priority for block production
-	Validators       map[common.Address]*ValidatorInfo `json:"validators"`            	// Set of authorized validators at this moment
-	Recents          map[uint64]common.Address         `json:"recents"`               	// Set of recent validators for spam protections
-	RecentForkHashes map[uint64]string                 `json:"recent_fork_hashes"`    	// Set of recent forkHash
-	Attestation      *types.VoteData                   `json:"attestation:omitempty"` 	// Attestation for fast finality, but `Source` used as `Finalized`
-	isSnake8Fork     bool                              `json:"is_snake8_fork"`          // Flag indicating whether Snake8 fork activated
-	FrequencyRLP    []byte                             `json:"frequency_rlp,omitempty"` // RLP encoded frequency data for validator selection
+	Number           uint64                            `json:"number"`                  // Block number where the snapshot was created
+	Hash             common.Hash                       `json:"hash"`                    // Block hash where the snapshot was created
+	EpochLength      uint64                            `json:"epoch_length"`            // Number of Blocks in one epoch
+	BlockInterval    uint64                            `json:"block_interval"`          // Block Interval in milliseconds
+	TurnLength       uint8                             `json:"turn_length"`             // Length of `turn`, meaning the consecutive number of blocks a validator receives priority for block production
+	Validators       map[common.Address]*ValidatorInfo `json:"validators"`              // Set of authorized validators at this moment
+	Recents          map[uint64]common.Address         `json:"recents"`                 // Set of recent validators for spam protections
+	RecentForkHashes map[uint64]string                 `json:"recent_fork_hashes"`      // Set of recent forkHash
+	Attestation      *types.VoteData                   `json:"attestation:omitempty"`   // Attestation for fast finality, but `Source` used as `Finalized`
+	IsSnake8Fork     bool                              `json:"is_snake8_fork"`          // Flag indicating whether Snake8 fork activated
+	FrequencyRLP     []byte                            `json:"frequency_rlp,omitempty"` // RLP encoded frequency data for validator selection
 }
 
 type ValidatorInfo struct {
-	Index          int                `json:"index:omitempty"` // The index should offset by 1
-	VoteAddress    types.BLSPublicKey `json:"vote_address,omitempty"`
+	Index       int                `json:"index:omitempty"` // The index should offset by 1
+	VoteAddress types.BLSPublicKey `json:"vote_address,omitempty"`
 }
 
 // newSnapshot creates a new snapshot with the specified startup parameters. This
@@ -69,7 +70,7 @@ type ValidatorInfo struct {
 // the genesis block.
 func newSnapshot(
 	config *params.ParliaConfig,
-	sigCache *lru.ARCCache,
+	sigCache *lru.Cache[common.Hash, common.Address],
 	number uint64,
 	hash common.Hash,
 	validators []common.Address,
@@ -83,11 +84,13 @@ func newSnapshot(
 		sigCache:         sigCache,
 		Number:           number,
 		Hash:             hash,
+		EpochLength:      defaultEpochLength,
+		BlockInterval:    defaultBlockInterval,
 		TurnLength:       defaultTurnLength,
 		Recents:          make(map[uint64]common.Address),
 		RecentForkHashes: make(map[uint64]string),
 		Validators:       make(map[common.Address]*ValidatorInfo),
-		isSnake8Fork:       isSnake8Fork,
+		IsSnake8Fork:     isSnake8Fork,
 	}
 	for idx, v := range validators {
 		// The luban fork from the genesis block
@@ -118,7 +121,7 @@ func (s validatorsAscending) Less(i, j int) bool { return bytes.Compare(s[i][:],
 func (s validatorsAscending) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
 // loadSnapshot loads an existing snapshot from the database.
-func loadSnapshot(config *params.ParliaConfig, sigCache *lru.ARCCache, db ethdb.Database, hash common.Hash, ethAPI *ethapi.BlockChainAPI, isSnake8Fork bool) (*Snapshot, error) {
+func loadSnapshot(config *params.ParliaConfig, sigCache *lru.Cache[common.Hash, common.Address], db ethdb.Database, hash common.Hash, ethAPI *ethapi.BlockChainAPI, isSnake8Fork bool) (*Snapshot, error) {
 	blob, err := db.Get(append([]byte("parlia-"), hash[:]...))
 	if err != nil {
 		return nil, err
@@ -126,6 +129,12 @@ func loadSnapshot(config *params.ParliaConfig, sigCache *lru.ARCCache, db ethdb.
 	snap := new(Snapshot)
 	if err := json.Unmarshal(blob, snap); err != nil {
 		return nil, err
+	}
+	if snap.EpochLength == 0 { // no EpochLength field in old snapshots
+		snap.EpochLength = defaultEpochLength
+	}
+	if snap.BlockInterval == 0 { // no BlockInterval field in old snapshots
+		snap.BlockInterval = defaultBlockInterval
 	}
 	if snap.TurnLength == 0 { // no TurnLength field in old snapshots
 		snap.TurnLength = defaultTurnLength
@@ -138,7 +147,7 @@ func loadSnapshot(config *params.ParliaConfig, sigCache *lru.ARCCache, db ethdb.
 	snap.config = config
 	snap.sigCache = sigCache
 	snap.ethAPI = ethAPI
-	snap.isSnake8Fork = isSnake8Fork
+	snap.IsSnake8Fork = isSnake8Fork
 
 	return snap, nil
 }
@@ -160,17 +169,19 @@ func (s *Snapshot) copy() *Snapshot {
 		sigCache:         s.sigCache,
 		Number:           s.Number,
 		Hash:             s.Hash,
+		EpochLength:      s.EpochLength,
+		BlockInterval:    s.BlockInterval,
 		TurnLength:       s.TurnLength,
 		Validators:       make(map[common.Address]*ValidatorInfo),
 		Recents:          make(map[uint64]common.Address),
 		RecentForkHashes: make(map[uint64]string),
-		isSnake8Fork:       s.isSnake8Fork,
+		IsSnake8Fork:     s.IsSnake8Fork,
 	}
 
 	for v := range s.Validators {
 		cpy.Validators[v] = &ValidatorInfo{
-			Index:          s.Validators[v].Index,
-			VoteAddress:    s.Validators[v].VoteAddress,
+			Index:       s.Validators[v].Index,
+			VoteAddress: s.Validators[v].VoteAddress,
 		}
 	}
 	for block, v := range s.Recents {
@@ -200,26 +211,28 @@ func (s *Snapshot) isMajorityFork(forkHash string) bool {
 	return ally > len(s.RecentForkHashes)/2
 }
 
-func (s *Snapshot) updateAttestation(header *types.Header, chainConfig *params.ChainConfig, parliaConfig *params.ParliaConfig) {
+func (s *Snapshot) updateAttestation(header *types.Header, chainConfig *params.ChainConfig) {
 	if !chainConfig.IsLuban(header.Number) {
 		return
 	}
 
 	// The attestation should have been checked in verify header, update directly
-	attestation, _ := getVoteAttestationFromHeader(header, chainConfig, parliaConfig)
+	attestation, _ := getVoteAttestationFromHeader(header, chainConfig, s.EpochLength)
 	if attestation == nil {
 		return
 	}
 
 	// Headers with bad attestation are accepted before Plato upgrade,
-	// but Attestation of snapshot is only updated when the target block is direct parent of the header
-	targetNumber := attestation.Data.TargetNumber
-	targetHash := attestation.Data.TargetHash
-	if targetHash != header.ParentHash || targetNumber+1 != header.Number.Uint64() {
-		log.Warn("updateAttestation failed", "error", fmt.Errorf("invalid attestation, target mismatch, expected block: %d, hash: %s; real block: %d, hash: %s",
-			header.Number.Uint64()-1, header.ParentHash, targetNumber, targetHash))
-		updateAttestationErrorCounter.Inc(1)
-		return
+	// but Attestation of snapshot is only updated when the target block is direct parent of the header before Fermi upgrade
+	if !chainConfig.IsFermi(header.Number, header.Time) {
+		targetNumber := attestation.Data.TargetNumber
+		targetHash := attestation.Data.TargetHash
+		if targetHash != header.ParentHash || targetNumber+1 != header.Number.Uint64() {
+			log.Warn("updateAttestation failed", "error", fmt.Errorf("invalid attestation, target mismatch, expected block: %d, hash: %s; real block: %d, hash: %s",
+				header.Number.Uint64()-1, header.ParentHash, targetNumber, targetHash))
+			updateAttestationErrorCounter.Inc(1)
+			return
+		}
 	}
 
 	// Update attestation
@@ -273,8 +286,15 @@ func (s *Snapshot) SignRecently(validator common.Address) bool {
 	return s.signRecentlyByCounts(validator, s.countRecents())
 }
 
+func (s *Snapshot) getFinalizedNumber() uint64 {
+	if s.Attestation != nil {
+		return s.Attestation.SourceNumber
+	}
+	return 0
+}
+
 func (s *Snapshot) apply(headers []*types.Header, chain consensus.ChainHeaderReader, parents []*types.Header, chainConfig *params.ChainConfig, isSnake8Fork bool) (*Snapshot, error) {
-	s.isSnake8Fork = isSnake8Fork
+	s.IsSnake8Fork = isSnake8Fork
 	// Allow passing in no headers for cleaner code
 	if len(headers) == 0 {
 		return s, nil
@@ -319,7 +339,7 @@ func (s *Snapshot) apply(headers []*types.Header, chain consensus.ChainHeaderRea
 				return nil, errRecentlySigned
 			}
 		} else {
-			if !snap.isSnake8Fork {
+			if !snap.IsSnake8Fork {
 				for _, recent := range snap.Recents {
 					if recent == validator {
 						return nil, errRecentlySigned
@@ -327,12 +347,46 @@ func (s *Snapshot) apply(headers []*types.Header, chain consensus.ChainHeaderRea
 				}
 			}
 		}
+
+		snap.updateAttestation(header, chainConfig)
+
 		snap.Recents[number] = validator
+		if chainConfig.IsMaxwell(header.Number, header.Time) {
+			latestFinalizedBlockNumber := snap.getFinalizedNumber()
+			// BEP-524: Clear entries up to the latest finalized block
+			for blockNumber := range snap.Recents {
+				if blockNumber <= latestFinalizedBlockNumber {
+					delete(snap.Recents, blockNumber)
+				}
+			}
+		}
+
 		snap.RecentForkHashes[number] = hex.EncodeToString(header.Extra[extraVanity-nextForkHashSize : extraVanity])
-		snap.updateAttestation(header, chainConfig, s.config)
+
+		if chainConfig.IsFermi(header.Number, header.Time) {
+			snap.BlockInterval = fermiBlockInterval
+		} else if chainConfig.IsMaxwell(header.Number, header.Time) {
+			snap.BlockInterval = maxwellBlockInterval
+		} else if chainConfig.IsLorentz(header.Number, header.Time) {
+			snap.BlockInterval = lorentzBlockInterval
+		}
+
+		epochLength := snap.EpochLength
+		nextBlockNumber := header.Number.Uint64() + 1
+		if snap.EpochLength == defaultEpochLength &&
+			chainConfig.IsLorentz(header.Number, header.Time) &&
+			// Without this condition, an incorrect block might be used to parse validators for certain blocks after the Lorentz hard fork.
+			nextBlockNumber%lorentzEpochLength == 0 {
+			snap.EpochLength = lorentzEpochLength
+		}
+		if snap.EpochLength == lorentzEpochLength &&
+			chainConfig.IsMaxwell(header.Number, header.Time) &&
+			nextBlockNumber%maxwellEpochLength == 0 {
+			snap.EpochLength = maxwellEpochLength
+		}
 		// change validator set
-		if number > 0 && number%s.config.Epoch == snap.minerHistoryCheckLen() {
-			epochKey := math.MaxUint64 - header.Number.Uint64()/s.config.Epoch // impossible used as a block number
+		if number > 0 && number%epochLength == snap.minerHistoryCheckLen() {
+			epochKey := math.MaxUint64 - header.Number.Uint64()/epochLength // impossible used as a block number
 			if chainConfig.IsBohr(header.Number, header.Time) {
 				// after switching the validator set, snap.Validators may become larger,
 				// then the unexpected second switch will happen, just skip it.
@@ -348,7 +402,7 @@ func (s *Snapshot) apply(headers []*types.Header, chain consensus.ChainHeaderRea
 
 			oldVersionsLen := snap.versionHistoryCheckLen()
 			// get turnLength from headers and use that for new turnLength
-			turnLength, err := parseTurnLength(checkpointHeader, chainConfig, s.config)
+			turnLength, err := parseTurnLength(checkpointHeader, chainConfig, epochLength)
 			if err != nil {
 				return nil, err
 			}
@@ -358,7 +412,7 @@ func (s *Snapshot) apply(headers []*types.Header, chain consensus.ChainHeaderRea
 			}
 
 			// get validators from headers and use that for new validator set
-			newValArr, voteAddrs, err := parseValidators(checkpointHeader, chainConfig, s.config)
+			newValArr, voteAddrs, err := parseValidators(checkpointHeader, chainConfig, epochLength)
 			if err != nil {
 				return nil, err
 			}
@@ -428,7 +482,7 @@ func (s *Snapshot) inturnValidator() common.Address {
 	// as it depends on validator stakes, which will not
 	// be available until block 0 is validated
 	// (stakes are stored in staking system contract)
-	if s.Number == 0 || !s.isSnake8Fork {
+	if s.Number == 0 || !s.IsSnake8Fork {
 		return s.selectValidatorRoundRobin()
 	}
 
@@ -445,6 +499,38 @@ func (s *Snapshot) selectValidatorRoundRobin() common.Address {
 	return validators[offset]
 }
 
+func (s *Snapshot) nexValidatorsChangeBlock() uint64 {
+	epochLength := s.EpochLength
+	currentEpoch := s.Number - s.Number%epochLength
+	checkLen := s.minerHistoryCheckLen()
+	if s.Number%epochLength < checkLen {
+		return currentEpoch + checkLen
+	}
+	return currentEpoch + epochLength + checkLen
+}
+
+// nextProposalBlock returns the validator next proposal block.
+func (s *Snapshot) nextProposalBlock(proposer common.Address) (uint64, uint64, error) {
+	validators := s.validators()
+	currentIndex := int(s.Number / uint64(s.TurnLength) % uint64(len(validators)))
+	expectIndex := s.indexOfVal(proposer)
+	if expectIndex < 0 {
+		return 0, 0, errors.New("proposer not in validator set")
+	}
+	startBlock := s.Number + uint64(((expectIndex+len(validators)-currentIndex)%len(validators))*int(s.TurnLength))
+	startBlock = startBlock - startBlock%uint64(s.TurnLength)
+	endBlock := startBlock + uint64(s.TurnLength) - 1
+
+	changeValidatorsBlock := s.nexValidatorsChangeBlock()
+	if startBlock >= changeValidatorsBlock {
+		return 0, 0, errors.New("next proposal block is out of current epoch")
+	}
+	if endBlock >= changeValidatorsBlock {
+		endBlock = changeValidatorsBlock
+	}
+	return startBlock, endBlock, nil
+}
+
 func (s *Snapshot) enoughDistance(validator common.Address, header *types.Header) bool {
 	idx := s.indexOfVal(validator)
 	if idx < 0 {
@@ -458,7 +544,7 @@ func (s *Snapshot) enoughDistance(validator common.Address, header *types.Header
 		return false
 	}
 
-	if s.isSnake8Fork {
+	if s.IsSnake8Fork {
 		return !s.SignRecently(validator)
 	}
 
@@ -486,57 +572,56 @@ func (s *Snapshot) indexOfVal(validator common.Address) int {
 
 // getValidatorBytesFromHeader retrieves the validator frequency data bytes from the header.Extra
 // Header.Extra after snake8 fork:   |---Extra Vanity---|---Validators Bytes (or Empty) ---|---Turn Length (or Empty)---/---Vote Attestation (or Empty)---/---Frequency Data Prefix---|---Parent Timestamp---|---Frequency data---|---Extra Seal---|
-func parseValidatorFrequencies(header *types.Header, chainConfig *params.ChainConfig, parliaConfig *params.ParliaConfig) ([]byte, error) {
-    if !chainConfig.IsSnake8(header.Time) {
-        return nil, fmt.Errorf("block %d: not a Snake8 fork block", header.Number.Uint64())
-    }
+func parseValidatorFrequencies(header *types.Header, chainConfig *params.ChainConfig) ([]byte, error) {
+	if !chainConfig.IsSnake8(header.Time) {
+		return nil, fmt.Errorf("block %d: not a Snake8 fork block", header.Number.Uint64())
+	}
 
-    if len(header.Extra) <= extraVanity+extraSeal {
-        return nil, fmt.Errorf("block %d: insufficient extra data", header.Number.Uint64())
-    }
+	if len(header.Extra) <= extraVanity+extraSeal {
+		return nil, fmt.Errorf("block %d: insufficient extra data", header.Number.Uint64())
+	}
 
-    // Non-epoch blocks do not have validator data
-    if header.Number.Uint64()%parliaConfig.Epoch != 0 {
-    	return header.Extra[extraVanity+len(validatorFrequencyDataPrefix)+8 : len(header.Extra)-extraSeal], nil
-    }
+	// Non-epoch blocks do not have validator data
+	if header.Number.Uint64()%chainConfig.Parlia.Epoch != 0 {
+		return header.Extra[extraVanity+len(validatorFrequencyDataPrefix)+8 : len(header.Extra)-extraSeal], nil
+	}
 
-    // Start parsing after vanity
-    start := extraVanity
-    end := len(header.Extra) - extraSeal
+	// Start parsing after vanity
+	start := extraVanity
+	end := len(header.Extra) - extraSeal
 
-    // Skip validator data (only on epoch blocks)
-    if !chainConfig.IsLuban(header.Number) {
-        // Before Luban: validators are 20 bytes each, no count byte
-        // Calculate validator count by using getValidatorBytesFromHeader logic
-        validatorBytes := getValidatorBytesFromHeader(header, chainConfig, parliaConfig)
-        if validatorBytes != nil {
-            start += len(validatorBytes)
-        }
-    } else {
-        // After Luban: first byte is count, then count * 68 bytes
-        if start >= end {
-            return nil, fmt.Errorf("block %d: no validator count byte", header.Number.Uint64())
-        }
-        num := int(header.Extra[start])
-        start += validatorNumberSize
-        start += num * validatorBytesLength
-    }
+	// Skip validator data (only on epoch blocks)
+	if !chainConfig.IsLuban(header.Number) {
+		// Before Luban: validators are 20 bytes each, no count byte
+		// Calculate validator count by using getValidatorBytesFromHeader logic
+		validatorBytes := getValidatorBytesFromHeader(header, chainConfig, chainConfig.Parlia.Epoch)
+		if validatorBytes != nil {
+			start += len(validatorBytes)
+		}
+	} else {
+		// After Luban: first byte is count, then count * 68 bytes
+		if start >= end {
+			return nil, fmt.Errorf("block %d: no validator count byte", header.Number.Uint64())
+		}
+		num := int(header.Extra[start])
+		start += validatorNumberSize
+		start += num * validatorBytesLength
+	}
 
-    // Skip turn length (only on Bohr fork epoch blocks)
-    if chainConfig.IsBohr(header.Number, header.Time) {
-        start += turnLengthSize
-    }
+	// Skip turn length (only on Bohr fork epoch blocks)
+	if chainConfig.IsBohr(header.Number, header.Time) {
+		start += turnLengthSize
+	}
 
-    if end <= start {
+	if end <= start {
 		return nil, fmt.Errorf("block %d: no validator frequencies data", header.Number.Uint64())
 	}
 
-    return header.Extra[start+len(validatorFrequencyDataPrefix)+8:end], nil
+	return header.Extra[start+len(validatorFrequencyDataPrefix)+8 : end], nil
 }
 
-
-func parseValidators(header *types.Header, chainConfig *params.ChainConfig, parliaConfig *params.ParliaConfig) ([]common.Address, []types.BLSPublicKey, error) {
-	validatorsBytes := getValidatorBytesFromHeader(header, chainConfig, parliaConfig)
+func parseValidators(header *types.Header, chainConfig *params.ChainConfig, epochLength uint64) ([]common.Address, []types.BLSPublicKey, error) {
+	validatorsBytes := getValidatorBytesFromHeader(header, chainConfig, epochLength)
 	if len(validatorsBytes) == 0 {
 		return nil, nil, errors.New("invalid validators bytes")
 	}
@@ -560,8 +645,8 @@ func parseValidators(header *types.Header, chainConfig *params.ChainConfig, parl
 	return cnsAddrs, voteAddrs, nil
 }
 
-func parseTurnLength(header *types.Header, chainConfig *params.ChainConfig, parliaConfig *params.ParliaConfig) (*uint8, error) {
-	if header.Number.Uint64()%parliaConfig.Epoch != 0 ||
+func parseTurnLength(header *types.Header, chainConfig *params.ChainConfig, epochLength uint64) (*uint8, error) {
+	if header.Number.Uint64()%epochLength != 0 ||
 		!chainConfig.IsBohr(header.Number, header.Time) {
 		return nil, nil
 	}
@@ -611,12 +696,12 @@ func (s *Snapshot) calcFrequencyRLP(stakes map[common.Address]*big.Int) ([]byte,
 		Frequency *big.Int
 	}
 
-	decimals := big.NewInt(1e18)     						 // Number of decimals to trim from staked amounts
-	precision := big.NewInt(validatorFrequencyPrecision)     // Target total frequency (100%)
-	const minFrequencyFactor = 2           					 // f_min = 1 / (2 * N)
-	const maxIterations = 10                                 // Prevent infinite loops during normalization
-	var candidates []CandidateEntry  						 // List of candidates with their frequencies
-	totalDelegated := new(big.Int)	 						 // Total delegated amount across all candidates
+	decimals := big.NewInt(1e18)                         // Number of decimals to trim from staked amounts
+	precision := big.NewInt(validatorFrequencyPrecision) // Target total frequency (100%)
+	const minFrequencyFactor = 2                         // f_min = 1 / (2 * N)
+	const maxIterations = 10                             // Prevent infinite loops during normalization
+	var candidates []CandidateEntry                      // List of candidates with their frequencies
+	totalDelegated := new(big.Int)                       // Total delegated amount across all candidates
 
 	// Step 1: Fetch the stakes from the contract & calculate total delegated amount
 	for addr := range s.Validators {
@@ -705,16 +790,16 @@ func (s *Snapshot) calcFrequencyRLP(stakes map[common.Address]*big.Int) ([]byte,
 // selectValidatorFromFrequencyRLP selects the inturn validator based on frequency data RLP and block number
 func (s *Snapshot) selectValidatorFromFrequencyRLP(freqRLP []byte) common.Address {
 	type CandidateEntry struct {
-        Address   common.Address
-        Frequency *big.Int
-    }
+		Address   common.Address
+		Frequency *big.Int
+	}
 
-    var candidates []CandidateEntry
-    err := rlp.DecodeBytes(freqRLP, &candidates)
-    if err != nil {
-    	log.Error("selectValidatorFromFrequencyRLP failed", err, "freq", hex.EncodeToString(freqRLP))
-        return common.Address{}
-    }
+	var candidates []CandidateEntry
+	err := rlp.DecodeBytes(freqRLP, &candidates)
+	if err != nil {
+		log.Error("selectValidatorFromFrequencyRLP failed", err, "freq", hex.EncodeToString(freqRLP))
+		return common.Address{}
+	}
 
 	if len(candidates) == 0 {
 		return common.Address{}

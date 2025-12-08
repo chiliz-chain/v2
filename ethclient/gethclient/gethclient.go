@@ -29,9 +29,13 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/eth/tracers"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/rpc"
 )
+
+// MaxGetProofKeys is the maximum number of keys allowed in a GetProof request
+const MaxGetProofKeys = 512
 
 // Client is a wrapper around rpc.Client that implements geth-specific functionality.
 //
@@ -100,6 +104,14 @@ func (ec *Client) GetProof(ctx context.Context, account common.Address, keys []s
 	// Avoid keys being 'null'.
 	if keys == nil {
 		keys = []string{}
+	} else {
+		// Remove duplicate keys
+		keys = removeDuplicates(keys)
+	}
+
+	// Reject requests with too many keys
+	if len(keys) > MaxGetProofKeys {
+		return nil, fmt.Errorf("too many keys: %d (maximum %d)", len(keys), MaxGetProofKeys)
 	}
 
 	var res accountResult
@@ -204,6 +216,17 @@ func (ec *Client) SubscribePendingTransactions(ctx context.Context, ch chan<- co
 	return ec.c.EthSubscribe(ctx, ch, "newPendingTransactions")
 }
 
+// TraceTransaction returns the structured logs created during the execution of EVM
+// and returns them as a JSON object.
+func (ec *Client) TraceTransaction(ctx context.Context, hash common.Hash, config *tracers.TraceConfig) (any, error) {
+	var result any
+	err := ec.c.CallContext(ctx, &result, "debug_traceTransaction", hash.Hex(), config)
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func toBlockNumArg(number *big.Int) string {
 	if number == nil {
 		return "latest"
@@ -250,6 +273,9 @@ func toCallArg(msg ethereum.CallMsg) interface{} {
 	}
 	if msg.BlobHashes != nil {
 		arg["blobVersionedHashes"] = msg.BlobHashes
+	}
+	if msg.AuthorizationList != nil {
+		arg["authorizationList"] = msg.AuthorizationList
 	}
 	return arg
 }
@@ -328,9 +354,9 @@ func (o BlockOverrides) MarshalJSON() ([]byte, error) {
 		Difficulty *hexutil.Big    `json:"difficulty,omitempty"`
 		Time       hexutil.Uint64  `json:"time,omitempty"`
 		GasLimit   hexutil.Uint64  `json:"gasLimit,omitempty"`
-		Coinbase   *common.Address `json:"coinbase,omitempty"`
-		Random     *common.Hash    `json:"random,omitempty"`
-		BaseFee    *hexutil.Big    `json:"baseFee,omitempty"`
+		Coinbase   *common.Address `json:"feeRecipient,omitempty"`
+		Random     *common.Hash    `json:"prevRandao,omitempty"`
+		BaseFee    *hexutil.Big    `json:"baseFeePerGas,omitempty"`
 	}
 
 	output := override{
@@ -347,4 +373,22 @@ func (o BlockOverrides) MarshalJSON() ([]byte, error) {
 		output.Random = &o.Random
 	}
 	return json.Marshal(output)
+}
+
+// removeDuplicates removes duplicate values from a string slice while preserving order
+func removeDuplicates(slice []string) []string {
+	seen := make(map[string]struct{})
+	result := make([]string, 0, len(slice))
+
+	for _, item := range slice {
+		// Skip empty strings because they are considered invalid or irrelevant in this context.
+		if item == "" {
+			continue
+		}
+		if _, exists := seen[item]; !exists {
+			seen[item] = struct{}{}
+			result = append(result, item)
+		}
+	}
+	return result
 }

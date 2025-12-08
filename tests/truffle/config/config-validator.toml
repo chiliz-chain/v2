@@ -3,13 +3,16 @@ NetworkId = {{NetworkId}}
 SyncMode = "full"
 NoPruning = false
 NoPrefetch = false
-LightPeers = 100
 DatabaseCache = 512
 DatabaseFreezer = ""
 TrieCleanCache = 256
 TrieDirtyCache = 256
 TrieTimeout = 6000000000
 EnablePreimageRecording = false
+
+[Eth.Miner]
+GasCeil = 100000000
+GasPrice = 100000000
 
 [Eth.GPO]
 Blocks = 20

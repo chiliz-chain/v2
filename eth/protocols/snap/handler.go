@@ -23,6 +23,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -31,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enr"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/trie/trienode"
+	"github.com/ethereum/go-ethereum/triedb/database"
 )
 
 const (
@@ -82,17 +85,9 @@ type Backend interface {
 }
 
 // MakeProtocols constructs the P2P protocol definitions for `snap`.
-func MakeProtocols(backend Backend, dnsdisc enode.Iterator) []p2p.Protocol {
-	// Filter the discovery iterator for nodes advertising snap support.
-	dnsdisc = enode.Filter(dnsdisc, func(n *enode.Node) bool {
-		var snap enrEntry
-		return n.Load(&snap) == nil
-	})
-
+func MakeProtocols(backend Backend) []p2p.Protocol {
 	protocols := make([]p2p.Protocol, len(ProtocolVersions))
 	for i, version := range ProtocolVersions {
-		version := version // Closure
-
 		protocols[i] = p2p.Protocol{
 			Name:    ProtocolName,
 			Version: version,
@@ -108,8 +103,7 @@ func MakeProtocols(backend Backend, dnsdisc enode.Iterator) []p2p.Protocol {
 			PeerInfo: func(id enode.ID) interface{} {
 				return backend.PeerInfo(id)
 			},
-			Attributes:     []enr.Entry{&enrEntry{}},
-			DialCandidates: dnsdisc,
+			Attributes: []enr.Entry{&enrEntry{}},
 		}
 	}
 	return protocols
@@ -141,7 +135,7 @@ func HandleMessage(backend Backend, peer *Peer) error {
 	defer msg.Discard()
 	start := time.Now()
 	// Track the amount of time it takes to serve the request and run the handler
-	if metrics.Enabled {
+	if metrics.Enabled() {
 		h := fmt.Sprintf("%s/%s/%d/%#02x", p2p.HandleHistName, ProtocolName, peer.Version(), msg.Code)
 		defer func(start time.Time) {
 			sampler := func() metrics.Sample {
@@ -288,7 +282,16 @@ func ServiceGetAccountRangeQuery(chain *core.BlockChain, req *GetAccountRangePac
 	if err != nil {
 		return nil, nil
 	}
-	it, err := chain.Snapshots().AccountIterator(req.Root, req.Origin)
+	// Temporary solution: using the snapshot interface for both cases.
+	// This can be removed once the hash scheme is deprecated.
+	var it snapshot.AccountIterator
+	if chain.TrieDB().Scheme() == rawdb.HashScheme {
+		// The snapshot is assumed to be available in hash mode if
+		// the SNAP protocol is enabled.
+		it, err = chain.Snapshots().AccountIterator(req.Root, req.Origin)
+	} else {
+		it, err = chain.TrieDB().AccountIterator(req.Root, req.Origin)
+	}
 	if err != nil {
 		return nil, nil
 	}
@@ -332,11 +335,7 @@ func ServiceGetAccountRangeQuery(chain *core.BlockChain, req *GetAccountRangePac
 			return nil, nil
 		}
 	}
-	var proofs [][]byte
-	for _, blob := range proof.List() {
-		proofs = append(proofs, blob)
-	}
-	return accounts, proofs
+	return accounts, proof.List()
 }
 
 func ServiceGetStorageRangesQuery(chain *core.BlockChain, req *GetStorageRangesPacket) ([][]*StorageData, [][]byte) {
@@ -372,7 +371,19 @@ func ServiceGetStorageRangesQuery(chain *core.BlockChain, req *GetStorageRangesP
 			limit, req.Limit = common.BytesToHash(req.Limit), nil
 		}
 		// Retrieve the requested state and bail out if non existent
-		it, err := chain.Snapshots().StorageIterator(req.Root, account, origin)
+		var (
+			err error
+			it  snapshot.StorageIterator
+		)
+		// Temporary solution: using the snapshot interface for both cases.
+		// This can be removed once the hash scheme is deprecated.
+		if chain.TrieDB().Scheme() == rawdb.HashScheme {
+			// The snapshot is assumed to be available in hash mode if
+			// the SNAP protocol is enabled.
+			it, err = chain.Snapshots().StorageIterator(req.Root, account, origin)
+		} else {
+			it, err = chain.TrieDB().StorageIterator(req.Root, account, origin)
+		}
 		if err != nil {
 			return nil, nil
 		}
@@ -438,9 +449,7 @@ func ServiceGetStorageRangesQuery(chain *core.BlockChain, req *GetStorageRangesP
 					return nil, nil
 				}
 			}
-			for _, blob := range proof.List() {
-				proofs = append(proofs, blob)
-			}
+			proofs = append(proofs, proof.List()...)
 			// Proof terminates the reply as proofs are only added if a node
 			// refuses to serve more data (exception when a contract fetch is
 			// finishing, but that's that).
@@ -469,7 +478,7 @@ func ServiceGetByteCodesQuery(chain *core.BlockChain, req *GetByteCodesPacket) [
 			// Peers should not request the empty code, but if they do, at
 			// least sent them back a correct response without db lookups
 			codes = append(codes, []byte{})
-		} else if blob, err := chain.ContractCodeWithPrefix(hash); err == nil {
+		} else if blob := chain.ContractCodeWithPrefix(hash); len(blob) > 0 {
 			codes = append(codes, blob)
 			bytes += uint64(len(blob))
 		}
@@ -494,8 +503,15 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket, s
 		// We don't have the requested state available, bail out
 		return nil, nil
 	}
-	// The 'snap' might be nil, in which case we cannot serve storage slots.
-	snap := chain.Snapshots().Snapshot(req.Root)
+	// The 'reader' might be nil, in which case we cannot serve storage slots
+	// via snapshot.
+	var reader database.StateReader
+	if chain.Snapshots() != nil {
+		reader = chain.Snapshots().Snapshot(req.Root)
+	}
+	if reader == nil {
+		reader, _ = triedb.StateReader(req.Root)
+	}
 	// Retrieve trie nodes until the packet size limit is reached
 	var (
 		nodes [][]byte
@@ -520,8 +536,9 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket, s
 
 		default:
 			var stRoot common.Hash
+
 			// Storage slots requested, open the storage trie and retrieve from there
-			if snap == nil {
+			if reader == nil {
 				// We don't have the requested state snapshotted yet (or it is stale),
 				// but can look up the account via the trie instead.
 				account, err := accTrie.GetAccountByHash(common.BytesToHash(pathset[0]))
@@ -531,7 +548,7 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket, s
 				}
 				stRoot = account.Root
 			} else {
-				account, err := snap.Account(common.BytesToHash(pathset[0]))
+				account, err := reader.Account(common.BytesToHash(pathset[0]))
 				loads++ // always account database reads, even for failures
 				if err != nil || account == nil {
 					break

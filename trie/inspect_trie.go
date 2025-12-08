@@ -25,13 +25,14 @@ import (
 )
 
 type Database interface {
-	database.Database
+	database.NodeDatabase
 	Scheme() string
 	Cap(limit common.StorageSize) error
-	DiskDB() ethdb.Database
+	Disk() ethdb.Database
 }
 
 const TopN = 3
+const DEFAULT_TRIEDBCACHE_SIZE = 1024 * 1024 * 1024
 
 type Inspector struct {
 	trie           *Trie // traverse trie

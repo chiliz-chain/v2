@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strings"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -42,8 +41,7 @@ func Handler(reg metrics.Registry) http.Handler {
 
 		for _, name := range names {
 			i := reg.Get(name)
-			cleanedName := strings.ReplaceAll(name, ".", "_")
-			if err := c.Add(cleanedName, i); err != nil {
+			if err := c.Add(name, i); err != nil {
 				log.Warn("Unknown Prometheus metric type", "type", fmt.Sprintf("%T", i))
 			}
 		}

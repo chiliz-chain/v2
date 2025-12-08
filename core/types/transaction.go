@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
 )
@@ -49,6 +48,7 @@ const (
 	AccessListTxType = 0x01
 	DynamicFeeTxType = 0x02
 	BlobTxType       = 0x03
+	SetCodeTxType    = 0x04
 )
 
 // Transaction is an Ethereum transaction.
@@ -57,9 +57,9 @@ type Transaction struct {
 	time  time.Time // Time first seen locally (spam avoidance)
 
 	// caches
-	hash atomic.Value
-	size atomic.Value
-	from atomic.Value
+	hash atomic.Pointer[common.Hash]
+	size atomic.Uint64
+	from atomic.Pointer[sigCache]
 }
 
 // NewTx creates a new transaction.
@@ -100,6 +100,9 @@ type TxData interface {
 
 	encode(*bytes.Buffer) error
 	decode([]byte) error
+
+	// sigHash returns the hash of the transaction that is ought to be signed
+	sigHash(*big.Int) common.Hash
 }
 
 // EncodeRLP implements rlp.Encoder
@@ -206,6 +209,8 @@ func (tx *Transaction) decodeTyped(b []byte) (TxData, error) {
 		inner = new(DynamicFeeTx)
 	case BlobTxType:
 		inner = new(BlobTx)
+	case SetCodeTxType:
+		inner = new(SetCodeTx)
 	default:
 		return nil, ErrTxTypeNotSupported
 	}
@@ -361,23 +366,6 @@ func (tx *Transaction) EffectiveGasPrice(basefee *big.Int) *big.Int {
 	return tx.inner.effectiveGasPrice(new(big.Int), basefee)
 }
 
-// EffectiveGasTip returns the effective miner gasTipCap for the given base fee.
-// Note: if the effective gasTipCap is negative, this method returns both 0
-//
-//	_and_ ErrGasFeeCapTooLow
-func (tx *Transaction) EffectiveGasTip(baseFee *big.Int) (*big.Int, error) {
-	if baseFee == nil {
-		return tx.GasTipCap(), nil
-	}
-	var err error
-	gasFeeCap := tx.GasFeeCap()
-	if gasFeeCap.Cmp(baseFee) == -1 {
-		err = ErrGasFeeCapTooLow
-	}
-	// avoid negative EffectiveGasTip
-	return math.BigMax(big.NewInt(0), math.BigMin(tx.GasTipCap(), gasFeeCap.Sub(gasFeeCap, baseFee))), err
-}
-
 // EffectiveGasTipValue is identical to EffectiveGasTip, but does not return an
 // error in case the effective gasTipCap is negative
 func (tx *Transaction) EffectiveGasTipValue(baseFee *big.Int) *big.Int {
@@ -385,12 +373,56 @@ func (tx *Transaction) EffectiveGasTipValue(baseFee *big.Int) *big.Int {
 	return effectiveTip
 }
 
+// EffectiveGasTip returns the effective miner gasTipCap for the given base fee.
+// Note: if the effective gasTipCap is negative, this method returns both error
+// the actual negative value, _and_ ErrGasFeeCapTooLow
+func (tx *Transaction) EffectiveGasTip(baseFee *big.Int) (*big.Int, error) {
+	dst := new(big.Int)
+	err := tx.calcEffectiveGasTip(dst, baseFee)
+	return dst, err
+}
+
+// calcEffectiveGasTip calculates the effective gas tip of the transaction and
+// saves the result to dst.
+func (tx *Transaction) calcEffectiveGasTip(dst *big.Int, baseFee *big.Int) error {
+	if baseFee == nil {
+		dst.Set(tx.inner.gasTipCap())
+		return nil
+	}
+
+	var err error
+	gasFeeCap := tx.inner.gasFeeCap()
+	if gasFeeCap.Cmp(baseFee) < 0 {
+		err = ErrGasFeeCapTooLow
+	}
+
+	dst.Sub(gasFeeCap, baseFee)
+	gasTipCap := tx.inner.gasTipCap()
+	if gasTipCap.Cmp(dst) < 0 {
+		dst.Set(gasTipCap)
+	}
+	return err
+}
+
 // EffectiveGasTipCmp compares the effective gasTipCap of two transactions assuming the given base fee.
+// The effective gas tip is the minimum of:
+// 1. The transaction's gasTipCap
+// 2. The transaction's gasFeeCap minus the base fee
+//
+// Returns:
+//
+//	-1 if tx's effective gas tip is less than other's
+//	 0 if they are equal
+//	+1 if tx's effective gas tip is greater than other's
 func (tx *Transaction) EffectiveGasTipCmp(other *Transaction, baseFee *big.Int) int {
 	if baseFee == nil {
 		return tx.GasTipCapCmp(other)
 	}
-	return tx.EffectiveGasTipValue(baseFee).Cmp(other.EffectiveGasTipValue(baseFee))
+	// Use more efficient internal method.
+	txTip, otherTip := new(big.Int), new(big.Int)
+	tx.calcEffectiveGasTip(txTip, baseFee)
+	other.calcEffectiveGasTip(otherTip, baseFee)
+	return txTip.Cmp(otherTip)
 }
 
 // EffectiveGasTipIntCmp compares the effective gasTipCap of a transaction to the given gasTipCap.
@@ -398,7 +430,9 @@ func (tx *Transaction) EffectiveGasTipIntCmp(other *big.Int, baseFee *big.Int) i
 	if baseFee == nil {
 		return tx.GasTipCapIntCmp(other)
 	}
-	return tx.EffectiveGasTipValue(baseFee).Cmp(other)
+	txTip := new(big.Int)
+	tx.calcEffectiveGasTip(txTip, baseFee)
+	return txTip.Cmp(other)
 }
 
 // BlobGas returns the blob gas limit of the transaction for blob transactions, 0 otherwise.
@@ -463,6 +497,58 @@ func (tx *Transaction) WithoutBlobTxSidecar() *Transaction {
 	return cpy
 }
 
+// WithBlobTxSidecar returns a copy of tx with the blob sidecar added.
+func (tx *Transaction) WithBlobTxSidecar(sideCar *BlobTxSidecar) *Transaction {
+	blobtx, ok := tx.inner.(*BlobTx)
+	if !ok {
+		return tx
+	}
+	cpy := &Transaction{
+		inner: blobtx.withSidecar(sideCar),
+		time:  tx.time,
+	}
+	// Note: tx.size cache not carried over because the sidecar is included in size!
+	if h := tx.hash.Load(); h != nil {
+		cpy.hash.Store(h)
+	}
+	if f := tx.from.Load(); f != nil {
+		cpy.from.Store(f)
+	}
+	return cpy
+}
+
+// SetCodeAuthorizations returns the authorizations list of the transaction.
+func (tx *Transaction) SetCodeAuthorizations() []SetCodeAuthorization {
+	setcodetx, ok := tx.inner.(*SetCodeTx)
+	if !ok {
+		return nil
+	}
+	return setcodetx.AuthList
+}
+
+// SetCodeAuthorities returns a list of unique authorities from the
+// authorization list.
+func (tx *Transaction) SetCodeAuthorities() []common.Address {
+	setcodetx, ok := tx.inner.(*SetCodeTx)
+	if !ok {
+		return nil
+	}
+	var (
+		marks = make(map[common.Address]bool)
+		auths = make([]common.Address, 0, len(setcodetx.AuthList))
+	)
+	for _, auth := range setcodetx.AuthList {
+		if addr, err := auth.Authority(); err == nil {
+			if marks[addr] {
+				continue
+			}
+			marks[addr] = true
+			auths = append(auths, addr)
+		}
+	}
+	return auths
+}
+
 // SetTime sets the decoding time of a transaction. This is used by tests to set
 // arbitrary times and by persistent transaction pools when loading old txs from
 // disk.
@@ -479,7 +565,7 @@ func (tx *Transaction) Time() time.Time {
 // Hash returns the transaction hash.
 func (tx *Transaction) Hash() common.Hash {
 	if hash := tx.hash.Load(); hash != nil {
-		return hash.(common.Hash)
+		return *hash
 	}
 
 	var h common.Hash
@@ -488,15 +574,15 @@ func (tx *Transaction) Hash() common.Hash {
 	} else {
 		h = prefixedRlpHash(tx.Type(), tx.inner)
 	}
-	tx.hash.Store(h)
+	tx.hash.Store(&h)
 	return h
 }
 
 // Size returns the true encoded storage size of the transaction, either by encoding
 // and returning it, or returning a previously cached value.
 func (tx *Transaction) Size() uint64 {
-	if size := tx.size.Load(); size != nil {
-		return size.(uint64)
+	if size := tx.size.Load(); size > 0 {
+		return size
 	}
 
 	// Cache miss, encode and cache.
@@ -553,11 +639,11 @@ func (s Transactions) EncodeIndex(i int, w *bytes.Buffer) {
 	}
 }
 
-// TxDifference returns a new set which is the difference between a and b.
+// TxDifference returns a new set of transactions that are present in a but not in b.
 func TxDifference(a, b Transactions) Transactions {
 	keep := make(Transactions, 0, len(a))
 
-	remove := make(map[common.Hash]struct{})
+	remove := make(map[common.Hash]struct{}, b.Len())
 	for _, tx := range b {
 		remove[tx.Hash()] = struct{}{}
 	}
@@ -571,7 +657,7 @@ func TxDifference(a, b Transactions) Transactions {
 	return keep
 }
 
-// HashDifference returns a new set which is the difference between a and b.
+// HashDifference returns a new set of hashes that are present in a but not in b.
 func HashDifference(a, b []common.Hash) []common.Hash {
 	keep := make([]common.Hash, 0, len(a))
 

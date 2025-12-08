@@ -18,6 +18,7 @@ package discover
 
 import (
 	"net"
+	"net/netip"
 	"sync"
 	"time"
 
@@ -37,8 +38,8 @@ const talkHandlerLaunchTimeout = 400 * time.Millisecond
 //
 // Note that talk handlers are expected to come up with a response very quickly, within at
 // most 200ms or so. If the handler takes longer than that, the remote end may time out
-// and won't receive the response.
-type TalkRequestHandler func(enode.ID, *net.UDPAddr, []byte) []byte
+// and wont receive the response.
+type TalkRequestHandler func(*enode.Node, *net.UDPAddr, []byte) []byte
 
 type talkSystem struct {
 	transport *UDPv5
@@ -70,14 +71,20 @@ func (t *talkSystem) register(protocol string, handler TalkRequestHandler) {
 }
 
 // handleRequest handles a talk request.
-func (t *talkSystem) handleRequest(id enode.ID, addr *net.UDPAddr, req *v5wire.TalkRequest) {
+func (t *talkSystem) handleRequest(id enode.ID, addr netip.AddrPort, req *v5wire.TalkRequest) {
+	n := t.transport.codec.SessionNode(id, addr.String())
+	if n == nil {
+		// The node must be contained in the session here, since we wouldn't have
+		// received the request otherwise.
+		panic("missing node in session")
+	}
 	t.mutex.Lock()
 	handler, ok := t.handlers[req.Protocol]
 	t.mutex.Unlock()
 
 	if !ok {
 		resp := &v5wire.TalkResponse{ReqID: req.ReqID}
-		t.transport.sendResponse(id, addr, resp)
+		t.transport.sendResponse(n.ID(), addr, resp)
 		return
 	}
 
@@ -88,9 +95,10 @@ func (t *talkSystem) handleRequest(id enode.ID, addr *net.UDPAddr, req *v5wire.T
 	case <-t.slots:
 		go func() {
 			defer func() { t.slots <- struct{}{} }()
-			respMessage := handler(id, addr, req.Message)
+			udpAddr := &net.UDPAddr{IP: addr.Addr().AsSlice(), Port: int(addr.Port())}
+			respMessage := handler(n, udpAddr, req.Message)
 			resp := &v5wire.TalkResponse{ReqID: req.ReqID, Message: respMessage}
-			t.transport.sendFromAnotherThread(id, addr, resp)
+			t.transport.sendFromAnotherThread(n.ID(), addr, resp)
 		}()
 	case <-timeout.C:
 		// Couldn't get it in time, drop the request.

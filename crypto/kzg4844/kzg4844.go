@@ -34,6 +34,8 @@ var (
 	blobT       = reflect.TypeOf(Blob{})
 	commitmentT = reflect.TypeOf(Commitment{})
 	proofT      = reflect.TypeOf(Proof{})
+
+	CellProofsPerBlob = 128
 )
 
 // Blob represents a 4844 data blob.
@@ -45,7 +47,7 @@ func (b *Blob) UnmarshalJSON(input []byte) error {
 }
 
 // MarshalText returns the hex representation of b.
-func (b Blob) MarshalText() ([]byte, error) {
+func (b *Blob) MarshalText() ([]byte, error) {
 	return hexutil.Bytes(b[:]).MarshalText()
 }
 
@@ -85,7 +87,7 @@ type Claim [32]byte
 var useCKZG atomic.Bool
 
 // UseCKZG can be called to switch the default Go implementation of KZG to the C
-// library if fo some reason the user wishes to do so (e.g. consensus bug in one
+// library if for some reason the user wishes to do so (e.g. consensus bug in one
 // or the other).
 func UseCKZG(use bool) error {
 	if use && !ckzgAvailable {
@@ -105,7 +107,7 @@ func UseCKZG(use bool) error {
 }
 
 // BlobToCommitment creates a small commitment out of a data blob.
-func BlobToCommitment(blob Blob) (Commitment, error) {
+func BlobToCommitment(blob *Blob) (Commitment, error) {
 	if useCKZG.Load() {
 		return ckzgBlobToCommitment(blob)
 	}
@@ -114,7 +116,7 @@ func BlobToCommitment(blob Blob) (Commitment, error) {
 
 // ComputeProof computes the KZG proof at the given point for the polynomial
 // represented by the blob.
-func ComputeProof(blob Blob, point Point) (Proof, Claim, error) {
+func ComputeProof(blob *Blob, point Point) (Proof, Claim, error) {
 	if useCKZG.Load() {
 		return ckzgComputeProof(blob, point)
 	}
@@ -134,7 +136,7 @@ func VerifyProof(commitment Commitment, point Point, claim Claim, proof Proof) e
 // the commitment.
 //
 // This method does not verify that the commitment is correct with respect to blob.
-func ComputeBlobProof(blob Blob, commitment Commitment) (Proof, error) {
+func ComputeBlobProof(blob *Blob, commitment Commitment) (Proof, error) {
 	if useCKZG.Load() {
 		return ckzgComputeBlobProof(blob, commitment)
 	}
@@ -142,11 +144,32 @@ func ComputeBlobProof(blob Blob, commitment Commitment) (Proof, error) {
 }
 
 // VerifyBlobProof verifies that the blob data corresponds to the provided commitment.
-func VerifyBlobProof(blob Blob, commitment Commitment, proof Proof) error {
+func VerifyBlobProof(blob *Blob, commitment Commitment, proof Proof) error {
 	if useCKZG.Load() {
 		return ckzgVerifyBlobProof(blob, commitment, proof)
 	}
 	return gokzgVerifyBlobProof(blob, commitment, proof)
+}
+
+// VerifyCellProofs verifies a batch of proofs corresponding to the blobs and commitments.
+// Expects length of blobs and commitments to be equal.
+// Expects length of proofs be 128 * length of blobs.
+func VerifyCellProofs(blobs []Blob, commitments []Commitment, proofs []Proof) error {
+	if useCKZG.Load() {
+		return ckzgVerifyCellProofBatch(blobs, commitments, proofs)
+	}
+	return gokzgVerifyCellProofBatch(blobs, commitments, proofs)
+}
+
+// ComputeCellProofs returns the KZG cell proofs that are used to verify the blob against
+// the commitment.
+//
+// This method does not verify that the commitment is correct with respect to blob.
+func ComputeCellProofs(blob *Blob) ([]Proof, error) {
+	if useCKZG.Load() {
+		return ckzgComputeCellProofs(blob)
+	}
+	return gokzgComputeCellProofs(blob)
 }
 
 // CalcBlobHashV1 calculates the 'versioned blob hash' of a commitment.

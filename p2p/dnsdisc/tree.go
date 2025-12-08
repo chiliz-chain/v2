@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/crypto"
@@ -31,7 +32,6 @@ import (
 	"github.com/ethereum/go-ethereum/p2p/enr"
 	"github.com/ethereum/go-ethereum/rlp"
 	"golang.org/x/crypto/sha3"
-	"golang.org/x/exp/slices"
 )
 
 // Tree is a merkle tree of node records.
@@ -202,10 +202,7 @@ func (t *Tree) build(entries []entry) entry {
 	}
 	var subtrees []entry
 	for len(entries) > 0 {
-		n := maxChildren
-		if len(entries) < n {
-			n = len(entries)
-		}
+		n := min(len(entries), maxChildren)
 		sub := t.build(entries[:n])
 		entries = entries[n:]
 		subtrees = append(subtrees, sub)
