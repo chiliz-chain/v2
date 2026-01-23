@@ -1411,8 +1411,8 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		{name: "hertzBlock", block: c.HertzBlock},
 		{name: "hertzfixBlock", block: c.HertzfixBlock},
 		{name: "keplerTime", timestamp: c.KeplerTime},
-		{name: "feynmanTime", timestamp: c.FeynmanTime},
-		{name: "feynmanFixTime", timestamp: c.FeynmanFixTime},
+		// {name: "feynmanTime", timestamp: c.FeynmanTime}, // fork not enabled
+		// {name: "feynmanFixTime", timestamp: c.FeynmanFixTime}, // fork not enabled
 		{name: "cancunTime", timestamp: c.CancunTime},
 		{name: "haberTime", timestamp: c.HaberTime},
 		{name: "haberFixTime", timestamp: c.HaberFixTime},
