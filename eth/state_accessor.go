@@ -300,12 +300,8 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 				statedb.SetBalance(consensus.SystemAddress, uint256.MustFromBig(big.NewInt(0)), tracing.BalanceChangeUnspecified)
 				statedb.AddBalance(context.Coinbase, balance, tracing.BalanceChangeUnspecified)
 			}
-			if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) {
+			if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &context.Coinbase) {
 				statedb.AddBalance(context.Coinbase, uint256.MustFromBig(tx.Value()), tracing.BalanceChangeUnspecified)
-			}
-
-			if posa.IsPepper8Block(block.Time(), parent.Time()) {
-				statedb.AddBalance(context.Coinbase, uint256.MustFromBig(posa.GetPepper8MintAmount()), tracing.BalanceChangeUnspecified)
 			}
 		}
 		statedb.SetTxContext(tx.Hash(), idx)

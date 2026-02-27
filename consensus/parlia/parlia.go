@@ -336,6 +336,14 @@ func (p *Parlia) IsTokenomicsDeposit(to *common.Address, data []byte) bool {
 	return isDestinationTokenomics && isDeposit
 }
 
+// IsPepper8Deposit returns true if to address is the pepper8 recipient and from address is coinbase
+func (p *Parlia) IsPepper8Deposit(from *common.Address, to *common.Address, coinbase *common.Address) bool {
+	isDestinationPepper8Recipient := bytes.Equal(to.Bytes(), pepper8.Pepper8RecipientAddress.Bytes())
+	isFromCoinbase := bytes.Equal(from.Bytes(), coinbase.Bytes())
+
+	return isDestinationPepper8Recipient && isFromCoinbase
+}
+
 func (p *Parlia) IsSystemContract(to *common.Address) bool {
 	if to == nil {
 		return false

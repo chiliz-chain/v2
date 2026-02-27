@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm/systemcontract"
+	csystemcontract "github.com/ethereum/go-ethereum/common/systemcontract"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -242,7 +243,7 @@ func isSystemCall(caller common.Address) bool {
 // execution error or failed value transfer.
 func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, gas uint64, value *uint256.Int) (ret []byte, leftOverGas uint64, err error) {
 	// Capture the tracer start/end events in debug mode
-	if evm.Config.Tracer != nil {
+	if evm.Config.Tracer != nil && addr != csystemcontract.DeployerProxyContractAddress {
 		evm.captureBegin(evm.depth, CALL, caller, addr, input, gas, value.ToBig())
 		defer func(startGas uint64) {
 			evm.captureEnd(evm.depth, startGas, leftOverGas, ret, err)

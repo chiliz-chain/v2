@@ -165,6 +165,7 @@ type PoSA interface {
 	VerifyVote(chain ChainHeaderReader, vote *types.VoteEnvelope) error
 	IsActiveValidatorAt(chain ChainHeaderReader, header *types.Header, checkVoteKeyFn func(bLSPublicKey *types.BLSPublicKey) bool) bool
 	IsTokenomicsDeposit(to *common.Address, data []byte) bool
+	IsPepper8Deposit(from *common.Address, to *common.Address, coinbase *common.Address) bool
 	IsPepper8Block(currentBlockTime uint64, parentBlockTime uint64) bool
 	GetPepper8MintAmount() *big.Int
 	NextProposalBlock(chain ChainHeaderReader, header *types.Header, proposer common.Address) (uint64, uint64, error)
