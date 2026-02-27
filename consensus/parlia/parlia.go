@@ -400,21 +400,21 @@ func getValidatorBytesFromHeader(header *types.Header, chainConfig *params.Chain
 
 		// find end of validator bytes
 		for i := 0; i <= end-3; i++ {
-	        if bytes.Equal(header.Extra[i:i+3], validatorFrequencyDataPrefix) {
-	        	end = i
+			if bytes.Equal(header.Extra[i:i+3], validatorFrequencyDataPrefix) {
+				end = i
 				break
-	        }
-    	}
+			}
+		}
 
-     	if end <= start {
- 			return nil
-        }
+		if end <= start {
+			return nil
+		}
 
 		if header.Number.Uint64()%epochLength == 0 && (end-start)%validatorBytesLengthBeforeLuban != 0 {
 			return nil
 		}
 
-		return header.Extra[start : end]
+		return header.Extra[start:end]
 	}
 
 	if header.Number.Uint64()%epochLength != 0 {
@@ -491,14 +491,14 @@ func (p *Parlia) isSnake8Enabled(chain consensus.ChainHeaderReader, header *type
 
 	// extract parent block's timestamp from Extra
 	if len(header.Extra) <= extraVanity+extraSeal {
-		log.Warn("failed to extract parent timestamp. insufficient extra data", "number", header.Number.Uint64())
-        return false
-    }
+		log.Trace("failed to extract parent timestamp. insufficient extra data", "number", header.Number.Uint64())
+		return false
+	}
 
-    if header.Number.Uint64()%p.chainConfig.Parlia.Epoch != 0 {
-    	ts := binary.LittleEndian.Uint64(header.Extra[extraVanity+len(validatorFrequencyDataPrefix) : extraVanity+len(validatorFrequencyDataPrefix)+8])
-     	return p.chainConfig.IsSnake8(ts)
-    }
+	if header.Number.Uint64()%p.chainConfig.Parlia.Epoch != 0 {
+		ts := binary.LittleEndian.Uint64(header.Extra[extraVanity+len(validatorFrequencyDataPrefix) : extraVanity+len(validatorFrequencyDataPrefix)+8])
+		return p.chainConfig.IsSnake8(ts)
+	}
 
 	start := extraVanity
 	end := len(header.Extra) - extraSeal
@@ -513,7 +513,7 @@ func (p *Parlia) isSnake8Enabled(chain consensus.ChainHeaderReader, header *type
 	} else {
 		// After Luban: first byte is count, then count * 68 bytes
 		if start >= end {
-			log.Warn("failed to extract parent timestamp. no validator count byte", "number", header.Number.Uint64())
+			log.Trace("failed to extract parent timestamp. no validator count byte", "number", header.Number.Uint64())
 			return false
 		}
 		num := int(header.Extra[start])
@@ -521,18 +521,18 @@ func (p *Parlia) isSnake8Enabled(chain consensus.ChainHeaderReader, header *type
 		start += num * validatorBytesLength
 	}
 
-    // Skip turn length (only on Bohr fork epoch blocks)
-    if p.chainConfig.IsBohr(header.Number, header.Time) {
-        start += turnLengthSize
-    }
+	// Skip turn length (only on Bohr fork epoch blocks)
+	if p.chainConfig.IsBohr(header.Number, header.Time) {
+		start += turnLengthSize
+	}
 
-    if end <= start {
-    	log.Warn("failed to extract parent timestamp. no parent ts", "number", header.Number.Uint64())
-     	return false
+	if end <= start {
+		log.Trace("failed to extract parent timestamp. no parent ts", "number", header.Number.Uint64())
+		return false
 	}
 
 	ts := binary.LittleEndian.Uint64(header.Extra[start+len(validatorFrequencyDataPrefix) : start+len(validatorFrequencyDataPrefix)+8])
-   	return p.chainConfig.IsSnake8(ts)
+	return p.chainConfig.IsSnake8(ts)
 }
 
 // trimParents safely removes last element if exists.
@@ -1268,8 +1268,8 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 		return err
 	}
 	// calculate freq rlp
- 	if p.isSnake8Enabled(chain, header) {
-     	stakes := make(map[common.Address]*big.Int)
+	if p.isSnake8Enabled(chain, header) {
+		stakes := make(map[common.Address]*big.Int)
 		for addr := range snap.Validators {
 			totalDelegated, err := p.getValidatorTotalDelegated(addr, number-1)
 			if err != nil {
@@ -1277,12 +1277,12 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 			}
 			stakes[addr] = totalDelegated
 		}
-    	freqRlp, err := snap.calcFrequencyRLP(stakes)
-     	if err != nil {
-      		log.Error("error when calculating frequency rlp", "error", err, "block", number-1)
+		freqRlp, err := snap.calcFrequencyRLP(stakes)
+		if err != nil {
+			log.Error("error when calculating frequency rlp", "error", err, "block", number-1)
 		}
 		snap.FrequencyRLP = freqRlp
-    }
+	}
 	// TODO: delete this log
 	log.Trace("Prepare_start", "number", header.Number, "time", header.Time, "isSnake8", p.isSnake8Enabled(chain, header), "isSnake8Snap", snap.IsSnake8Fork, "inturnVal", snap.inturnValidator())
 
@@ -1319,14 +1319,14 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 	}
 
 	// Add RLP-encoded validator+frequency data
-    if p.isSnake8Enabled(chain, header) {
+	if p.isSnake8Enabled(chain, header) {
 		ts := make([]byte, 8)
 		binary.LittleEndian.PutUint64(ts, parent.Time)
 		log.Trace("Prepare", "append snake8 data", parent.Time, "number", header.Number.Uint64(), "len(validatorFrequencyDataPrefix)", len(validatorFrequencyDataPrefix), "len(ts)", len(ts), "len(snap.FrequencyRLP)", len(snap.FrequencyRLP))
 		header.Extra = append(header.Extra, validatorFrequencyDataPrefix...)
 		header.Extra = append(header.Extra, ts...)
-        header.Extra = append(header.Extra, snap.FrequencyRLP...)
-    }
+		header.Extra = append(header.Extra, snap.FrequencyRLP...)
+	}
 
 	// add extra seal space
 	header.Extra = append(header.Extra, make([]byte, extraSeal)...)

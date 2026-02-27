@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm/systemcontract"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -45,6 +46,30 @@ type (
 func (evm *EVM) precompile(addr common.Address) (PrecompiledContract, bool) {
 	p, ok := evm.precompiles[addr]
 	return p, ok
+}
+
+type hookStateDBAdapter struct {
+	inner StateDB
+}
+
+func (a hookStateDBAdapter) GetCodeHash(addr common.Address) common.Hash {
+	return a.inner.GetCodeHash(addr)
+}
+func (a hookStateDBAdapter) GetCode(addr common.Address) []byte       { return a.inner.GetCode(addr) }
+func (a hookStateDBAdapter) SetCode(addr common.Address, code []byte) { a.inner.SetCode(addr, code) }
+func (a hookStateDBAdapter) GetCodeSize(addr common.Address) int      { return a.inner.GetCodeSize(addr) }
+
+func (evm *EVM) precompileOrHook(addr common.Address, caller common.Address) (PrecompiledContract, bool) {
+	hook := systemcontract.CreateEvmHook(addr, systemcontract.EvmHookContext{
+		CallerAddress: caller,
+		StateDb:       hookStateDBAdapter{inner: evm.StateDB},
+		ChainConfig:   evm.chainConfig,
+		ChainRules:    evm.chainRules,
+	})
+	if hook != nil {
+		return hook, true
+	}
+	return evm.precompile(addr)
 }
 
 // BlockContext provides the EVM with auxiliary information. Once provided
@@ -233,7 +258,7 @@ func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, g
 		return nil, gas, ErrInsufficientBalance
 	}
 	snapshot := evm.StateDB.Snapshot()
-	p, isPrecompile := evm.precompile(addr)
+	p, isPrecompile := evm.precompileOrHook(addr, caller)
 
 	if !evm.StateDB.Exist(addr) {
 		if !isPrecompile && evm.chainRules.IsEIP4762 && !isSystemCall(caller) {
@@ -268,7 +293,6 @@ func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, g
 		if len(code) == 0 {
 			ret, err = nil, nil // gas is unchanged
 		} else {
-			// Fail if we're calling not whitelisted contract
 			gas, err = applyChilizInvocationEvmHook(evm, addr, gas)
 			if err != nil {
 				return nil, gas, err
@@ -351,8 +375,8 @@ func (evm *EVM) CallCode(caller common.Address, addr common.Address, input []byt
 	}
 	var snapshot = evm.StateDB.Snapshot()
 
-	// It is allowed to call precompiles, even via delegatecall
-	if p, isPrecompile := evm.precompile(addr); isPrecompile {
+	// It is allowed to call precompiles, even via callcode
+	if p, isPrecompile := evm.precompileOrHook(addr, caller); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer)
 	} else {
 		if evm.Config.EnableOpcodeOptimizations {
@@ -418,7 +442,7 @@ func (evm *EVM) DelegateCall(originCaller common.Address, caller common.Address,
 	var snapshot = evm.StateDB.Snapshot()
 
 	// It is allowed to call precompiles, even via delegatecall
-	if p, isPrecompile := evm.precompile(addr); isPrecompile {
+	if p, isPrecompile := evm.precompileOrHook(addr, caller); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer)
 	} else {
 		if evm.Config.EnableOpcodeOptimizations {
@@ -488,7 +512,7 @@ func (evm *EVM) StaticCall(caller common.Address, addr common.Address, input []b
 	// future scenarios
 	evm.StateDB.AddBalance(addr, new(uint256.Int), tracing.BalanceChangeTouchAccount)
 
-	if p, isPrecompile := evm.precompile(addr); isPrecompile {
+	if p, isPrecompile := evm.precompileOrHook(addr, caller); isPrecompile {
 		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer)
 	} else {
 		if evm.Config.EnableOpcodeOptimizations {
