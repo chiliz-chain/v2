@@ -383,7 +383,7 @@ func TestJWT(t *testing.T) {
 	expFail := []func() string{
 		// future
 		func() string {
-			return fmt.Sprintf("Bearer %v", issueToken(secret, nil, testClaim{"iat": time.Now().Unix() + int64(jwtExpiryTimeout.Seconds()) + 1}))
+			return fmt.Sprintf("Bearer %v", issueToken(secret, nil, testClaim{"iat": time.Now().Unix() + int64(jwtExpiryTimeout.Seconds()) + 60}))
 		},
 		// stale
 		func() string {
@@ -522,7 +522,6 @@ func TestGzipHandler(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			srv := httptest.NewServer(newGzipHandler(test.handler))
 			defer srv.Close()
@@ -571,7 +570,6 @@ func TestHTTPWriteTimeout(t *testing.T) {
 	// Send normal request
 	t.Run("message", func(t *testing.T) {
 		resp := rpcRequest(t, url, "test_sleep")
-		defer resp.Body.Close()
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			t.Fatal(err)
@@ -585,7 +583,6 @@ func TestHTTPWriteTimeout(t *testing.T) {
 	t.Run("batch", func(t *testing.T) {
 		want := fmt.Sprintf("[%s,%s,%s]", greetRes, timeoutRes, timeoutRes)
 		resp := batchRpcRequest(t, url, []string{"test_greet", "test_sleep", "test_greet"})
-		defer resp.Body.Close()
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			t.Fatal(err)

@@ -19,11 +19,11 @@ package core
 import (
 	crand "crypto/rand"
 	"errors"
+	"math"
 	"math/big"
 	mrand "math/rand"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
@@ -31,8 +31,7 @@ import (
 )
 
 // ChainReader defines a small collection of methods needed to access the local
-// blockchain during header verification. It's implemented by both blockchain
-// and lightchain.
+// blockchain during header verification. It's implemented by blockchain.
 type ChainReader interface {
 	// Config retrieves the header chain's chain configuration.
 	Config() *params.ChainConfig
@@ -55,28 +54,21 @@ type ChainReader interface {
 type ForkChoice struct {
 	chain ChainReader
 	rand  *mrand.Rand
-
-	// preserve is a helper function used in td fork choice.
-	// Miners will prefer to choose the local mined block if the
-	// local td is equal to the extern one. It can be nil for light
-	// client
-	preserve func(header *types.Header) bool
 }
 
-func NewForkChoice(chainReader ChainReader, preserve func(header *types.Header) bool) *ForkChoice {
+func NewForkChoice(chainReader ChainReader) *ForkChoice {
 	// Seed a fast but crypto originating random generator
 	seed, err := crand.Int(crand.Reader, big.NewInt(math.MaxInt64))
 	if err != nil {
 		log.Crit("Failed to initialize random seed", "err", err)
 	}
 	return &ForkChoice{
-		chain:    chainReader,
-		rand:     mrand.New(mrand.NewSource(seed.Int64())),
-		preserve: preserve,
+		chain: chainReader,
+		rand:  mrand.New(mrand.NewSource(seed.Int64())),
 	}
 }
 
-// reorgNeeded returns whether the reorg should be applied
+// ReorgNeeded returns whether the reorg should be applied
 // based on the given external header and local canonical chain.
 // In the td mode, the new head is chosen if the corresponding
 // total difficulty is higher. In the extern mode, the trusted
@@ -117,16 +109,18 @@ func (f *ForkChoice) ReorgNeeded(current *types.Header, extern *types.Header) (b
 	if externNum < localNum {
 		reorg = true
 	} else if externNum == localNum {
-		var currentPreserve, externPreserve bool
-		if f.preserve != nil {
-			currentPreserve, externPreserve = f.preserve(current), f.preserve(extern)
-		}
-		doubleSign := (extern.Coinbase == current.Coinbase)
-		reorg = !currentPreserve && (externPreserve ||
-			extern.Time < current.Time ||
-			extern.Time == current.Time &&
-				((doubleSign && extern.Hash().Cmp(current.Hash()) < 0) ||
-					(!doubleSign && f.rand.Float64() < 0.5)))
+		reorg = func() bool {
+			if extern.Time == current.Time {
+				doubleSign := (extern.Coinbase == current.Coinbase)
+				if doubleSign {
+					return extern.Hash().Cmp(current.Hash()) < 0
+				} else {
+					return f.rand.Float64() < 0.5
+				}
+			} else {
+				return extern.Time < current.Time
+			}
+		}()
 	}
 	return reorg, nil
 }

@@ -21,16 +21,15 @@ import (
 	"crypto/ecdsa"
 	"fmt"
 	"math/big"
+	"slices"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
-	"golang.org/x/exp/slices"
 )
 
 // testerAccountPool is a pool to maintain currently active tester accounts,
@@ -458,7 +457,7 @@ func (tt *cliqueTest) run(t *testing.T) {
 		batches[len(batches)-1] = append(batches[len(batches)-1], block)
 	}
 	// Pass all the headers through clique and ensure tallying succeeds
-	chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), nil, genesis, nil, engine, vm.Config{}, nil, nil)
+	chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), genesis, engine, nil)
 	if err != nil {
 		t.Fatalf("failed to create test chain: %v", err)
 	}

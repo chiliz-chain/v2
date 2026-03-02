@@ -22,8 +22,8 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/internal/version"
-	"github.com/ethereum/go-ethereum/params"
 	"github.com/urfave/cli/v2"
 )
 
@@ -73,7 +73,7 @@ func printVersion(ctx *cli.Context) error {
 	git, _ := version.VCS()
 
 	fmt.Println(strings.Title(clientIdentifier))
-	fmt.Println("Version:", params.VersionWithMeta)
+	fmt.Println("Version:", version.WithMeta)
 	if git.Commit != "" {
 		fmt.Println("Git Commit:", git.Commit)
 	}
@@ -84,7 +84,8 @@ func printVersion(ctx *cli.Context) error {
 	fmt.Println("Go Version:", runtime.Version())
 	fmt.Println("Operating System:", runtime.GOOS)
 	fmt.Printf("GOPATH=%s\n", os.Getenv("GOPATH"))
-	fmt.Printf("GOROOT=%s\n", runtime.GOROOT())
+	goRoot, _ := common.GetGoRoot()
+	fmt.Printf("GOROOT=%s\n", goRoot)
 	return nil
 }
 

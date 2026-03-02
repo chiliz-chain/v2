@@ -1,5 +1,5 @@
 # Build Geth in a stock Go builder container
-FROM golang:1.21-alpine as builder
+FROM golang:1.25.5-alpine AS builder
 
 RUN apk add --no-cache make cmake gcc musl-dev linux-headers git bash build-base libc-dev libstdc++
 

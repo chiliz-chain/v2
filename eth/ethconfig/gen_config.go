@@ -7,110 +7,119 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
-	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/gasprice"
-	"github.com/ethereum/go-ethereum/miner"
+	"github.com/ethereum/go-ethereum/miner/minerconfig"
+	"github.com/ethereum/go-ethereum/p2p/enode"
 )
 
 // MarshalTOML marshals as TOML.
 func (c Config) MarshalTOML() (interface{}, error) {
 	type Config struct {
-		Genesis                 *core.Genesis `toml:",omitempty"`
-		NetworkId               uint64
-		SyncMode                downloader.SyncMode
-		DisablePeerTxBroadcast  bool
-		EthDiscoveryURLs        []string
-		SnapDiscoveryURLs       []string
-		TrustDiscoveryURLs      []string
-		BscDiscoveryURLs        []string
-		NoPruning               bool
-		NoPrefetch              bool
-		DirectBroadcast         bool
-		DisableSnapProtocol     bool
-		EnableTrustProtocol     bool
-		PipeCommit              bool
-		RangeLimit              bool
-		TxLookupLimit           uint64 `toml:",omitempty"`
-		TransactionHistory      uint64 `toml:",omitempty"`
-		StateHistory            uint64 `toml:",omitempty"`
-		StateScheme             string `toml:",omitempty"`
-		PathSyncFlush           bool   `toml:",omitempty"`
-		JournalFileEnabled      bool
-		RequiredBlocks          map[uint64]common.Hash `toml:"-"`
-		LightServ               int                    `toml:",omitempty"`
-		LightIngress            int                    `toml:",omitempty"`
-		LightEgress             int                    `toml:",omitempty"`
-		LightPeers              int                    `toml:",omitempty"`
-		LightNoPrune            bool                   `toml:",omitempty"`
-		LightNoSyncServe        bool                   `toml:",omitempty"`
-		SkipBcVersionCheck      bool                   `toml:"-"`
-		DatabaseHandles         int                    `toml:"-"`
-		DatabaseCache           int
-		DatabaseFreezer         string
-		DatabaseDiff            string
-		PersistDiff             bool
-		DiffBlock               uint64
-		PruneAncientData        bool
-		TrieCleanCache          int
-		TrieDirtyCache          int
-		TrieTimeout             time.Duration
-		SnapshotCache           int
-		TriesInMemory           uint64
-		TriesVerifyMode         core.VerifyMode
-		Preimages               bool
-		FilterLogCacheSize      int
-		Miner                   miner.Config
-		TxPool                  legacypool.Config
-		BlobPool                blobpool.Config
-		GPO                     gasprice.Config
-		EnablePreimageRecording bool
-		DocRoot                 string `toml:"-"`
-		RPCGasCap               uint64
-		RPCEVMTimeout           time.Duration
-		RPCTxFeeCap             float64
-		OverridePassedForkTime      *uint64 `toml:",omitempty"`
-		OverrideBohr            *uint64 `toml:",omitempty"`
-		OverrideVerkle          *uint64 `toml:",omitempty"`
-		BlobExtraReserve        uint64
+		Genesis                   *core.Genesis `toml:",omitempty"`
+		NetworkId                 uint64
+		SyncMode                  SyncMode
+		DisablePeerTxBroadcast    bool
+		EVNNodeIDsToAdd           []enode.ID
+		EVNNodeIDsToRemove        []enode.ID
+		HistoryMode               history.HistoryMode
+		EthDiscoveryURLs          []string
+		SnapDiscoveryURLs         []string
+		BscDiscoveryURLs          []string
+		NoPruning                 bool
+		NoPrefetch                bool
+		EnableBAL                 bool
+		DirectBroadcast           bool
+		DisableSnapProtocol       bool
+		RangeLimit                bool
+		TxLookupLimit             uint64 `toml:",omitempty"`
+		TransactionHistory        uint64 `toml:",omitempty"`
+		BlockHistory              uint64 `toml:",omitempty"`
+		LogHistory                uint64 `toml:",omitempty"`
+		LogNoHistory              bool   `toml:",omitempty"`
+		LogExportCheckpoints      string
+		StateHistory              uint64 `toml:",omitempty"`
+		StateScheme               string `toml:",omitempty"`
+		PathSyncFlush             bool   `toml:",omitempty"`
+		JournalFileEnabled        bool
+		DisableTxIndexer          bool                   `toml:",omitempty"`
+		RequiredBlocks            map[uint64]common.Hash `toml:"-"`
+		SkipBcVersionCheck        bool                   `toml:"-"`
+		DatabaseHandles           int                    `toml:"-"`
+		DatabaseCache             int
+		DatabaseFreezer           string
+		DatabaseEra               string
+		PruneAncientData          bool
+		TrieCleanCache            int
+		TrieDirtyCache            int
+		TrieTimeout               time.Duration
+		SnapshotCache             int
+		TriesInMemory             uint64
+		TriesVerifyMode           core.VerifyMode
+		Preimages                 bool
+		FilterLogCacheSize        int
+		Miner                     minerconfig.Config
+		TxPool                    legacypool.Config
+		BlobPool                  blobpool.Config
+		GPO                       gasprice.Config
+		EnablePreimageRecording   bool
+		VMTrace                   string
+		VMTraceJsonConfig         string
+		RPCGasCap                 uint64
+		RPCEVMTimeout             time.Duration
+		RPCTxFeeCap               float64
+		OverridePassedForkTime    *uint64 `toml:",omitempty"`
+		OverrideLorentz           *uint64 `toml:",omitempty"`
+		OverrideMaxwell           *uint64 `toml:",omitempty"`
+		OverrideFermi             *uint64 `toml:",omitempty"`
+		OverrideOsaka             *uint64 `toml:",omitempty"`
+		OverrideVerkle            *uint64 `toml:",omitempty"`
+		BlobExtraReserve          uint64
+		EnableIncrSnapshots       bool
+		IncrSnapshotPath          string
+		IncrSnapshotBlockInterval uint64
+		IncrSnapshotStateBuffer   uint64
+		IncrSnapshotKeptBlocks    uint64
+		UseRemoteIncrSnapshot     bool
+		RemoteIncrSnapshotURL     string
+		EnableOpcodeOptimizing    bool
 	}
 	var enc Config
 	enc.Genesis = c.Genesis
 	enc.NetworkId = c.NetworkId
 	enc.SyncMode = c.SyncMode
 	enc.DisablePeerTxBroadcast = c.DisablePeerTxBroadcast
+	enc.EVNNodeIDsToAdd = c.EVNNodeIDsToAdd
+	enc.EVNNodeIDsToRemove = c.EVNNodeIDsToRemove
+	enc.HistoryMode = c.HistoryMode
 	enc.EthDiscoveryURLs = c.EthDiscoveryURLs
 	enc.SnapDiscoveryURLs = c.SnapDiscoveryURLs
-	enc.TrustDiscoveryURLs = c.TrustDiscoveryURLs
 	enc.BscDiscoveryURLs = c.BscDiscoveryURLs
 	enc.NoPruning = c.NoPruning
 	enc.NoPrefetch = c.NoPrefetch
+	enc.EnableBAL = c.EnableBAL
 	enc.DirectBroadcast = c.DirectBroadcast
 	enc.DisableSnapProtocol = c.DisableSnapProtocol
-	enc.EnableTrustProtocol = c.EnableTrustProtocol
-	enc.PipeCommit = c.PipeCommit
 	enc.RangeLimit = c.RangeLimit
 	enc.TxLookupLimit = c.TxLookupLimit
 	enc.TransactionHistory = c.TransactionHistory
+	enc.BlockHistory = c.BlockHistory
+	enc.LogHistory = c.LogHistory
+	enc.LogNoHistory = c.LogNoHistory
+	enc.LogExportCheckpoints = c.LogExportCheckpoints
 	enc.StateHistory = c.StateHistory
 	enc.StateScheme = c.StateScheme
 	enc.PathSyncFlush = c.PathSyncFlush
 	enc.JournalFileEnabled = c.JournalFileEnabled
+	enc.DisableTxIndexer = c.DisableTxIndexer
 	enc.RequiredBlocks = c.RequiredBlocks
-	enc.LightServ = c.LightServ
-	enc.LightIngress = c.LightIngress
-	enc.LightEgress = c.LightEgress
-	enc.LightPeers = c.LightPeers
-	enc.LightNoPrune = c.LightNoPrune
-	enc.LightNoSyncServe = c.LightNoSyncServe
 	enc.SkipBcVersionCheck = c.SkipBcVersionCheck
 	enc.DatabaseHandles = c.DatabaseHandles
 	enc.DatabaseCache = c.DatabaseCache
 	enc.DatabaseFreezer = c.DatabaseFreezer
-	enc.DatabaseDiff = c.DatabaseDiff
-	enc.PersistDiff = c.PersistDiff
-	enc.DiffBlock = c.DiffBlock
+	enc.DatabaseEra = c.DatabaseEra
 	enc.PruneAncientData = c.PruneAncientData
 	enc.TrieCleanCache = c.TrieCleanCache
 	enc.TrieDirtyCache = c.TrieDirtyCache
@@ -125,77 +134,99 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.BlobPool = c.BlobPool
 	enc.GPO = c.GPO
 	enc.EnablePreimageRecording = c.EnablePreimageRecording
-	enc.DocRoot = c.DocRoot
+	enc.VMTrace = c.VMTrace
+	enc.VMTraceJsonConfig = c.VMTraceJsonConfig
 	enc.RPCGasCap = c.RPCGasCap
 	enc.RPCEVMTimeout = c.RPCEVMTimeout
 	enc.RPCTxFeeCap = c.RPCTxFeeCap
 	enc.OverridePassedForkTime = c.OverridePassedForkTime
-	enc.OverrideBohr = c.OverrideBohr
+	enc.OverrideLorentz = c.OverrideLorentz
+	enc.OverrideMaxwell = c.OverrideMaxwell
+	enc.OverrideFermi = c.OverrideFermi
+	enc.OverrideOsaka = c.OverrideOsaka
 	enc.OverrideVerkle = c.OverrideVerkle
 	enc.BlobExtraReserve = c.BlobExtraReserve
+	enc.EnableOpcodeOptimizing = c.EnableOpcodeOptimizing
+	enc.EnableIncrSnapshots = c.EnableIncrSnapshots
+	enc.IncrSnapshotPath = c.IncrSnapshotPath
+	enc.IncrSnapshotBlockInterval = c.IncrSnapshotBlockInterval
+	enc.IncrSnapshotStateBuffer = c.IncrSnapshotStateBuffer
+	enc.IncrSnapshotKeptBlocks = c.IncrSnapshotKeptBlocks
+	enc.UseRemoteIncrSnapshot = c.UseRemoteIncrSnapshot
+	enc.RemoteIncrSnapshotURL = c.RemoteIncrSnapshotURL
 	return &enc, nil
 }
 
 // UnmarshalTOML unmarshals from TOML.
 func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	type Config struct {
-		Genesis                 *core.Genesis `toml:",omitempty"`
-		NetworkId               *uint64
-		SyncMode                *downloader.SyncMode
-		DisablePeerTxBroadcast  *bool
-		EthDiscoveryURLs        []string
-		SnapDiscoveryURLs       []string
-		TrustDiscoveryURLs      []string
-		BscDiscoveryURLs        []string
-		NoPruning               *bool
-		NoPrefetch              *bool
-		DirectBroadcast         *bool
-		DisableSnapProtocol     *bool
-		EnableTrustProtocol     *bool
-		PipeCommit              *bool
-		RangeLimit              *bool
-		TxLookupLimit           *uint64 `toml:",omitempty"`
-		TransactionHistory      *uint64 `toml:",omitempty"`
-		StateHistory            *uint64 `toml:",omitempty"`
-		StateScheme             *string `toml:",omitempty"`
-		PathSyncFlush           *bool   `toml:",omitempty"`
-		JournalFileEnabled      *bool
-		RequiredBlocks          map[uint64]common.Hash `toml:"-"`
-		LightServ               *int                   `toml:",omitempty"`
-		LightIngress            *int                   `toml:",omitempty"`
-		LightEgress             *int                   `toml:",omitempty"`
-		LightPeers              *int                   `toml:",omitempty"`
-		LightNoPrune            *bool                  `toml:",omitempty"`
-		LightNoSyncServe        *bool                  `toml:",omitempty"`
-		SkipBcVersionCheck      *bool                  `toml:"-"`
-		DatabaseHandles         *int                   `toml:"-"`
-		DatabaseCache           *int
-		DatabaseFreezer         *string
-		DatabaseDiff            *string
-		PersistDiff             *bool
-		DiffBlock               *uint64
-		PruneAncientData        *bool
-		TrieCleanCache          *int
-		TrieDirtyCache          *int
-		TrieTimeout             *time.Duration
-		SnapshotCache           *int
-		TriesInMemory           *uint64
-		TriesVerifyMode         *core.VerifyMode
-		Preimages               *bool
-		FilterLogCacheSize      *int
-		Miner                   *miner.Config
-		TxPool                  *legacypool.Config
-		BlobPool                *blobpool.Config
-		GPO                     *gasprice.Config
-		EnablePreimageRecording *bool
-		DocRoot                 *string `toml:"-"`
-		RPCGasCap               *uint64
-		RPCEVMTimeout           *time.Duration
-		RPCTxFeeCap             *float64
-		OverridePassedForkTime      *uint64 `toml:",omitempty"`
-		OverrideBohr            *uint64 `toml:",omitempty"`
-		OverrideVerkle          *uint64 `toml:",omitempty"`
-		BlobExtraReserve        *uint64
+		Genesis                   *core.Genesis `toml:",omitempty"`
+		NetworkId                 *uint64
+		SyncMode                  *SyncMode
+		DisablePeerTxBroadcast    *bool
+		EVNNodeIDsToAdd           []enode.ID
+		EVNNodeIDsToRemove        []enode.ID
+		HistoryMode               *history.HistoryMode
+		EthDiscoveryURLs          []string
+		SnapDiscoveryURLs         []string
+		BscDiscoveryURLs          []string
+		NoPruning                 *bool
+		NoPrefetch                *bool
+		EnableBAL                 *bool
+		DirectBroadcast           *bool
+		DisableSnapProtocol       *bool
+		RangeLimit                *bool
+		TxLookupLimit             *uint64 `toml:",omitempty"`
+		TransactionHistory        *uint64 `toml:",omitempty"`
+		BlockHistory              *uint64 `toml:",omitempty"`
+		LogHistory                *uint64 `toml:",omitempty"`
+		LogNoHistory              *bool   `toml:",omitempty"`
+		LogExportCheckpoints      *string
+		StateHistory              *uint64 `toml:",omitempty"`
+		StateScheme               *string `toml:",omitempty"`
+		PathSyncFlush             *bool   `toml:",omitempty"`
+		JournalFileEnabled        *bool
+		DisableTxIndexer          *bool                  `toml:",omitempty"`
+		RequiredBlocks            map[uint64]common.Hash `toml:"-"`
+		SkipBcVersionCheck        *bool                  `toml:"-"`
+		DatabaseHandles           *int                   `toml:"-"`
+		DatabaseCache             *int
+		DatabaseFreezer           *string
+		DatabaseEra               *string
+		PruneAncientData          *bool
+		TrieCleanCache            *int
+		TrieDirtyCache            *int
+		TrieTimeout               *time.Duration
+		SnapshotCache             *int
+		TriesInMemory             *uint64
+		TriesVerifyMode           *core.VerifyMode
+		Preimages                 *bool
+		FilterLogCacheSize        *int
+		Miner                     *minerconfig.Config
+		TxPool                    *legacypool.Config
+		BlobPool                  *blobpool.Config
+		GPO                       *gasprice.Config
+		EnablePreimageRecording   *bool
+		VMTrace                   *string
+		VMTraceJsonConfig         *string
+		RPCGasCap                 *uint64
+		RPCEVMTimeout             *time.Duration
+		RPCTxFeeCap               *float64
+		OverridePassedForkTime    *uint64 `toml:",omitempty"`
+		OverrideLorentz           *uint64 `toml:",omitempty"`
+		OverrideMaxwell           *uint64 `toml:",omitempty"`
+		OverrideFermi             *uint64 `toml:",omitempty"`
+		OverrideOsaka             *uint64 `toml:",omitempty"`
+		OverrideVerkle            *uint64 `toml:",omitempty"`
+		BlobExtraReserve          *uint64
+		EnableIncrSnapshots       *bool
+		IncrSnapshotPath          *string
+		IncrSnapshotBlockInterval *uint64
+		IncrSnapshotStateBuffer   *uint64
+		IncrSnapshotKeptBlocks    *uint64
+		UseRemoteIncrSnapshot     *bool
+		RemoteIncrSnapshotURL     *string
+		EnableOpcodeOptimizing    *bool
 	}
 	var dec Config
 	if err := unmarshal(&dec); err != nil {
@@ -213,14 +244,20 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.DisablePeerTxBroadcast != nil {
 		c.DisablePeerTxBroadcast = *dec.DisablePeerTxBroadcast
 	}
+	if dec.EVNNodeIDsToAdd != nil {
+		c.EVNNodeIDsToAdd = dec.EVNNodeIDsToAdd
+	}
+	if dec.EVNNodeIDsToRemove != nil {
+		c.EVNNodeIDsToRemove = dec.EVNNodeIDsToRemove
+	}
+	if dec.HistoryMode != nil {
+		c.HistoryMode = *dec.HistoryMode
+	}
 	if dec.EthDiscoveryURLs != nil {
 		c.EthDiscoveryURLs = dec.EthDiscoveryURLs
 	}
 	if dec.SnapDiscoveryURLs != nil {
 		c.SnapDiscoveryURLs = dec.SnapDiscoveryURLs
-	}
-	if dec.TrustDiscoveryURLs != nil {
-		c.TrustDiscoveryURLs = dec.TrustDiscoveryURLs
 	}
 	if dec.BscDiscoveryURLs != nil {
 		c.BscDiscoveryURLs = dec.BscDiscoveryURLs
@@ -231,17 +268,14 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.NoPrefetch != nil {
 		c.NoPrefetch = *dec.NoPrefetch
 	}
+	if dec.EnableBAL != nil {
+		c.EnableBAL = *dec.EnableBAL
+	}
 	if dec.DirectBroadcast != nil {
 		c.DirectBroadcast = *dec.DirectBroadcast
 	}
 	if dec.DisableSnapProtocol != nil {
 		c.DisableSnapProtocol = *dec.DisableSnapProtocol
-	}
-	if dec.EnableTrustProtocol != nil {
-		c.EnableTrustProtocol = *dec.EnableTrustProtocol
-	}
-	if dec.PipeCommit != nil {
-		c.PipeCommit = *dec.PipeCommit
 	}
 	if dec.RangeLimit != nil {
 		c.RangeLimit = *dec.RangeLimit
@@ -251,6 +285,18 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.TransactionHistory != nil {
 		c.TransactionHistory = *dec.TransactionHistory
+	}
+	if dec.BlockHistory != nil {
+		c.BlockHistory = *dec.BlockHistory
+	}
+	if dec.LogHistory != nil {
+		c.LogHistory = *dec.LogHistory
+	}
+	if dec.LogNoHistory != nil {
+		c.LogNoHistory = *dec.LogNoHistory
+	}
+	if dec.LogExportCheckpoints != nil {
+		c.LogExportCheckpoints = *dec.LogExportCheckpoints
 	}
 	if dec.StateHistory != nil {
 		c.StateHistory = *dec.StateHistory
@@ -264,26 +310,11 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.JournalFileEnabled != nil {
 		c.JournalFileEnabled = *dec.JournalFileEnabled
 	}
+	if dec.DisableTxIndexer != nil {
+		c.DisableTxIndexer = *dec.DisableTxIndexer
+	}
 	if dec.RequiredBlocks != nil {
 		c.RequiredBlocks = dec.RequiredBlocks
-	}
-	if dec.LightServ != nil {
-		c.LightServ = *dec.LightServ
-	}
-	if dec.LightIngress != nil {
-		c.LightIngress = *dec.LightIngress
-	}
-	if dec.LightEgress != nil {
-		c.LightEgress = *dec.LightEgress
-	}
-	if dec.LightPeers != nil {
-		c.LightPeers = *dec.LightPeers
-	}
-	if dec.LightNoPrune != nil {
-		c.LightNoPrune = *dec.LightNoPrune
-	}
-	if dec.LightNoSyncServe != nil {
-		c.LightNoSyncServe = *dec.LightNoSyncServe
 	}
 	if dec.SkipBcVersionCheck != nil {
 		c.SkipBcVersionCheck = *dec.SkipBcVersionCheck
@@ -297,14 +328,8 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.DatabaseFreezer != nil {
 		c.DatabaseFreezer = *dec.DatabaseFreezer
 	}
-	if dec.DatabaseDiff != nil {
-		c.DatabaseDiff = *dec.DatabaseDiff
-	}
-	if dec.PersistDiff != nil {
-		c.PersistDiff = *dec.PersistDiff
-	}
-	if dec.DiffBlock != nil {
-		c.DiffBlock = *dec.DiffBlock
+	if dec.DatabaseEra != nil {
+		c.DatabaseEra = *dec.DatabaseEra
 	}
 	if dec.PruneAncientData != nil {
 		c.PruneAncientData = *dec.PruneAncientData
@@ -348,8 +373,11 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.EnablePreimageRecording != nil {
 		c.EnablePreimageRecording = *dec.EnablePreimageRecording
 	}
-	if dec.DocRoot != nil {
-		c.DocRoot = *dec.DocRoot
+	if dec.VMTrace != nil {
+		c.VMTrace = *dec.VMTrace
+	}
+	if dec.VMTraceJsonConfig != nil {
+		c.VMTraceJsonConfig = *dec.VMTraceJsonConfig
 	}
 	if dec.RPCGasCap != nil {
 		c.RPCGasCap = *dec.RPCGasCap
@@ -363,14 +391,47 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.OverridePassedForkTime != nil {
 		c.OverridePassedForkTime = dec.OverridePassedForkTime
 	}
-	if dec.OverrideBohr != nil {
-		c.OverrideBohr = dec.OverrideBohr
+	if dec.OverrideLorentz != nil {
+		c.OverrideLorentz = dec.OverrideLorentz
+	}
+	if dec.OverrideMaxwell != nil {
+		c.OverrideMaxwell = dec.OverrideMaxwell
+	}
+	if dec.OverrideFermi != nil {
+		c.OverrideFermi = dec.OverrideFermi
+	}
+	if dec.OverrideOsaka != nil {
+		c.OverrideOsaka = dec.OverrideOsaka
 	}
 	if dec.OverrideVerkle != nil {
 		c.OverrideVerkle = dec.OverrideVerkle
 	}
 	if dec.BlobExtraReserve != nil {
 		c.BlobExtraReserve = *dec.BlobExtraReserve
+	}
+	if dec.EnableOpcodeOptimizing != nil {
+		c.EnableOpcodeOptimizing = *dec.EnableOpcodeOptimizing
+	}
+	if dec.EnableIncrSnapshots != nil {
+		c.EnableIncrSnapshots = *dec.EnableIncrSnapshots
+	}
+	if dec.IncrSnapshotPath != nil {
+		c.IncrSnapshotPath = *dec.IncrSnapshotPath
+	}
+	if dec.IncrSnapshotBlockInterval != nil {
+		c.IncrSnapshotBlockInterval = *dec.IncrSnapshotBlockInterval
+	}
+	if dec.IncrSnapshotStateBuffer != nil {
+		c.IncrSnapshotStateBuffer = *dec.IncrSnapshotStateBuffer
+	}
+	if dec.IncrSnapshotKeptBlocks != nil {
+		c.IncrSnapshotKeptBlocks = *dec.IncrSnapshotKeptBlocks
+	}
+	if dec.UseRemoteIncrSnapshot != nil {
+		c.UseRemoteIncrSnapshot = *dec.UseRemoteIncrSnapshot
+	}
+	if dec.RemoteIncrSnapshotURL != nil {
+		c.RemoteIncrSnapshotURL = *dec.RemoteIncrSnapshotURL
 	}
 	return nil
 }

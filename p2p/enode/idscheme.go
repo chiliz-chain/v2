@@ -90,6 +90,12 @@ func (V4ID) NodeAddr(r *enr.Record) []byte {
 	return crypto.Keccak256(buf)
 }
 
+func V4NodeIDFromPublicKey(data []byte) ID {
+	var id ID
+	copy(id[:], crypto.Keccak256(data[:]))
+	return id
+}
+
 // Secp256k1 is the "secp256k1" key, which holds a public key.
 type Secp256k1 ecdsa.PublicKey
 
@@ -157,5 +163,5 @@ func SignNull(r *enr.Record, id ID) *Node {
 	if err := r.SetSig(NullID{}, []byte{}); err != nil {
 		panic(err)
 	}
-	return &Node{r: *r, id: id}
+	return newNodeWithID(r, id)
 }

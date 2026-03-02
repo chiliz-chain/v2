@@ -4,12 +4,18 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ethereum/go-ethereum/log"
+
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/p2p/enr"
 )
+
+const MaxRequestRangeBlocksCount = 64
 
 // Handler is a callback to invoke from an outside runner after the boilerplate
 // exchanges have passed.
@@ -35,17 +41,9 @@ type Backend interface {
 }
 
 // MakeProtocols constructs the P2P protocol definitions for `bsc`.
-func MakeProtocols(backend Backend, dnsdisc enode.Iterator) []p2p.Protocol {
-	// Filter the discovery iterator for nodes advertising vote support.
-	dnsdisc = enode.Filter(dnsdisc, func(n *enode.Node) bool {
-		var vote enrEntry
-		return n.Load(&vote) == nil
-	})
-
+func MakeProtocols(backend Backend) []p2p.Protocol {
 	protocols := make([]p2p.Protocol, len(ProtocolVersions))
 	for i, version := range ProtocolVersions {
-		version := version // Closure
-
 		protocols[i] = p2p.Protocol{
 			Name:    ProtocolName,
 			Version: version,
@@ -64,8 +62,7 @@ func MakeProtocols(backend Backend, dnsdisc enode.Iterator) []p2p.Protocol {
 			PeerInfo: func(id enode.ID) interface{} {
 				return backend.PeerInfo(id)
 			},
-			Attributes:     []enr.Entry{&enrEntry{}},
-			DialCandidates: dnsdisc,
+			Attributes: []enr.Entry{&enrEntry{}},
 		}
 	}
 	return protocols
@@ -91,6 +88,12 @@ var bsc1 = map[uint64]msgHandler{
 	VotesMsg: handleVotes,
 }
 
+var bsc2 = map[uint64]msgHandler{
+	VotesMsg:            handleVotes,
+	GetBlocksByRangeMsg: handleGetBlocksByRange,
+	BlocksByRangeMsg:    handleBlocksByRange,
+}
+
 // handleMessage is invoked whenever an inbound message is received from a
 // remote peer on the `bsc` protocol. The remote connection is torn down upon
 // returning any error.
@@ -106,9 +109,12 @@ func handleMessage(backend Backend, peer *Peer) error {
 	defer msg.Discard()
 
 	var handlers = bsc1
+	if peer.Version() >= Bsc2 {
+		handlers = bsc2
+	}
 
 	// Track the amount of time it takes to serve the request and run the handler
-	if metrics.Enabled {
+	if metrics.Enabled() {
 		h := fmt.Sprintf("%s/%s/%d/%#02x", p2p.HandleHistName, ProtocolName, peer.Version(), msg.Code)
 		defer func(start time.Time) {
 			sampler := func() metrics.Sample {
@@ -133,6 +139,63 @@ func handleVotes(backend Backend, msg Decoder, peer *Peer) error {
 	// Schedule all the unknown hashes for retrieval
 	peer.markVotes(ann.Votes)
 	return backend.Handle(peer, ann)
+}
+
+func handleGetBlocksByRange(backend Backend, msg Decoder, peer *Peer) error {
+	req := new(GetBlocksByRangePacket)
+	if err := msg.Decode(req); err != nil {
+		return fmt.Errorf("msg %v, decode err: %v", GetBlocksByRangeMsg, err)
+	}
+
+	log.Debug("receive GetBlocksByRange request", "from", peer.id, "req", req)
+	// Validate request parameters
+	if req.Count == 0 || req.Count > MaxRequestRangeBlocksCount { // Limit maximum request count
+		return fmt.Errorf("msg %v, invalid count: %v", GetBlocksByRangeMsg, req.Count)
+	}
+
+	// Get requested blocks
+	blocks := make([]*BlockData, 0, req.Count)
+	var block *types.Block
+	// Prioritize blockHash query, get block & sidecars from db
+	if req.StartBlockHash != (common.Hash{}) {
+		block = backend.Chain().GetBlockByHash(req.StartBlockHash)
+	} else {
+		block = backend.Chain().GetBlockByNumber(req.StartBlockHeight)
+	}
+	if block == nil {
+		return fmt.Errorf("msg %v, cannot get start block: %v, %v", GetBlocksByRangeMsg, req.StartBlockHeight, req.StartBlockHash)
+	}
+	blocks = append(blocks, NewBlockData(block))
+	balSize := block.BALSize()
+	for i := uint64(1); i < req.Count; i++ {
+		block = backend.Chain().GetBlockByHash(block.ParentHash())
+		if block == nil {
+			break
+		}
+		balSize += block.BALSize()
+		blocks = append(blocks, NewBlockData(block))
+	}
+
+	log.Debug("reply GetBlocksByRange msg", "from", peer.id, "req", req.Count, "blocks", len(blocks), "balSize", balSize)
+	return p2p.Send(peer.rw, BlocksByRangeMsg, &BlocksByRangePacket{
+		RequestId: req.RequestId,
+		Blocks:    blocks,
+	})
+}
+
+func handleBlocksByRange(backend Backend, msg Decoder, peer *Peer) error {
+	res := new(BlocksByRangePacket)
+	if err := msg.Decode(res); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	}
+
+	err := peer.dispatcher.DispatchResponse(&Response{
+		requestID: res.RequestId,
+		data:      res,
+		code:      BlocksByRangeMsg,
+	})
+	log.Debug("receive BlocksByRange response", "from", peer.id, "requestId", res.RequestId, "blocks", len(res.Blocks), "err", err)
+	return nil
 }
 
 // NodeInfo represents a short summary of the `bsc` sub-protocol metadata

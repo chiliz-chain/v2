@@ -17,12 +17,16 @@
 package eth
 
 import (
+	"bytes"
 	rand2 "crypto/rand"
+	"crypto/sha256"
 	"io"
 	"math"
 	"math/big"
 	"math/rand"
+	"os"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -31,9 +35,9 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
+	"github.com/ethereum/go-ethereum/core/txpool/blobpool"
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth/protocols/bsc"
@@ -66,51 +70,61 @@ type testBackend struct {
 
 // newTestBackend creates an empty chain and wraps it into a mock backend.
 func newTestBackend(blocks int) *testBackend {
-	return newTestBackendWithGenerator(blocks, false, nil)
+	return newTestBackendWithGenerator(blocks, false, false, nil)
 }
 
-// newTestBackend creates a chain with a number of explicitly defined blocks and
+// newTestBackendWithGenerator creates a chain with a number of explicitly defined blocks and
 // wraps it into a mock backend.
-func newTestBackendWithGenerator(blocks int, shanghai bool, generator func(int, *core.BlockGen)) *testBackend {
+func newTestBackendWithGenerator(blocks int, shanghai bool, cancun bool, generator func(int, *core.BlockGen)) *testBackend {
 	var (
 		// Create a database pre-initialize with a genesis block
 		db                      = rawdb.NewMemoryDatabase()
 		config                  = params.TestChainConfig
 		engine consensus.Engine = ethash.NewFaker()
 	)
-
 	if shanghai {
 		config = &params.ChainConfig{
-			ChainID:                       big.NewInt(1),
-			HomesteadBlock:                big.NewInt(0),
-			DAOForkBlock:                  nil,
-			DAOForkSupport:                true,
-			EIP150Block:                   big.NewInt(0),
-			EIP155Block:                   big.NewInt(0),
-			EIP158Block:                   big.NewInt(0),
-			ByzantiumBlock:                big.NewInt(0),
-			ConstantinopleBlock:           big.NewInt(0),
-			PetersburgBlock:               big.NewInt(0),
-			IstanbulBlock:                 big.NewInt(0),
-			MuirGlacierBlock:              big.NewInt(0),
-			BerlinBlock:                   big.NewInt(0),
-			LondonBlock:                   big.NewInt(0),
-			ArrowGlacierBlock:             big.NewInt(0),
-			GrayGlacierBlock:              big.NewInt(0),
-			MergeNetsplitBlock:            big.NewInt(0),
-			ShanghaiTime:                  u64(0),
-			TerminalTotalDifficulty:       big.NewInt(0),
-			TerminalTotalDifficultyPassed: true,
-			Ethash:                        new(params.EthashConfig),
+			ChainID:                 big.NewInt(1),
+			HomesteadBlock:          big.NewInt(0),
+			DAOForkBlock:            nil,
+			DAOForkSupport:          true,
+			EIP150Block:             big.NewInt(0),
+			EIP155Block:             big.NewInt(0),
+			EIP158Block:             big.NewInt(0),
+			ByzantiumBlock:          big.NewInt(0),
+			ConstantinopleBlock:     big.NewInt(0),
+			PetersburgBlock:         big.NewInt(0),
+			IstanbulBlock:           big.NewInt(0),
+			MuirGlacierBlock:        big.NewInt(0),
+			BerlinBlock:             big.NewInt(0),
+			LondonBlock:             big.NewInt(0),
+			ArrowGlacierBlock:       big.NewInt(0),
+			GrayGlacierBlock:        big.NewInt(0),
+			MergeNetsplitBlock:      big.NewInt(0),
+			ShanghaiTime:            u64(0),
+			TerminalTotalDifficulty: big.NewInt(0),
+			Ethash:                  new(params.EthashConfig),
 		}
 		engine = beacon.NewFaker()
 	}
 
-	gspec := &core.Genesis{
-		Config: config,
-		Alloc:  types.GenesisAlloc{testAddr: {Balance: big.NewInt(100_000_000_000_000_000)}},
+	if cancun {
+		config.CancunTime = u64(0)
+		config.BlobScheduleConfig = &params.BlobScheduleConfig{
+			Cancun: &params.BlobConfig{
+				Target:         3,
+				Max:            6,
+				UpdateFraction: params.DefaultCancunBlobConfig.UpdateFraction,
+			},
+		}
 	}
-	chain, _ := core.NewBlockChain(db, nil, gspec, nil, engine, vm.Config{}, nil, nil)
+
+	gspec := &core.Genesis{
+		Config:     config,
+		Alloc:      types.GenesisAlloc{testAddr: {Balance: big.NewInt(100_000_000_000_000_000)}},
+		Difficulty: common.Big0,
+	}
+	chain, _ := core.NewBlockChain(db, gspec, engine, nil)
 
 	_, bs, _ := core.GenerateChainWithGenesis(gspec, engine, blocks, generator)
 	if _, err := chain.InsertChain(bs); err != nil {
@@ -122,8 +136,12 @@ func newTestBackendWithGenerator(blocks int, shanghai bool, generator func(int, 
 	txconfig := legacypool.DefaultConfig
 	txconfig.Journal = "" // Don't litter the disk with test journals
 
-	pool := legacypool.New(txconfig, chain)
-	txpool, _ := txpool.New(txconfig.PriceLimit, chain, []txpool.SubPool{pool})
+	storage, _ := os.MkdirTemp("", "blobpool-")
+	defer os.RemoveAll(storage)
+
+	blobPool := blobpool.New(blobpool.Config{Datadir: storage}, chain, nil)
+	legacyPool := legacypool.New(txconfig, chain)
+	txpool, _ := txpool.New(txconfig.PriceLimit, chain, []txpool.SubPool{legacyPool, blobPool})
 
 	return &testBackend{
 		db:     db,
@@ -149,10 +167,12 @@ func (b *testBackend) RunPeer(peer *Peer, handler Handler) error {
 func (b *testBackend) PeerInfo(enode.ID) interface{} { panic("not implemented") }
 
 func (b *testBackend) AcceptTxs() bool {
-	panic("data processing tests should be done in the handler package")
+	return true
+	//panic("data processing tests should be done in the handler package")
 }
 func (b *testBackend) Handle(*Peer, Packet) error {
 	return nil
+	//panic("data processing tests should be done in the handler package")
 }
 
 // Tests that block headers can be retrieved from a remote chain based on user queries.
@@ -281,6 +301,34 @@ func testGetBlockHeaders(t *testing.T, protocol uint) {
 				backend.chain.GetBlockByNumber(0).Hash(),
 			},
 		},
+		// Check a corner case where skipping causes overflow with reverse=false
+		{
+			&GetBlockHeadersRequest{Origin: HashOrNumber{Number: 1}, Amount: 2, Reverse: false, Skip: math.MaxUint64 - 1},
+			[]common.Hash{
+				backend.chain.GetBlockByNumber(1).Hash(),
+			},
+		},
+		// Check a corner case where skipping causes overflow with reverse=true
+		{
+			&GetBlockHeadersRequest{Origin: HashOrNumber{Number: 1}, Amount: 2, Reverse: true, Skip: math.MaxUint64 - 1},
+			[]common.Hash{
+				backend.chain.GetBlockByNumber(1).Hash(),
+			},
+		},
+		// Check another corner case where skipping causes overflow with reverse=false
+		{
+			&GetBlockHeadersRequest{Origin: HashOrNumber{Number: 1}, Amount: 2, Reverse: false, Skip: math.MaxUint64},
+			[]common.Hash{
+				backend.chain.GetBlockByNumber(1).Hash(),
+			},
+		},
+		// Check another corner case where skipping causes overflow with reverse=true
+		{
+			&GetBlockHeadersRequest{Origin: HashOrNumber{Number: 1}, Amount: 2, Reverse: true, Skip: math.MaxUint64},
+			[]common.Hash{
+				backend.chain.GetBlockByNumber(1).Hash(),
+			},
+		},
 		// Check a corner case where skipping overflow loops back into the chain start
 		{
 			&GetBlockHeadersRequest{Origin: HashOrNumber{Hash: backend.chain.GetBlockByNumber(3).Hash()}, Amount: 2, Reverse: false, Skip: math.MaxUint64 - 1},
@@ -356,7 +404,7 @@ func testGetBlockBodies(t *testing.T, protocol uint) {
 		}
 	}
 
-	backend := newTestBackendWithGenerator(maxBodiesServe+15, true, gen)
+	backend := newTestBackendWithGenerator(maxBodiesServe+15, true, false, gen)
 	defer backend.close()
 
 	peer, _ := newTestPeer("peer", protocol, backend)
@@ -476,7 +524,7 @@ func testGetBlockReceipts(t *testing.T, protocol uint) {
 		}
 	}
 	// Assemble the test environment
-	backend := newTestBackendWithGenerator(4, false, generator)
+	backend := newTestBackendWithGenerator(4, false, false, generator)
 	defer backend.close()
 
 	peer, _ := newTestPeer("peer", protocol, backend)
@@ -485,25 +533,99 @@ func testGetBlockReceipts(t *testing.T, protocol uint) {
 	// Collect the hashes to request, and the response to expect
 	var (
 		hashes   []common.Hash
-		receipts [][]*types.Receipt
+		receipts []*ReceiptList68
 	)
 	for i := uint64(0); i <= backend.chain.CurrentBlock().Number.Uint64(); i++ {
 		block := backend.chain.GetBlockByNumber(i)
-
 		hashes = append(hashes, block.Hash())
-		receipts = append(receipts, backend.chain.GetReceiptsByHash(block.Hash()))
+		trs := backend.chain.GetReceiptsByHash(block.Hash())
+		receipts = append(receipts, NewReceiptList68(trs))
 	}
+
 	// Send the hash request and verify the response
 	p2p.Send(peer.app, GetReceiptsMsg, &GetReceiptsPacket{
 		RequestId:          123,
 		GetReceiptsRequest: hashes,
 	})
-	if err := p2p.ExpectMsg(peer.app, ReceiptsMsg, &ReceiptsPacket{
-		RequestId:        123,
-		ReceiptsResponse: receipts,
+	if err := p2p.ExpectMsg(peer.app, ReceiptsMsg, &ReceiptsPacket[*ReceiptList68]{
+		RequestId: 123,
+		List:      receipts,
 	}); err != nil {
 		t.Errorf("receipts mismatch: %v", err)
 	}
+}
+
+type decoder struct {
+	msg []byte
+}
+
+func (d decoder) Decode(val interface{}) error {
+	buffer := bytes.NewBuffer(d.msg)
+	s := rlp.NewStream(buffer, uint64(len(d.msg)))
+	return s.Decode(val)
+}
+
+func (d decoder) Time() time.Time {
+	return time.Now()
+}
+
+func setup() (*testBackend, *testPeer) {
+	// Generate some transactions etc.
+	acc1Key, _ := crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
+	acc2Key, _ := crypto.HexToECDSA("49a7b37aa6f6645917e7b807e9d1c00d4fa71f18343b0d4122a4d2df64dd6fee")
+	acc1Addr := crypto.PubkeyToAddress(acc1Key.PublicKey)
+	acc2Addr := crypto.PubkeyToAddress(acc2Key.PublicKey)
+	signer := types.HomesteadSigner{}
+	gen := func(n int, block *core.BlockGen) {
+		if n%2 == 0 {
+			w := &types.Withdrawal{
+				Address: common.Address{0xaa},
+				Amount:  42,
+			}
+			block.AddWithdrawal(w)
+		}
+		switch n {
+		case 0:
+			// In block 1, the test bank sends account #1 some ether.
+			tx, _ := types.SignTx(types.NewTransaction(block.TxNonce(testAddr), acc1Addr, big.NewInt(10_000_000_000_000_000), params.TxGas, block.BaseFee(), nil), signer, testKey)
+			block.AddTx(tx)
+		case 1:
+			// In block 2, the test bank sends some more ether to account #1.
+			// acc1Addr passes it on to account #2.
+			tx1, _ := types.SignTx(types.NewTransaction(block.TxNonce(testAddr), acc1Addr, big.NewInt(1_000_000_000_000_000), params.TxGas, block.BaseFee(), nil), signer, testKey)
+			tx2, _ := types.SignTx(types.NewTransaction(block.TxNonce(acc1Addr), acc2Addr, big.NewInt(1_000_000_000_000_000), params.TxGas, block.BaseFee(), nil), signer, acc1Key)
+			block.AddTx(tx1)
+			block.AddTx(tx2)
+		case 2:
+			// Block 3 is empty but was mined by account #2.
+			block.SetCoinbase(acc2Addr)
+			block.SetExtra([]byte("yeehaw"))
+		}
+	}
+	backend := newTestBackendWithGenerator(maxBodiesServe+15, true, false, gen)
+	peer, _ := newTestPeer("peer", ETH68, backend)
+	// Discard all messages
+	go func() {
+		for {
+			msg, err := peer.app.ReadMsg()
+			if err == nil {
+				msg.Discard()
+			}
+		}
+	}()
+	return backend, peer
+}
+
+func FuzzEthProtocolHandlers(f *testing.F) {
+	handlers := eth69
+	backend, peer := setup()
+	f.Fuzz(func(t *testing.T, code byte, msg []byte) {
+		handler := handlers[uint64(code)%protocolLengths[ETH69]]
+		if handler == nil {
+			return
+		}
+		handler(backend, decoder{msg: msg}, peer.Peer)
+	})
 }
 
 func TestHandleNewBlock(t *testing.T) {
@@ -519,7 +641,7 @@ func TestHandleNewBlock(t *testing.T) {
 		}
 	}
 
-	backend := newTestBackendWithGenerator(maxBodiesServe+15, true, gen)
+	backend := newTestBackendWithGenerator(maxBodiesServe+15, true, false, gen)
 	defer backend.close()
 
 	peer, _ := newTestPeer("peer", ETH68, backend)
@@ -622,7 +744,6 @@ func TestHandleNewBlock(t *testing.T) {
 
 	// Run the tests
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			err := handleNewBlock(backend, tc.msg, localEth)
 			if err != tc.err {
@@ -643,8 +764,8 @@ func makeBlkBlobs(n, nPerTx int) []*types.BlobTxSidecar {
 		proofs := make([]kzg4844.Proof, nPerTx)
 		for i := 0; i < nPerTx; i++ {
 			io.ReadFull(rand2.Reader, blobs[i][:])
-			commitments[i], _ = kzg4844.BlobToCommitment(blobs[i])
-			proofs[i], _ = kzg4844.ComputeBlobProof(blobs[i], commitments[i])
+			commitments[i], _ = kzg4844.BlobToCommitment(&blobs[i])
+			proofs[i], _ = kzg4844.ComputeBlobProof(&blobs[i], commitments[i])
 		}
 		ret[i] = &types.BlobTxSidecar{
 			Blobs:       blobs,
@@ -653,4 +774,81 @@ func makeBlkBlobs(n, nPerTx int) []*types.BlobTxSidecar {
 		}
 	}
 	return ret
+}
+
+func TestGetPooledTransaction(t *testing.T) {
+	t.Run("blobTx", func(t *testing.T) {
+		testGetPooledTransaction(t, true)
+	})
+	t.Run("legacyTx", func(t *testing.T) {
+		testGetPooledTransaction(t, false)
+	})
+}
+
+func testGetPooledTransaction(t *testing.T, blobTx bool) {
+	var (
+		emptyBlob          = kzg4844.Blob{}
+		emptyBlobs         = []kzg4844.Blob{emptyBlob}
+		emptyBlobCommit, _ = kzg4844.BlobToCommitment(&emptyBlob)
+		emptyBlobProof, _  = kzg4844.ComputeBlobProof(&emptyBlob, emptyBlobCommit)
+		emptyBlobHash      = kzg4844.CalcBlobHashV1(sha256.New(), &emptyBlobCommit)
+	)
+	backend := newTestBackendWithGenerator(0, true, true, nil)
+	defer backend.close()
+
+	peer, _ := newTestPeer("peer", ETH68, backend)
+	defer peer.close()
+
+	var (
+		tx     *types.Transaction
+		err    error
+		signer = types.NewCancunSigner(params.TestChainConfig.ChainID)
+	)
+	if blobTx {
+		tx, err = types.SignNewTx(testKey, signer, &types.BlobTx{
+			ChainID:    uint256.MustFromBig(params.TestChainConfig.ChainID),
+			Nonce:      0,
+			GasTipCap:  uint256.NewInt(20_000_000_000),
+			GasFeeCap:  uint256.NewInt(21_000_000_000),
+			Gas:        21000,
+			To:         testAddr,
+			BlobHashes: []common.Hash{emptyBlobHash},
+			BlobFeeCap: uint256.MustFromBig(common.Big1),
+			Sidecar: &types.BlobTxSidecar{
+				Blobs:       emptyBlobs,
+				Commitments: []kzg4844.Commitment{emptyBlobCommit},
+				Proofs:      []kzg4844.Proof{emptyBlobProof},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	} else {
+		tx, err = types.SignTx(
+			types.NewTransaction(0, testAddr, big.NewInt(10_000), params.TxGas, big.NewInt(1_000_000_000), nil),
+			signer,
+			testKey,
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	errs := backend.txpool.Add([]*types.Transaction{tx}, true)
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Send the hash request and verify the response
+	p2p.Send(peer.app, GetPooledTransactionsMsg, GetPooledTransactionsPacket{
+		RequestId:                    123,
+		GetPooledTransactionsRequest: []common.Hash{tx.Hash()},
+	})
+	if err := p2p.ExpectMsg(peer.app, PooledTransactionsMsg, PooledTransactionsPacket{
+		RequestId:                  123,
+		PooledTransactionsResponse: []*types.Transaction{tx},
+	}); err != nil {
+		t.Errorf("pooled transaction mismatch: %v", err)
+	}
 }

@@ -29,23 +29,34 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
 var (
-	errInvalidTopic      = errors.New("invalid topic(s)")
-	errFilterNotFound    = errors.New("filter not found")
-	errInvalidBlockRange = errors.New("invalid block range params")
-	errExceedMaxTopics   = errors.New("exceed max topics")
+	errInvalidTopic           = errors.New("invalid topic(s)")
+	errFilterNotFound         = errors.New("filter not found")
+	errInvalidBlockRange      = errors.New("invalid block range params")
+	errUnknownBlock           = errors.New("unknown block")
+	errBlockHashWithRange     = errors.New("can't specify fromBlock/toBlock with blockHash")
+	errPendingLogsUnsupported = errors.New("pending logs are not supported")
+	errExceedMaxTopics        = errors.New("exceed max topics")
+	errExceedMaxAddresses     = errors.New("exceed max addresses")
+	errExceedMaxTxHashes      = errors.New("exceed max number of transaction hashes allowed per transactionReceipts subscription")
 )
 
-// The maximum number of topic criteria allowed, vm.LOG4 - vm.LOG0
-const maxTopics = 4
-
-// The maximum number of allowed topics within a topic criteria
-const maxSubTopics = 1000
+const (
+	// The maximum number of addresses allowed in a filter criteria
+	maxAddresses = 1000
+	// The maximum number of topic criteria allowed, vm.LOG4 - vm.LOG0
+	maxTopics = 4
+	// The maximum number of allowed topics within a topic criteria
+	maxSubTopics = 1000
+	// The maximum number of transaction hash criteria allowed in a single subscription
+	maxTxHashes = 200
+)
 
 // filter is a helper struct that holds meta information over the filter type
 // and associated subscription in the event system.
@@ -92,7 +103,11 @@ func (api *FilterAPI) timeoutLoop(timeout time.Duration) {
 	ticker := time.NewTicker(timeout)
 	defer ticker.Stop()
 	for {
-		<-ticker.C
+		select {
+		case <-ticker.C:
+		case <-api.events.chainSub.Err():
+			return
+		}
 		api.filtersMu.Lock()
 		for id, f := range api.filters {
 			select {
@@ -184,8 +199,6 @@ func (api *FilterAPI) NewPendingTransactions(ctx context.Context, fullTx *bool) 
 				}
 			case <-rpcSub.Err():
 				return
-			case <-notifier.Closed():
-				return
 			}
 		}
 	})
@@ -243,9 +256,6 @@ func (api *FilterAPI) NewVotes(ctx context.Context) (*rpc.Subscription, error) {
 			case vote := <-votes:
 				notifier.Notify(rpcSub.ID, vote)
 			case <-rpcSub.Err():
-				voteSub.Unsubscribe()
-				return
-			case <-notifier.Closed():
 				voteSub.Unsubscribe()
 				return
 			}
@@ -308,8 +318,6 @@ func (api *FilterAPI) NewHeads(ctx context.Context) (*rpc.Subscription, error) {
 				notifier.Notify(rpcSub.ID, h)
 			case <-rpcSub.Err():
 				return
-			case <-notifier.Closed():
-				return
 			}
 		}
 	})
@@ -369,9 +377,6 @@ func (api *FilterAPI) NewFinalizedHeaders(ctx context.Context) (*rpc.Subscriptio
 			case <-rpcSub.Err():
 				headersSub.Unsubscribe()
 				return
-			case <-notifier.Closed():
-				headersSub.Unsubscribe()
-				return
 			}
 		}
 	})
@@ -402,12 +407,74 @@ func (api *FilterAPI) Logs(ctx context.Context, crit FilterCriteria) (*rpc.Subsc
 			select {
 			case logs := <-matchedLogs:
 				for _, log := range logs {
-					log := log
 					notifier.Notify(rpcSub.ID, &log)
 				}
 			case <-rpcSub.Err(): // client send an unsubscribe request
 				return
-			case <-notifier.Closed(): // connection dropped
+			}
+		}
+	})
+
+	return rpcSub, nil
+}
+
+// TransactionReceiptsFilter defines criteria for transaction receipts subscription.
+// If TransactionHashes is nil or empty, receipts for all transactions included in new blocks will be delivered.
+// Otherwise, only receipts for the specified transactions will be delivered.
+type TransactionReceiptsFilter struct {
+	TransactionHashes []common.Hash `json:"transactionHashes,omitempty"`
+}
+
+// TransactionReceipts creates a subscription that fires transaction receipts when transactions are included in blocks.
+func (api *FilterAPI) TransactionReceipts(ctx context.Context, filter *TransactionReceiptsFilter) (*rpc.Subscription, error) {
+	notifier, supported := rpc.NotifierFromContext(ctx)
+	if !supported {
+		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
+	}
+
+	// Validate transaction hashes limit
+	if filter != nil && len(filter.TransactionHashes) > maxTxHashes {
+		return nil, errExceedMaxTxHashes
+	}
+
+	var (
+		rpcSub          = notifier.CreateSubscription()
+		matchedReceipts = make(chan []*ReceiptWithTx)
+		txHashes        []common.Hash
+	)
+
+	if filter != nil {
+		txHashes = filter.TransactionHashes
+	}
+
+	receiptsSub := api.events.SubscribeTransactionReceipts(txHashes, matchedReceipts)
+
+	gopool.Submit(func() {
+		defer receiptsSub.Unsubscribe()
+
+		signer := types.LatestSigner(api.sys.backend.ChainConfig())
+
+		for {
+			select {
+			case receiptsWithTxs := <-matchedReceipts:
+				if len(receiptsWithTxs) > 0 {
+					// Convert to the same format as eth_getTransactionReceipt
+					marshaledReceipts := make([]map[string]interface{}, len(receiptsWithTxs))
+					for i, receiptWithTx := range receiptsWithTxs {
+						marshaledReceipts[i] = ethapi.MarshalReceipt(
+							receiptWithTx.Receipt,
+							receiptWithTx.Receipt.BlockHash,
+							receiptWithTx.Receipt.BlockNumber.Uint64(),
+							signer,
+							receiptWithTx.Transaction,
+							int(receiptWithTx.Receipt.TransactionIndex),
+						)
+					}
+
+					// Send a batch of tx receipts in one notification
+					notifier.Notify(rpcSub.ID, marshaledReceipts)
+				}
+			case <-rpcSub.Err():
 				return
 			}
 		}
@@ -468,8 +535,16 @@ func (api *FilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([]*type
 	if len(crit.Topics) > maxTopics {
 		return nil, errExceedMaxTopics
 	}
+	if len(crit.Addresses) > maxAddresses {
+		return nil, errExceedMaxAddresses
+	}
+
 	var filter *Filter
 	if crit.BlockHash != nil {
+		if crit.FromBlock != nil || crit.ToBlock != nil {
+			return nil, errBlockHashWithRange
+		}
+
 		// Block filter requested, construct a single-shot filter
 		filter = api.sys.NewBlockFilter(*crit.BlockHash, crit.Addresses, crit.Topics)
 	} else {
@@ -482,12 +557,17 @@ func (api *FilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([]*type
 		if crit.ToBlock != nil {
 			end = crit.ToBlock.Int64()
 		}
+		// Block numbers below 0 are special cases.
 		if begin > 0 && end > 0 && begin > end {
 			return nil, errInvalidBlockRange
+		}
+		if begin >= 0 && begin < int64(api.events.backend.HistoryPruningCutoff()) {
+			return nil, &history.PrunedHistoryError{}
 		}
 		// Construct the range filter
 		filter = api.sys.NewRangeFilter(begin, end, crit.Addresses, crit.Topics, api.rangeLimit)
 	}
+
 	// Run the filter and return all the logs
 	logs, err := filter.Logs(ctx)
 	if err != nil {
@@ -588,7 +668,7 @@ func (api *FilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
 				f.txs = nil
 				return hashes, nil
 			}
-		case LogsSubscription, MinedAndPendingLogsSubscription:
+		case LogsSubscription:
 			logs := f.logs
 			f.logs = nil
 			return returnLogs(logs), nil
@@ -653,6 +733,9 @@ func (args *FilterCriteria) UnmarshalJSON(data []byte) error {
 		// raw.Address can contain a single address or an array of addresses
 		switch rawAddr := raw.Addresses.(type) {
 		case []interface{}:
+			if len(rawAddr) > maxAddresses {
+				return errExceedMaxAddresses
+			}
 			for i, addr := range rawAddr {
 				if strAddr, ok := addr.(string); ok {
 					addr, err := decodeAddress(strAddr)

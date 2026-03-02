@@ -8,32 +8,9 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/internal/version"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/params"
 )
-
-type BuilderConfig struct {
-	Address common.Address
-	URL     string
-}
-
-type MevConfig struct {
-	Enabled               bool            // Whether to enable Mev or not
-	GreedyMergeTx         bool            // Whether to merge local transactions to the bid
-	BuilderFeeCeil        string          // The maximum builder fee of a bid
-	SentryURL             string          // The url of Mev sentry
-	Builders              []BuilderConfig // The list of builders
-	ValidatorCommission   uint64          // 100 means the validator claims 1% from block reward
-	BidSimulationLeftOver time.Duration
-}
-
-var DefaultMevConfig = MevConfig{
-	Enabled:               false,
-	SentryURL:             "",
-	Builders:              nil,
-	ValidatorCommission:   100,
-	BidSimulationLeftOver: 50 * time.Millisecond,
-}
 
 // MevRunning return true if mev is running.
 func (miner *Miner) MevRunning() bool {
@@ -90,7 +67,7 @@ func (miner *Miner) SendBid(ctx context.Context, bidArgs *types.BidArgs) (common
 	timeout := time.Until(bidBetterBefore)
 
 	if timeout <= 0 {
-		return common.Hash{}, fmt.Errorf("too late, expected befor %s, appeared %s later", bidBetterBefore,
+		return common.Hash{}, fmt.Errorf("too late, expected before %s, appeared %s later", bidBetterBefore,
 			common.PrettyDuration(timeout))
 	}
 
@@ -103,28 +80,21 @@ func (miner *Miner) SendBid(ctx context.Context, bidArgs *types.BidArgs) (common
 	return bid.Hash(), nil
 }
 
-func (miner *Miner) BestPackedBlockReward(parentHash common.Hash) *big.Int {
-	bidRuntime := miner.bidSimulator.GetBestBid(parentHash)
-	if bidRuntime == nil {
-		return big.NewInt(0)
-	}
-
-	return bidRuntime.packedBlockReward
-}
-
 func (miner *Miner) MevParams() *types.MevParams {
-	builderFeeCeil, ok := big.NewInt(0).SetString(miner.worker.config.Mev.BuilderFeeCeil, 10)
+	builderFeeCeil, ok := big.NewInt(0).SetString(*miner.worker.config.Mev.BuilderFeeCeil, 10)
 	if !ok {
-		log.Error("failed to parse builder fee ceil", "BuilderFeeCeil", miner.worker.config.Mev.BuilderFeeCeil)
+		log.Error("failed to parse builder fee ceil", "BuilderFeeCeil", *miner.worker.config.Mev.BuilderFeeCeil)
 		return nil
 	}
 
 	return &types.MevParams{
-		ValidatorCommission:   miner.worker.config.Mev.ValidatorCommission,
-		BidSimulationLeftOver: miner.worker.config.Mev.BidSimulationLeftOver,
+		ValidatorCommission:   *miner.worker.config.Mev.ValidatorCommission,
+		BidSimulationLeftOver: *miner.worker.config.Mev.BidSimulationLeftOver,
+		NoInterruptLeftOver:   *miner.worker.config.Mev.NoInterruptLeftOver,
+		MaxBidsPerBuilder:     *miner.worker.config.Mev.MaxBidsPerBuilder,
 		GasCeil:               miner.worker.config.GasCeil,
 		GasPrice:              miner.worker.config.GasPrice,
 		BuilderFeeCeil:        builderFeeCeil,
-		Version:               params.Version,
+		Version:               version.Semantic,
 	}
 }

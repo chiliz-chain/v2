@@ -27,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/triedb"
@@ -58,7 +57,6 @@ var pregenerated bool
 func init() {
 	// Reduce some of the parameters to make the tester faster
 	FullMaxForkAncestry = 10000
-	lightMaxForkAncestry = 10000
 	blockCacheMaxItems = 1024
 	fsHeaderSafetyNet = 256
 	fsHeaderContCheck = 500 * time.Millisecond
@@ -218,7 +216,7 @@ func newTestBlockchain(blocks []*types.Block) *core.BlockChain {
 		if pregenerated {
 			panic("Requested chain generation outside of init")
 		}
-		chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), nil, testGspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
+		chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), testGspec, ethash.NewFaker(), nil)
 		if err != nil {
 			panic(err)
 		}
