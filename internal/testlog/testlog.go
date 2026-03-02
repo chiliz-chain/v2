@@ -21,23 +21,31 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
-	"testing"
 
 	"github.com/ethereum/go-ethereum/log"
-	"golang.org/x/exp/slog"
 )
 
 const (
 	termTimeFormat = "01-02|15:04:05.000"
 )
 
+// T wraps methods from testing.T used by the test logger into an interface.
+// It is specified so that unit tests can instantiate the logger with an
+// implementation of T which can capture the output of logging statements
+// from T.Logf, as this cannot be using testing.T.
+type T interface {
+	Logf(format string, args ...any)
+	Helper()
+}
+
 // logger implements log.Logger such that all output goes to the unit test log via
 // t.Logf(). All methods in between logger.Trace, logger.Debug, etc. are marked as test
 // helpers, so the file and line number in unit test output correspond to the call site
 // which emitted the log message.
 type logger struct {
-	t  *testing.T
+	t  T
 	l  log.Logger
 	mu *sync.Mutex
 	h  *bufHandler
@@ -47,24 +55,29 @@ type bufHandler struct {
 	buf   []slog.Record
 	attrs []slog.Attr
 	level slog.Level
+	mu    sync.Mutex
 }
 
 func (h *bufHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.buf = append(h.buf, r)
 	return nil
 }
 
 func (h *bufHandler) Enabled(_ context.Context, lvl slog.Level) bool {
-	return lvl <= h.level
+	return lvl >= h.level
 }
 
 func (h *bufHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	records := make([]slog.Record, len(h.buf))
 	copy(records[:], h.buf[:])
 	return &bufHandler{
-		records,
-		append(h.attrs, attrs...),
-		h.level,
+		buf:   records,
+		attrs: append(h.attrs, attrs...),
+		level: h.level,
 	}
 }
 
@@ -73,11 +86,11 @@ func (h *bufHandler) WithGroup(_ string) slog.Handler {
 }
 
 // Logger returns a logger which logs to the unit test log of t.
-func Logger(t *testing.T, level slog.Level) log.Logger {
+func Logger(t T, level slog.Level) log.Logger {
 	handler := bufHandler{
-		[]slog.Record{},
-		[]slog.Attr{},
-		level,
+		buf:   []slog.Record{},
+		attrs: []slog.Attr{},
+		level: level,
 	}
 	return &logger{
 		t:  t,
@@ -87,15 +100,8 @@ func Logger(t *testing.T, level slog.Level) log.Logger {
 	}
 }
 
-// LoggerWithHandler returns
-func LoggerWithHandler(t *testing.T, handler slog.Handler) log.Logger {
-	var bh bufHandler
-	return &logger{
-		t:  t,
-		l:  log.NewLogger(handler),
-		mu: new(sync.Mutex),
-		h:  &bh,
-	}
+func (l *logger) Handler() slog.Handler {
+	return l.l.Handler()
 }
 
 func (l *logger) Write(level slog.Level, msg string, ctx ...interface{}) {}
@@ -161,7 +167,8 @@ func (l *logger) Crit(msg string, ctx ...interface{}) {
 }
 
 func (l *logger) With(ctx ...interface{}) log.Logger {
-	return &logger{l.t, l.l.With(ctx...), l.mu, l.h}
+	newLogger := l.l.With(ctx...)
+	return &logger{l.t, newLogger, l.mu, newLogger.Handler().(*bufHandler)}
 }
 
 func (l *logger) New(ctx ...interface{}) log.Logger {
@@ -196,6 +203,8 @@ func (h *bufHandler) terminalFormat(r slog.Record) string {
 // flush writes all buffered messages and clears the buffer.
 func (l *logger) flush() {
 	l.t.Helper()
+	l.h.mu.Lock()
+	defer l.h.mu.Unlock()
 	for _, r := range l.h.buf {
 		l.t.Logf("%s", l.h.terminalFormat(r))
 	}

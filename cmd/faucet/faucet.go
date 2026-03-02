@@ -17,9 +17,6 @@
 // faucet is an Ether faucet backed by a light client.
 package main
 
-//go:generate go-bindata -nometadata -o website.go faucet.html CircularStd-Book.otf
-//go:generate gofmt -w -s website.go
-
 import (
 	"bytes"
 	"context"
@@ -45,29 +42,21 @@ import (
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
-	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/eth/downloader"
-	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/ethclient"
-	"github.com/ethereum/go-ethereum/les"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/node"
-	"github.com/ethereum/go-ethereum/p2p"
-	"github.com/ethereum/go-ethereum/p2p/enode"
-	"github.com/ethereum/go-ethereum/p2p/nat"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/gorilla/websocket"
-	"github.com/joho/godotenv"
 	"golang.org/x/time/rate"
 )
 
 var (
-	genesisFlag = flag.String("genesis", "", "Genesis json file to seed the chain with")
-	apiPortFlag = flag.Int("apiport", 8080, "Listener port for the HTTP API connection")
-	wsEndpoint  = flag.String("ws", "http://127.0.0.1:7777/", "Url to ws endpoint")
+	genesisFlag       = flag.String("genesis", "", "Genesis json file to seed the chain with")
+	apiPortFlag       = flag.Int("apiport", 8080, "Listener port for the HTTP API connection")
+	wsEndpoint        = flag.String("ws", "http://127.0.0.1:7777/", "Url to ws endpoint")
+	wsEndpointMainnet = flag.String("ws.mainnet", "", "Url to ws endpoint of BSC mainnet")
 
 	netnameFlag = flag.String("faucet.name", "", "Network name to assign to the faucet")
 	payoutFlag  = flag.Int("faucet.amount", 1, "Number of Ethers to pay out per user request")
@@ -77,89 +66,72 @@ var (
 	accJSONFlag = flag.String("account.json", "", "Key json file to fund user requests with")
 	accPassFlag = flag.String("account.pass", "", "Decryption password to access faucet funds")
 
-	captchaToken     = flag.String("captcha.token", "", "Recaptcha site key to authenticate client side")
-	captchaSecret    = flag.String("captcha.secret", "", "Recaptcha secret key to authenticate server side")
-	captchaThreshold = flag.Float64("captcha.threshold", 0.5, "Recaptcha min threshold to pass")
+	captchaToken  = flag.String("captcha.token", "", "Recaptcha site key to authenticate client side")
+	captchaSecret = flag.String("captcha.secret", "", "Recaptcha secret key to authenticate server side")
 
 	noauthFlag = flag.Bool("noauth", false, "Enables funding requests without authentication")
 	logFlag    = flag.Int("loglevel", 3, "Log level to use for Ethereum and the faucet")
 
 	bep2eContracts     = flag.String("bep2eContracts", "", "the list of bep2p contracts")
 	bep2eSymbols       = flag.String("bep2eSymbols", "", "the symbol of bep2p tokens")
-	bep2eNames         = flag.String("bep2eNames", "", "the names of bep2p tokens")
 	bep2eAmounts       = flag.String("bep2eAmounts", "", "the amount of bep2p tokens")
 	fixGasPrice        = flag.Int64("faucet.fixedprice", 0, "Will use fixed gas price if specified")
 	twitterTokenFlag   = flag.String("twitter.token", "", "Bearer token to authenticate with the v2 Twitter API")
 	twitterTokenV1Flag = flag.String("twitter.token.v1", "", "Bearer token to authenticate with the v1.1 Twitter API")
 
-	goerliFlag  = flag.Bool("goerli", false, "Initializes the faucet with Görli network config")
-	rinkebyFlag = flag.Bool("rinkeby", false, "Initializes the faucet with Rinkeby network config")
-
-	pprofIsEnabled = flag.Bool("pprof", false, "Enable the pprof HTTP server")
-	pprofAddr      = flag.String("pprof.addr", "127.0.0.1", "pprof HTTP server listening interface (default: \"127.0.0.1\")")
-	pprofPort      = flag.Int("pprof.port", 6060, "pprof HTTP server listening port (default: 6060)")
+	resendInterval    = 15 * time.Second
+	resendBatchSize   = 3
+	resendMaxGasPrice = big.NewInt(50 * params.GWei)
+	wsReadTimeout     = 5 * time.Minute
+	minMainnetBalance = big.NewInt(2 * 1e6 * params.GWei) // 0.002 bnb
 )
+
 var (
 	ether        = new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
-	bep2eAbiJson = `[{"constant":true,"inputs":[],"name":"name","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"value","type":"uint256"}],"name":"approve","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_from","type":"address"},{"name":"_to","type":"address[]"},{"name":"_values","type":"uint256[]"}],"name":"batchTransfer","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"name","type":"string"},{"name":"symbol","type":"string"},{"name":"decimals","type":"uint8"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"totalSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"sender","type":"address"},{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"}],"name":"transferFrom","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"name","type":"string"},{"name":"symbol","type":"string"},{"name":"decimals","type":"uint8"},{"name":"minters","type":"address[]"},{"name":"pausers","type":"address[]"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"addedValue","type":"uint256"}],"name":"increaseAllowance","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"unpause","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"_survey","type":"address"}],"name":"unregisterSurvey","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"isPauser","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"name","type":"string"},{"name":"symbol","type":"string"},{"name":"decimals","type":"uint8"},{"name":"initialSupply","type":"uint256"},{"name":"initialHolder","type":"address"},{"name":"minters","type":"address[]"},{"name":"pausers","type":"address[]"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"offset","type":"uint256"},{"name":"count","type":"uint256"},{"name":"cap","type":"uint256"}],"name":"getCirculatingSupply","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"version","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"pure","type":"function"},{"constant":true,"inputs":[],"name":"paused","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[],"name":"renouncePauser","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"getOwnersCount","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"_survey","type":"address"}],"name":"registerSurvey","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"}],"name":"addPauser","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"pause","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[],"name":"getOwner","outputs":[{"name":"tokenOwner","type":"address"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"}],"name":"addMinter","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[],"name":"renounceMinter","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"account","type":"address"},{"name":"value","type":"uint256"}],"name":"burn","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"spender","type":"address"},{"name":"subtractedValue","type":"uint256"}],"name":"decreaseAllowance","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":false,"inputs":[{"name":"recipient","type":"address"},{"name":"amount","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"account","type":"address"}],"name":"isMinter","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":true,"inputs":[{"name":"_survey","type":"address"}],"name":"isSurveyRegistered","outputs":[{"name":"","type":"bool"}],"payable":false,"stateMutability":"view","type":"function"},{"constant":false,"inputs":[{"name":"sender","type":"address"}],"name":"initialize","outputs":[],"payable":false,"stateMutability":"nonpayable","type":"function"},{"constant":true,"inputs":[{"name":"owner","type":"address"},{"name":"spender","type":"address"}],"name":"allowance","outputs":[{"name":"","type":"uint256"}],"payable":false,"stateMutability":"view","type":"function"},{"anonymous":false,"inputs":[{"indexed":false,"name":"account","type":"address"}],"name":"Paused","type":"event"},{"anonymous":false,"inputs":[{"indexed":false,"name":"account","type":"address"}],"name":"Unpaused","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"PauserAdded","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"PauserRemoved","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"MinterAdded","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"account","type":"address"}],"name":"MinterRemoved","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"from","type":"address"},{"indexed":true,"name":"to","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Transfer","type":"event"},{"anonymous":false,"inputs":[{"indexed":true,"name":"owner","type":"address"},{"indexed":true,"name":"spender","type":"address"},{"indexed":false,"name":"value","type":"uint256"}],"name":"Approval","type":"event"}]`
+	bep2eAbiJson = `[ { "anonymous": false, "inputs": [ { "indexed": true, "internalType": "address", "name": "owner", "type": "address" }, { "indexed": true, "internalType": "address", "name": "spender", "type": "address" }, { "indexed": false, "internalType": "uint256", "name": "value", "type": "uint256" } ], "name": "Approval", "type": "event" }, { "anonymous": false, "inputs": [ { "indexed": true, "internalType": "address", "name": "from", "type": "address" }, { "indexed": true, "internalType": "address", "name": "to", "type": "address" }, { "indexed": false, "internalType": "uint256", "name": "value", "type": "uint256" } ], "name": "Transfer", "type": "event" }, { "inputs": [], "name": "totalSupply", "outputs": [ { "internalType": "uint256", "name": "", "type": "uint256" } ], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "decimals", "outputs": [ { "internalType": "uint256", "name": "", "type": "uint256" } ], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "symbol", "outputs": [ { "internalType": "string", "name": "", "type": "string" } ], "stateMutability": "view", "type": "function" }, { "inputs": [], "name": "getOwner", "outputs": [ { "internalType": "address", "name": "", "type": "address" } ], "stateMutability": "view", "type": "function" }, { "inputs": [ { "internalType": "address", "name": "account", "type": "address" } ], "name": "balanceOf", "outputs": [ { "internalType": "uint256", "name": "", "type": "uint256" } ], "stateMutability": "view", "type": "function" }, { "inputs": [ { "internalType": "address", "name": "recipient", "type": "address" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "name": "transfer", "outputs": [ { "internalType": "bool", "name": "", "type": "bool" } ], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [ { "internalType": "address", "name": "_owner", "type": "address" }, { "internalType": "address", "name": "spender", "type": "address" } ], "name": "allowance", "outputs": [ { "internalType": "uint256", "name": "", "type": "uint256" } ], "stateMutability": "view", "type": "function" }, { "inputs": [ { "internalType": "address", "name": "spender", "type": "address" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "name": "approve", "outputs": [ { "internalType": "bool", "name": "", "type": "bool" } ], "stateMutability": "nonpayable", "type": "function" }, { "inputs": [ { "internalType": "address", "name": "sender", "type": "address" }, { "internalType": "address", "name": "recipient", "type": "address" }, { "internalType": "uint256", "name": "amount", "type": "uint256" } ], "name": "transferFrom", "outputs": [ { "internalType": "bool", "name": "", "type": "bool" } ], "stateMutability": "nonpayable", "type": "function" } ]`
 )
 
 //go:embed faucet.html
 var websiteTmpl string
 
+func weiToEtherStringFx(wei *big.Int, prec int) string {
+	etherValue := new(big.Float).Quo(new(big.Float).SetInt(wei), big.NewFloat(params.Ether))
+	// Format the big.Float directly to a string with the specified precision
+	return etherValue.Text('f', prec)
+}
+
 func main() {
 	// Parse the flags and set up the logger to print everything requested
 	flag.Parse()
-	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.FromLegacyLevel(*logFlag), true)))
-
-	// Load .env
-	err := godotenv.Load()
-	if err != nil {
-		log.Crit("Error loading .env file", err)
-	}
-
+	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(os.Stderr, log.FromLegacyLevel(*logFlag), false)))
+	log.Info("faucet started")
 	// Construct the payout tiers
 	amounts := make([]string, *tiersFlag)
 	for i := 0; i < *tiersFlag; i++ {
 		// Calculate the amount for the next tier and format it
 		amount := float64(*payoutFlag) * math.Pow(2.5, float64(i))
-		amounts[i] = fmt.Sprintf("%s CHZs", strconv.FormatFloat(amount, 'f', -1, 64))
+		amounts[i] = fmt.Sprintf("0.%s BNBs", strconv.FormatFloat(amount, 'f', -1, 64))
 		if amount == 1 {
 			amounts[i] = strings.TrimSuffix(amounts[i], "s")
 		}
 	}
 	bep2eNumAmounts := make([]string, 0)
-	contractAmounts := os.Getenv("VOTE_TOKEN_AMOUNTS")
-	if len(contractAmounts) > 0 {
-		bep2eNumAmounts = strings.Split(contractAmounts, ",")
+	if bep2eAmounts != nil && len(*bep2eAmounts) > 0 {
+		bep2eNumAmounts = strings.Split(*bep2eAmounts, ",")
 	}
 
 	symbols := make([]string, 0)
-	contractSymbols := os.Getenv("VOTE_TOKEN_SYMBOLS")
-	if len(contractSymbols) > 0 {
-		symbols = strings.Split(contractSymbols, ",")
-	}
-
-	names := make([]string, 0)
-	contractNames := os.Getenv("VOTE_TOKEN_NAMES")
-	if len(contractNames) > 0 {
-		names = strings.Split(contractNames, ",")
+	if bep2eSymbols != nil && len(*bep2eSymbols) > 0 {
+		symbols = strings.Split(*bep2eSymbols, ",")
 	}
 
 	contracts := make([]string, 0)
-	contractAddresses := os.Getenv("VOTE_TOKEN_CONTRACTS_ADDRESSES")
-	if len(contractAddresses) > 0 {
-		contracts = strings.Split(contractAddresses, ",")
+	if bep2eContracts != nil && len(*bep2eContracts) > 0 {
+		contracts = strings.Split(*bep2eContracts, ",")
 	}
 
-	imageUrls := make([]string, 0)
-	contractImageUrls := os.Getenv("VOTE_TOKEN_IMAGES")
-	if len(contractImageUrls) > 0 {
-		imageUrls = strings.Split(contractImageUrls, ",")
-	}
-
-	if len(bep2eNumAmounts) != len(symbols) || len(symbols) != len(contracts) || len(contracts) != len(names) || len(names) != len(imageUrls) {
-		log.Crit("Length of bep2eContracts, bep2eSymbols, bep2eAmounts, bep2eNames mismatch")
+	if len(bep2eNumAmounts) != len(symbols) || len(symbols) != len(contracts) {
+		log.Crit("Length of bep2eContracts, bep2eSymbols, bep2eAmounts mismatch")
 	}
 
 	bep2eInfos := make(map[string]bep2eInfo, len(symbols))
@@ -168,53 +140,21 @@ func main() {
 		if !ok {
 			log.Crit("failed to parse bep2eAmounts")
 		}
-		amountStr := n.String()
+		amountStr := big.NewFloat(0).Quo(big.NewFloat(0).SetInt(n), big.NewFloat(0).SetInt64(params.Ether)).String()
 
 		bep2eInfos[s] = bep2eInfo{
 			Contract:  common.HexToAddress(contracts[idx]),
 			Amount:    *n,
 			AmountStr: amountStr,
-			Name:      names[idx],
-			Image:     imageUrls[idx],
 		}
 	}
-
-	faucetName := os.Getenv("FAUCET_NAME")
-	mintNftsUrl := os.Getenv("MINT_NFTS_URL")
-	devLandingUrl := os.Getenv("DEV_LANDING_URL")
-	chainName := os.Getenv("CHAIN_NAME")
-	metamaskRpcUrl := os.Getenv("METAMASK_RPC_URL")
-	metamaskExplorerUrl := os.Getenv("METAMASK_EXPLORER_URL")
-
-	// Load up and render the faucet website
-	tmpl, err := Asset("faucet.html")
-	if err != nil {
-		log.Crit("Failed to load the faucet template", "err", err)
-	}
 	website := new(bytes.Buffer)
-	err = template.Must(template.New("").Funcs(template.FuncMap{
-		"inc": func(n int) int {
-			return n + 1
-		},
-		"lessThanHalf": func(n int) bool {
-			return n < len(symbols)/2
-		},
-		"moreThanHalf": func(n int) bool {
-			return n >= len(symbols)/2
-		},
-	}).Parse(string(tmpl))).Execute(website, map[string]interface{}{
-		"Network":             *netnameFlag,
-		"Amounts":             amounts,
-		"Recaptcha":           *captchaToken,
-		"NoAuth":              *noauthFlag,
-		"Bep2eInfos":          bep2eInfos,
-		"FaucetName":          faucetName,
-		"MintNftsUrl":         mintNftsUrl,
-		"DevLandingUrl":       devLandingUrl,
-		"ChainName":           chainName,
-		"ChainId":             netFlag,
-		"MetamaskRpcUrl":      metamaskRpcUrl,
-		"MetamaskExplorerUrl": metamaskExplorerUrl,
+	err := template.Must(template.New("").Parse(websiteTmpl)).Execute(website, map[string]interface{}{
+		"Network":    *netnameFlag,
+		"Amounts":    amounts,
+		"Recaptcha":  *captchaToken,
+		"NoAuth":     *noauthFlag,
+		"Bep2eInfos": bep2eInfos,
 	})
 	if err != nil {
 		log.Crit("Failed to render the faucet template", "err", err)
@@ -242,28 +182,16 @@ func main() {
 	if err := ks.Unlock(acc, pass); err != nil {
 		log.Crit("Failed to unlock faucet signer account", "err", err)
 	}
-	font, err := Asset("CircularStd-Book.otf")
-	if err != nil {
-		log.Crit("Failed to load the font", "err", err)
-	}
 	// Assemble and start the faucet light service
-	faucet, err := newFaucet(genesis, *ethPortFlag, enodes, *netFlag, *statsFlag, ks, website.Bytes(), font, bep2eInfos)
+	faucet, err := newFaucet(genesis, *wsEndpoint, *wsEndpointMainnet, ks, website.Bytes(), bep2eInfos)
 	if err != nil {
 		log.Crit("Failed to start faucet", "err", err)
 	}
 	defer faucet.close()
-	go func() {
-		if *pprofIsEnabled {
-			address := fmt.Sprintf("%s:%d", *pprofAddr, *pprofPort)
-			debugServer := newDebugServer(address)
-			log.Info("Starting pprof server", "addr", fmt.Sprintf("%s/debug/pprof", address))
-			log.Crit("Failed to launch pprof server", "err", debugServer.ListenAndServe())
-		}
-	}()
+
 	if err := faucet.listenAndServe(*apiPortFlag); err != nil {
 		log.Crit("Failed to launch faucet API", "err", err)
 	}
-
 }
 
 // request represents an accepted funding request.
@@ -278,16 +206,14 @@ type bep2eInfo struct {
 	Contract  common.Address
 	Amount    big.Int
 	AmountStr string
-	Name      string
-	Image     string
 }
 
 // faucet represents a crypto faucet backed by an Ethereum light client.
 type faucet struct {
-	config *params.ChainConfig // Chain configurations for signing
-	client *ethclient.Client   // Client connection to the Ethereum chain
-	index  []byte              // Index page to serve up on the web
-	font   []byte              // Font to serve up on the web
+	config        *params.ChainConfig // Chain configurations for signing
+	client        *ethclient.Client   // Client connection to the Ethereum chain
+	clientMainnet *ethclient.Client   // Client connection to BSC mainnet for balance check
+	index         []byte              // Index page to serve up on the web
 
 	keystore *keystore.KeyStore // Keystore containing the single signer
 	account  accounts.Account   // Account funding user faucet requests
@@ -296,10 +222,10 @@ type faucet struct {
 	nonce    uint64             // Current pending nonce of the faucet
 	price    *big.Int           // Current gas price to issue funds with
 
-	conns    []*wsConn                       // Currently live websocket connections
-	timeouts map[string]map[string]time.Time // History of users and their funding timeouts
-	reqs     []*request                      // Currently pending funding requests
-	update   chan struct{}                   // Channel to signal request updates
+	conns    []*wsConn            // Currently live websocket connections
+	timeouts map[string]time.Time // History of users and their funding timeouts
+	reqs     []*request           // Currently pending funding requests
+	update   chan struct{}        // Channel to signal request updates
 
 	lock sync.RWMutex // Lock protecting the faucet's internals
 
@@ -316,40 +242,19 @@ type wsConn struct {
 	wlock sync.Mutex
 }
 
-func newFaucet(genesis *core.Genesis, port int, enodes []*enode.Node, network uint64, stats string, ks *keystore.KeyStore, index []byte, font []byte, bep2eInfos map[string]bep2eInfo) (*faucet, error) {
-	// Assemble the raw devp2p protocol stack
-	stack, err := node.New(&node.Config{
-		Name:    "geth",
-		Version: params.VersionWithCommit(gitCommit, gitDate),
-		DataDir: filepath.Join(os.Getenv("HOME"), ".faucet"),
-		NoUSB:   true,
-		P2P: p2p.Config{
-			NAT:              nat.Any(),
-			NoDiscovery:      true,
-			DiscoveryV5:      true,
-			ListenAddr:       fmt.Sprintf(":%d", port),
-			MaxPeers:         25,
-			BootstrapNodesV5: enodes,
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
+func newFaucet(genesis *core.Genesis, url string, mainnetUrl string, ks *keystore.KeyStore, index []byte, bep2eInfos map[string]bep2eInfo) (*faucet, error) {
 	bep2eAbi, err := abi.JSON(strings.NewReader(bep2eAbiJson))
 	if err != nil {
 		return nil, err
 	}
-	// Assemble the Ethereum light client protocol
-	cfg := ethconfig.Defaults
-	cfg.SyncMode = downloader.LightSync
-	cfg.NetworkId = network
-	cfg.Genesis = genesis
-	cfg.RPCTxFeeCap = 0
-	utils.SetDNSDiscoveryDefaults(&cfg, genesis.ToBlock(nil).Hash())
-
-	lesBackend, err := les.New(stack, &cfg)
+	client, err := ethclient.Dial(url)
 	if err != nil {
 		return nil, err
+	}
+	clientMainnet, err := ethclient.Dial(mainnetUrl)
+	if err != nil {
+		// skip mainnet balance check if it there is no available mainnet endpoint
+		log.Warn("dail mainnet endpoint failed", "mainnetUrl", mainnetUrl, "err", err)
 	}
 
 	// Allow 1 request per minute with burst of 5, and cache up to 1000 IPs
@@ -359,17 +264,17 @@ func newFaucet(genesis *core.Genesis, port int, enodes []*enode.Node, network ui
 	}
 
 	return &faucet{
-		config:     genesis.Config,
-		client:     client,
-		index:      index,
-		font:       font,
-		keystore:   ks,
-		account:    ks.Accounts()[0],
-		timeouts:   make(map[string]map[string]time.Time),
-		update:     make(chan struct{}, 1),
-		bep2eInfos: bep2eInfos,
-		bep2eAbi:   bep2eAbi,
-		limiter:    limiter,
+		config:        genesis.Config,
+		client:        client,
+		clientMainnet: clientMainnet,
+		index:         index,
+		keystore:      ks,
+		account:       ks.Accounts()[0],
+		timeouts:      make(map[string]time.Time),
+		update:        make(chan struct{}, 1),
+		bep2eInfos:    bep2eInfos,
+		bep2eAbi:      bep2eAbi,
+		limiter:       limiter,
 	}, nil
 }
 
@@ -378,41 +283,21 @@ func (f *faucet) close() {
 	f.client.Close()
 }
 
-// NewDebugServer provides new debug http server
-func newDebugServer(address string) *http.Server {
-	return &http.Server{
-		Addr:    address,
-		Handler: http.DefaultServeMux,
-	}
-}
-
 // listenAndServe registers the HTTP handlers for the faucet and boots it up
 // for service user funding requests.
 func (f *faucet) listenAndServe(port int) error {
-	mux := http.NewServeMux()
 	go f.loop()
-	mux.HandleFunc("/", f.webHandler)
-	mux.HandleFunc("/font", f.fontHandler)
-	mux.HandleFunc("/api", f.apiHandler)
-	mux.HandleFunc("/faucet-smart/api", f.apiHandler)
-	httpServer := &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
-	}
 
-	return httpServer.ListenAndServe()
+	http.HandleFunc("/", f.webHandler)
+	http.HandleFunc("/api", f.apiHandler)
+	http.HandleFunc("/faucet-smart/api", f.apiHandler)
+	return http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 }
 
 // webHandler handles all non-api requests, simply flattening and returning the
 // faucet website.
 func (f *faucet) webHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(f.index)
-}
-
-// webHandler handles all non-api requests, simply flattening and returning the
-// faucet website.
-func (f *faucet) fontHandler(w http.ResponseWriter, r *http.Request) {
-	w.Write(f.font)
 }
 
 // apiHandler handles requests for Ether grants and transaction statuses.
@@ -513,10 +398,14 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 			Captcha string `json:"captcha"`
 			Symbol  string `json:"symbol"`
 		}
+		// not sure if it helps or not, but set a read deadline could help prevent resource leakage
+		// if user did not give response for too long, then the routine will be stuck.
+		conn.SetReadDeadline(time.Now().Add(wsReadTimeout))
 		if err = conn.ReadJSON(&msg); err != nil {
+			log.Debug("read json message failed", "err", err, "ip", ip)
 			return
 		}
-		if !*noauthFlag && !strings.HasPrefix(msg.URL, "https://twitter.com/") && !strings.HasPrefix(msg.URL, "https://x.com/") && !strings.HasPrefix(msg.URL, "https://www.facebook.com/") {
+		if !*noauthFlag && !strings.HasPrefix(msg.URL, "https://twitter.com/") && !strings.HasPrefix(msg.URL, "https://www.facebook.com/") {
 			if err = sendError(wsconn, errors.New("URL doesn't link to supported services")); err != nil {
 				log.Warn("Failed to send URL error to client", "err", err)
 				return
@@ -531,9 +420,9 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		log.Info("Faucet funds requested", "url", msg.URL, "tier", msg.Tier)
+		log.Info("Faucet funds requested", "url", msg.URL, "tier", msg.Tier, "ip", ip)
 
-		// If captcha verifications are enabled, make sure we're not dealing with a robot
+		// check #1: captcha verifications to exclude robot
 		if *captchaToken != "" {
 			form := url.Values{}
 			form.Add("secret", *captchaSecret)
@@ -549,7 +438,6 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			var result struct {
 				Success bool            `json:"success"`
-				Score   float64         `json:"score"`
 				Errors  json.RawMessage `json:"error-codes"`
 			}
 			err = json.NewDecoder(res.Body).Decode(&result)
@@ -561,7 +449,7 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 				}
 				continue
 			}
-			if !result.Success || result.Score < *captchaThreshold {
+			if !result.Success {
 				log.Warn("Captcha verification failed", "err", string(result.Errors))
 				//lint:ignore ST1005 it's funny and the robot won't mind
 				if err = sendError(wsconn, errors.New("Beep-bop, you're a robot!")); err != nil {
@@ -569,8 +457,6 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				continue
-			} else {
-				log.Info("Captcha score received", "score", result.Score)
 			}
 		}
 		// Retrieve the Ethereum address to fund, the requesting user and a profile picture
@@ -581,7 +467,20 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 			address  common.Address
 		)
 		switch {
-		case strings.HasPrefix(msg.URL, "https://twitter.com/"), strings.HasPrefix(msg.URL, "https://x.com/"):
+		case strings.HasPrefix(msg.URL, "https://gist.github.com/"):
+			if err = sendError(wsconn, errors.New("GitHub authentication discontinued at the official request of GitHub")); err != nil {
+				log.Warn("Failed to send GitHub deprecation to client", "err", err)
+				return
+			}
+			continue
+		case strings.HasPrefix(msg.URL, "https://plus.google.com/"):
+			//lint:ignore ST1005 Google is a company name and should be capitalized.
+			if err = sendError(wsconn, errors.New("Google+ authentication discontinued as the service was sunset")); err != nil {
+				log.Warn("Failed to send Google+ deprecation to client", "err", err)
+				return
+			}
+			continue
+		case strings.HasPrefix(msg.URL, "https://twitter.com/"):
 			id, username, avatar, address, err = authTwitter(msg.URL, *twitterTokenV1Flag, *twitterTokenFlag)
 		case strings.HasPrefix(msg.URL, "https://www.facebook.com/"):
 			username, avatar, address, err = authFacebook(msg.URL)
@@ -600,81 +499,108 @@ func (f *faucet) apiHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			continue
 		}
-		log.Info("Faucet request valid", "url", msg.URL, "tier", msg.Tier, "user", username, "address", address)
 
-		// Ensure the user didn't request funds too recently
+		// check #2: check IP and ID(address) to ensure the user didn't request funds too frequently
 		f.lock.Lock()
-		var (
-			fund    bool
-			timeout time.Time
-		)
-		if _, ok := f.timeouts[id]; !ok {
-			f.timeouts[id] = make(map[string]time.Time)
-		}
-		if timeout = f.timeouts[id][msg.Symbol]; time.Now().After(timeout) {
-			var tx *types.Transaction
-			if msg.Symbol == "CHZ" {
-				// User wasn't funded recently, create the funding transaction
-				amount := new(big.Int).Div(new(big.Int).Mul(big.NewInt(int64(*payoutFlag)), ether), big.NewInt(10))
-				amount = new(big.Int).Mul(amount, new(big.Int).Exp(big.NewInt(5), big.NewInt(int64(msg.Tier)), nil))
-				amount = new(big.Int).Div(amount, new(big.Int).Exp(big.NewInt(2), big.NewInt(int64(msg.Tier)), nil))
 
-				tx = types.NewTransaction(f.nonce+uint64(len(f.reqs)), address, amount, 21000, f.price, nil)
-			} else {
-				tokenInfo, ok := f.bep2eInfos[msg.Symbol]
-				if !ok {
-					f.lock.Unlock()
-					log.Warn("Failed to find symbol", "symbol", msg.Symbol)
-					continue
-				}
-				input, err := f.bep2eAbi.Pack("transfer", address, &tokenInfo.Amount)
-				if err != nil {
-					f.lock.Unlock()
-					log.Warn("Failed to pack transfer transaction", "err", err)
-					continue
-				}
-				tx = types.NewTransaction(f.nonce+uint64(len(f.reqs)), tokenInfo.Contract, nil, 420000, f.price, input)
+		if ipTimeout := f.timeouts[ips[len(ips)-2]]; time.Now().Before(ipTimeout) {
+			f.lock.Unlock()
+			if err = sendError(wsconn, fmt.Errorf("%s left until next allowance", common.PrettyDuration(time.Until(ipTimeout)))); err != nil { // nolint: gosimple
+				log.Warn("Failed to send funding error to client", "err", err)
+				return
 			}
-			signed, err := f.keystore.SignTx(f.account, tx, f.config.ChainID)
+			log.Info("too frequent funding(ip)", "TimeLeft", common.PrettyDuration(time.Until(ipTimeout)), "ip", ips[len(ips)-2], "ipsStr", ipsStr)
+			continue
+		}
+		if idTimeout := f.timeouts[id]; time.Now().Before(idTimeout) {
+			f.lock.Unlock()
+			// Send an error if too frequent funding, otherwise a success
+			if err = sendError(wsconn, fmt.Errorf("%s left until next allowance", common.PrettyDuration(time.Until(idTimeout)))); err != nil { // nolint: gosimple
+				log.Warn("Failed to send funding error to client", "err", err)
+				return
+			}
+			log.Info("too frequent funding(id)", "TimeLeft", common.PrettyDuration(time.Until(idTimeout)), "id", id)
+			continue
+		}
+		// check #3: minimum mainnet balance check, internal error will bypass the check to avoid blocking the faucet service
+		if f.clientMainnet != nil {
+			mainnetAddr := address
+			balanceMainnet, err := f.clientMainnet.BalanceAt(context.Background(), mainnetAddr, nil)
+			if err != nil {
+				log.Warn("check balance failed, call BalanceAt", "err", err)
+			} else if balanceMainnet == nil {
+				log.Warn("check balance failed, balanceMainnet is nil")
+			} else {
+				if balanceMainnet.Cmp(minMainnetBalance) < 0 {
+					f.lock.Unlock()
+					log.Warn("insufficient BNB on BSC mainnet", "address", mainnetAddr,
+						"balanceMainnet", balanceMainnet, "minMainnetBalance", minMainnetBalance)
+					// Send an error if failed to meet the minimum balance requirement
+					if err = sendError(wsconn, fmt.Errorf("insufficient BNB on BSC mainnet        (require >=%sBNB)",
+						weiToEtherStringFx(minMainnetBalance, 3))); err != nil {
+						log.Warn("Failed to send mainnet minimum balance error to client", "err", err)
+						return
+					}
+					continue
+				}
+			}
+		}
+		log.Info("Faucet request valid", "url", msg.URL, "tier", msg.Tier, "user", username, "address", address, "ip", ip)
+
+		// now, it is ok to send tBNB or other tokens
+		var tx *types.Transaction
+		if msg.Symbol == "BNB" {
+			// User wasn't funded recently, create the funding transaction
+			amount := new(big.Int).Div(new(big.Int).Mul(big.NewInt(int64(*payoutFlag)), ether), big.NewInt(10))
+			amount = new(big.Int).Mul(amount, new(big.Int).Exp(big.NewInt(5), big.NewInt(int64(msg.Tier)), nil))
+			amount = new(big.Int).Div(amount, new(big.Int).Exp(big.NewInt(2), big.NewInt(int64(msg.Tier)), nil))
+
+			tx = types.NewTransaction(f.nonce+uint64(len(f.reqs)), address, amount, 21000, f.price, nil)
+		} else {
+			tokenInfo, ok := f.bep2eInfos[msg.Symbol]
+			if !ok {
+				f.lock.Unlock()
+				log.Warn("Failed to find symbol", "symbol", msg.Symbol)
+				continue
+			}
+			input, err := f.bep2eAbi.Pack("transfer", address, &tokenInfo.Amount)
 			if err != nil {
 				f.lock.Unlock()
-				if err = sendError(wsconn, err); err != nil {
-					log.Warn("Failed to send transaction creation error to client", "err", err)
-					return
-				}
+				log.Warn("Failed to pack transfer transaction", "err", err)
 				continue
 			}
-			// Submit the transaction and mark as funded if successful
-			if err := f.client.SendTransaction(context.Background(), signed); err != nil {
-				f.lock.Unlock()
-				if err = sendError(wsconn, err); err != nil {
-					log.Warn("Failed to send transaction transmission error to client", "err", err)
-					return
-				}
-				continue
-			}
-			f.reqs = append(f.reqs, &request{
-				Avatar:  avatar,
-				Account: address,
-				Time:    time.Now(),
-				Tx:      signed,
-			})
-			timeout := time.Duration(*minutesFlag*int(math.Pow(3, float64(msg.Tier)))) * time.Minute
-			grace := timeout / 288 // 24h timeout => 5m grace
-
-			f.timeouts[id][msg.Symbol] = time.Now().Add(timeout - grace)
-			fund = true
+			tx = types.NewTransaction(f.nonce+uint64(len(f.reqs)), tokenInfo.Contract, nil, 420000, f.price, input)
 		}
-		f.lock.Unlock()
-
-		// Send an error if too frequent funding, otherwise a success
-		if !fund {
-			if err = sendError(wsconn, fmt.Errorf("%s left until next allowance", common.PrettyDuration(time.Until(timeout)))); err != nil { // nolint: gosimple
-				log.Warn("Failed to send funding error to client", "err", err)
+		signed, err := f.keystore.SignTx(f.account, tx, f.config.ChainID)
+		if err != nil {
+			f.lock.Unlock()
+			if err = sendError(wsconn, err); err != nil {
+				log.Warn("Failed to send transaction creation error to client", "err", err)
 				return
 			}
 			continue
 		}
+		// Submit the transaction and mark as funded if successful
+		if err := f.client.SendTransaction(context.Background(), signed); err != nil {
+			f.lock.Unlock()
+			if err = sendError(wsconn, err); err != nil {
+				log.Warn("Failed to send transaction transmission error to client", "err", err)
+				return
+			}
+			continue
+		}
+		f.reqs = append(f.reqs, &request{
+			Avatar:  avatar,
+			Account: address,
+			Time:    time.Now(),
+			Tx:      signed,
+		})
+		timeoutInt64 := time.Duration(*minutesFlag*int(math.Pow(3, float64(msg.Tier)))) * time.Minute
+		grace := timeoutInt64 / 288 // 24h timeout => 5m grace
+
+		f.timeouts[id] = time.Now().Add(timeoutInt64 - grace)
+		f.timeouts[ips[len(ips)-2]] = time.Now().Add(timeoutInt64 - grace)
+		f.lock.Unlock()
 		if err = sendSuccess(wsconn, fmt.Sprintf("Funding request accepted for %s into %s", username, address.Hex())); err != nil {
 			log.Warn("Failed to send funding success to client", "err", err)
 			return
@@ -723,9 +649,52 @@ func (f *faucet) refresh(head *types.Header) error {
 	f.lock.Lock()
 	f.head, f.balance = head, balance
 	f.price, f.nonce = price, nonce
-	if len(f.reqs) > 0 && f.reqs[0].Tx.Nonce() > f.nonce {
+	if len(f.reqs) == 0 {
+		log.Debug("refresh len(f.reqs) == 0", "f.nonce", f.nonce)
+		f.lock.Unlock()
+		return nil
+	}
+	if f.reqs[0].Tx.Nonce() == f.nonce {
+		// if the next Tx failed to be included for a certain time(resendInterval), try to
+		// resend it with higher gasPrice, as it could be discarded in the network.
+		// Also resend extra following txs, as they could be discarded as well.
+		if time.Now().After(f.reqs[0].Time.Add(resendInterval)) {
+			for i, req := range f.reqs {
+				if i >= resendBatchSize {
+					break
+				}
+				prePrice := req.Tx.GasPrice()
+				// bump gas price 20% to replace the previous tx
+				newPrice := new(big.Int).Add(prePrice, new(big.Int).Div(prePrice, big.NewInt(5)))
+				if newPrice.Cmp(resendMaxGasPrice) >= 0 {
+					log.Info("resendMaxGasPrice reached", "newPrice", newPrice, "resendMaxGasPrice", resendMaxGasPrice, "nonce", req.Tx.Nonce())
+					break
+				}
+				newTx := types.NewTransaction(req.Tx.Nonce(), *req.Tx.To(), req.Tx.Value(), req.Tx.Gas(), newPrice, req.Tx.Data())
+				newSigned, err := f.keystore.SignTx(f.account, newTx, f.config.ChainID)
+				if err != nil {
+					log.Error("resend sign tx failed", "err", err)
+				}
+				log.Info("reqs[0] Tx has been stuck for a while, trigger resend",
+					"resendInterval", resendInterval, "resendTxSize", resendBatchSize,
+					"preHash", req.Tx.Hash().Hex(), "newHash", newSigned.Hash().Hex(),
+					"newPrice", newPrice, "nonce", req.Tx.Nonce(), "req.Tx.Gas()", req.Tx.Gas())
+				if err := f.client.SendTransaction(context.Background(), newSigned); err != nil {
+					log.Warn("resend tx failed", "err", err)
+					continue
+				}
+				req.Tx = newSigned
+			}
+		}
+	}
+	// it is abnormal that reqs[0] has larger nonce than next expected nonce.
+	// could be caused by reorg? reset it
+	if f.reqs[0].Tx.Nonce() > f.nonce {
+		log.Warn("reset due to nonce gap", "f.nonce", f.nonce, "f.reqs[0].Tx.Nonce()", f.reqs[0].Tx.Nonce())
 		f.reqs = f.reqs[:0]
 	}
+	// remove the reqs if they have smaller nonce, which means it is no longer valid,
+	// either has been accepted or replaced.
 	for len(f.reqs) > 0 && f.reqs[0].Tx.Nonce() < f.nonce {
 		f.reqs = f.reqs[1:]
 	}
@@ -890,7 +859,7 @@ func authTwitter(url string, tokenV1, tokenV2 string) (string, string, string, c
 	address := common.HexToAddress(string(regexp.MustCompile("0x[0-9a-fA-F]{40}").Find(body)))
 	if address == (common.Address{}) {
 		//lint:ignore ST1005 This error is to be displayed in the browser
-		return "", "", "", common.Address{}, errors.New("No Scoville Chain address found to fund")
+		return "", "", "", common.Address{}, errors.New("No BNB Smart Chain address found to fund")
 	}
 	var avatar string
 	if parts = regexp.MustCompile(`src="([^"]+twimg\.com/profile_images[^"]+)"`).FindStringSubmatch(string(body)); len(parts) == 2 {
@@ -933,7 +902,7 @@ func authTwitterWithTokenV1(tweetID string, token string) (string, string, strin
 		//lint:ignore ST1005 This error is to be displayed in the browser
 		return "", "", "", common.Address{}, errors.New("No Ethereum address found to fund")
 	}
-	return result.User.ID + "@x", result.User.Username, result.User.Avatar, address, nil
+	return result.User.ID + "@twitter", result.User.Username, result.User.Avatar, address, nil
 }
 
 // authTwitterWithTokenV2 tries to authenticate a faucet request using Twitter's v2
@@ -977,7 +946,7 @@ func authTwitterWithTokenV2(tweetID string, token string) (string, string, strin
 		//lint:ignore ST1005 This error is to be displayed in the browser
 		return "", "", "", common.Address{}, errors.New("No Ethereum address found to fund")
 	}
-	return result.Data.AuthorID + "@x", result.Includes.Users[0].Username, result.Includes.Users[0].Avatar, address, nil
+	return result.Data.AuthorID + "@twitter", result.Includes.Users[0].Username, result.Includes.Users[0].Avatar, address, nil
 }
 
 // authFacebook tries to authenticate a faucet request using Facebook posts,
@@ -1016,7 +985,7 @@ func authFacebook(url string) (string, string, common.Address, error) {
 	address := common.HexToAddress(string(regexp.MustCompile("0x[0-9a-fA-F]{40}").Find(body)))
 	if address == (common.Address{}) {
 		//lint:ignore ST1005 This error is to be displayed in the browser
-		return "", "", common.Address{}, errors.New("No Scoville Chain address found to fund")
+		return "", "", common.Address{}, errors.New("No BNB Smart Chain address found to fund. Please check the post URL and verify that it can be viewed publicly.")
 	}
 	var avatar string
 	if parts = regexp.MustCompile(`src="([^"]+fbcdn\.net[^"]+)"`).FindStringSubmatch(string(body)); len(parts) == 2 {
@@ -1032,7 +1001,7 @@ func authNoAuth(url string) (string, string, common.Address, error) {
 	address := common.HexToAddress(regexp.MustCompile("0x[0-9a-fA-F]{40}").FindString(url))
 	if address == (common.Address{}) {
 		//lint:ignore ST1005 This error is to be displayed in the browser
-		return "", "", common.Address{}, errors.New("No Scoville Chain address found to fund")
+		return "", "", common.Address{}, errors.New("No BNB Smart Chain address found to fund")
 	}
 	return address.Hex() + "@noauth", "", address, nil
 }

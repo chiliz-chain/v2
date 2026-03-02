@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	stdmath "math"
 	"math/big"
 	"os"
 	"reflect"
@@ -34,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/log"
@@ -109,7 +111,7 @@ type btHeaderMarshaling struct {
 	ExcessBlobGas *math.HexOrDecimal64
 }
 
-func (t *BlockTest) Run(snapshotter bool, scheme string, tracer vm.EVMLogger, postCheck func(error, *core.BlockChain)) (result error) {
+func (t *BlockTest) Run(snapshotter bool, scheme string, witness bool, tracer *tracing.Hooks, postCheck func(error, *core.BlockChain)) (result error) {
 	config, ok := Forks[t.json.Network]
 	if !ok {
 		return UnsupportedForkError{t.json.Network}
@@ -128,6 +130,11 @@ func (t *BlockTest) Run(snapshotter bool, scheme string, tracer vm.EVMLogger, po
 	}
 	// Commit genesis state
 	gspec := t.genesis(config)
+
+	// if ttd is not specified, set an arbitrary huge value
+	if gspec.Config.TerminalTotalDifficulty == nil {
+		gspec.Config.TerminalTotalDifficulty = big.NewInt(stdmath.MaxInt64)
+	}
 	triedb := triedb.NewDatabase(db, tconf)
 	gblock, err := gspec.Commit(db, triedb)
 	if err != nil {
@@ -144,14 +151,22 @@ func (t *BlockTest) Run(snapshotter bool, scheme string, tracer vm.EVMLogger, po
 	// Wrap the original engine within the beacon-engine
 	engine := beacon.New(ethash.NewFaker())
 
-	cache := &core.CacheConfig{TrieCleanLimit: 0, TriesInMemory: 128, StateScheme: scheme, Preimages: true}
-	if snapshotter {
-		cache.SnapshotLimit = 1
-		cache.SnapshotWait = true
+	options := &core.BlockChainConfig{
+		TrieCleanLimit: 0,
+		TriesInMemory:  128,
+		StateScheme:    scheme,
+		Preimages:      true,
+		TxLookupLimit:  -1, // disable tx indexing
+		VmConfig: vm.Config{
+			Tracer:                  tracer,
+			StatelessSelfValidation: witness,
+		},
 	}
-	chain, err := core.NewBlockChain(db, cache, gspec, nil, engine, vm.Config{
-		Tracer: tracer,
-	}, nil, nil)
+	if snapshotter {
+		options.SnapshotLimit = 1
+		options.SnapshotWait = true
+	}
+	chain, err := core.NewBlockChain(db, gspec, engine, options)
 	if err != nil {
 		return err
 	}
@@ -179,8 +194,10 @@ func (t *BlockTest) Run(snapshotter bool, scheme string, tracer vm.EVMLogger, po
 	}
 	// Cross-check the snapshot-to-hash against the trie hash
 	if snapshotter {
-		if err := chain.Snapshots().Verify(chain.CurrentBlock().Root); err != nil {
-			return err
+		if chain.Snapshots() != nil {
+			if err := chain.Snapshots().Verify(chain.CurrentBlock().Root); err != nil {
+				return err
+			}
 		}
 	}
 	return t.validateImportedHeaders(chain, validBlocks)

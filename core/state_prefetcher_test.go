@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"math/big"
 	"runtime/pprof"
+	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,7 +18,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/triedb"
@@ -37,8 +38,7 @@ func TestPrefetchLeaking(t *testing.T) {
 			Alloc:   GenesisAlloc{address: {Balance: funds}},
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
-		triedb  = triedb.NewDatabase(gendb, nil)
-		genesis = gspec.MustCommit(gendb, triedb)
+		genesis = gspec.MustCommit(gendb, triedb.NewDatabase(gendb, nil))
 		signer  = types.LatestSigner(gspec.Config)
 	)
 	blocks, _ := GenerateChain(gspec.Config, genesis, ethash.NewFaker(), gendb, 1, func(i int, block *BlockGen) {
@@ -52,18 +52,18 @@ func TestPrefetchLeaking(t *testing.T) {
 		}
 	})
 	archiveDb := rawdb.NewMemoryDatabase()
-	gspec.MustCommit(archiveDb, triedb)
-	archive, _ := NewBlockChain(archiveDb, nil, gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
+	gspec.MustCommit(archiveDb, triedb.NewDatabase(archiveDb, nil))
+	archive, _ := NewBlockChain(archiveDb, gspec, ethash.NewFaker(), nil)
 	defer archive.Stop()
 
 	block := blocks[0]
 	parent := archive.GetHeader(block.ParentHash(), block.NumberU64()-1)
-	statedb, _ := state.NewWithSharedPool(parent.Root, archive.stateCache, archive.snaps)
-	inter := make(chan struct{})
+	statedb, _ := state.New(parent.Root, archive.statedb)
+	var inter atomic.Bool
 
 	Track(ctx, t, func(ctx context.Context) {
-		close(inter)
-		go archive.prefetcher.Prefetch(block, statedb, &archive.vmConfig, inter)
+		defer inter.Store(true)
+		go archive.prefetcher.Prefetch(block.Transactions(), block.Header(), block.GasLimit(), statedb, archive.cfg.VmConfig, &inter)
 		time.Sleep(1 * time.Second)
 	})
 }
@@ -139,11 +139,5 @@ func matchesLabel(sample *profile.Sample, key, expectedValue string) bool {
 		return false
 	}
 
-	for _, value := range values {
-		if value == expectedValue {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(values, expectedValue)
 }

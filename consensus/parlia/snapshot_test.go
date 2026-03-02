@@ -2,13 +2,13 @@ package parlia
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math/big"
+	"os"
 	"sort"
 	"testing"
 	"text/tabwriter"
-	"os"
-	"encoding/binary"
 
 	"github.com/golang/snappy"
 	"github.com/stretchr/testify/assert"
@@ -31,11 +31,11 @@ func TestValidatorSetSort(t *testing.T) {
 
 func TestValidatorSelectionAlgorithm(t *testing.T) {
 	var (
-		valCount = 10
-		validators = make([]common.Address, valCount)
+		valCount      = 10
+		validators    = make([]common.Address, valCount)
 		initialStakes = map[common.Address]*big.Int{}
-		s = []int64{400,300,50,50,50,50,40,34,18,8}
-		d = big.NewInt(1e18)
+		s             = []int64{400, 300, 50, 50, 50, 50, 40, 34, 18, 8}
+		d             = big.NewInt(1e18)
 	)
 	for i := 0; i < valCount; i++ {
 		validators[i] = common.HexToAddress(fmt.Sprintf("0x%040x", i+1))
@@ -43,9 +43,9 @@ func TestValidatorSelectionAlgorithm(t *testing.T) {
 		initialStakes[validators[i]].Mul(initialStakes[validators[i]], d)
 	}
 
-	var(
-		lastSnap *Snapshot
-		blocks = 28800 * 365
+	var (
+		lastSnap           *Snapshot
+		blocks             = 28800 * 365
 		blocksPerValidator = map[common.Address]int{}
 	)
 	for i := 0; i < blocks; i++ {
@@ -78,17 +78,17 @@ func TestValidatorSelectionAlgorithm(t *testing.T) {
 	w := tabwriter.NewWriter(os.Stdout, 1, 1, 1, ' ', 0)
 	fmt.Fprintf(w, "Validator\t\tCHZ Staked\t\tBlocks Produced out of 28800\t\n")
 	for _, addr := range validators {
-		fmt.Fprintf(w, "%s\t\t%d\t\t%s\t\n", addr,  initialStakes[addr], fmt.Sprintf("%v (%v%%)", blocksPerValidator[addr], float64(blocksPerValidator[addr]*100)/float64(blocks)))
+		fmt.Fprintf(w, "%s\t\t%d\t\t%s\t\n", addr, initialStakes[addr], fmt.Sprintf("%v (%v%%)", blocksPerValidator[addr], float64(blocksPerValidator[addr]*100)/float64(blocks)))
 	}
 	w.Flush()
 }
 
 func TestMeasureOverhead(t *testing.T) {
-	extraVanity        := 32 // Fixed number of extra-data prefix bytes reserved for signer vanity
-	extraSeal          := 65 // Fixed number of extra-data suffix bytes reserved for signer seal
-	nextForkHashSize   := 4  // Fixed number of extra-data suffix bytes reserved for nextForkHash.
+	extraVanity := 32       // Fixed number of extra-data prefix bytes reserved for signer vanity
+	extraSeal := 65         // Fixed number of extra-data suffix bytes reserved for signer seal
+	nextForkHashSize := 4   // Fixed number of extra-data suffix bytes reserved for nextForkHash.
 	freqDataPrefixSize := 3 // Fixed number of extra-data bytes reserved for frequency data prefix
-	parentTsSize       := 8 // Size of parent block timestamp in bytes
+	parentTsSize := 8       // Size of parent block timestamp in bytes
 	calcFreqRlp := func(count int) []byte {
 		validators := make([]common.Address, count)
 		initialStakes := map[common.Address]*big.Int{}
@@ -152,7 +152,7 @@ func TestMeasureOverhead(t *testing.T) {
 	fmt.Printf("\nSize of RLP encoded frequency data for 1 validator: %v bytes\n", len(calcFreqRlp(1)))
 	fmt.Fprintf(w, "Number of Validators (2k+1)\t\tCurrent Size [epoch block | normal block] (bytes)\t\tNew Size [epoch block | normal block] (bytes)\t\tAdded overhead per Block(bytes)\t\tAdded storage overhead per year for 1 full archive node (gigabytes)\n")
 	i := 6
-	for j := 20; j < 100; j = 2*i+1 {
+	for j := 20; j < 100; j = 2*i + 1 {
 		currNormalSize := extraVanity + nextForkHashSize + extraSeal
 		newNormalSize := extraVanity + nextForkHashSize + freqDataPrefixSize + parentTsSize + len(calcFreqRlp(j)) + extraSeal
 

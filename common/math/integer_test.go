@@ -17,6 +17,8 @@
 package math
 
 import (
+	"bytes"
+	"math"
 	"testing"
 )
 
@@ -36,8 +38,8 @@ func TestOverflow(t *testing.T) {
 		op       operation
 	}{
 		// add operations
-		{MaxUint64, 1, true, add},
-		{MaxUint64 - 1, 1, false, add},
+		{math.MaxUint64, 1, true, add},
+		{math.MaxUint64 - 1, 1, false, add},
 
 		// sub operations
 		{0, 1, true, sub},
@@ -46,8 +48,8 @@ func TestOverflow(t *testing.T) {
 		// mul operations
 		{0, 0, false, mul},
 		{10, 10, false, mul},
-		{MaxUint64, 2, true, mul},
-		{MaxUint64, 1, false, mul},
+		{math.MaxUint64, 2, true, mul},
+		{math.MaxUint64, 1, false, mul},
 	} {
 		var overflows bool
 		switch test.op {
@@ -113,4 +115,41 @@ func TestMustParseUint64Panic(t *testing.T) {
 		}
 	}()
 	MustParseUint64("ggg")
+}
+
+func TestHexOrDecimal64_MarshalText(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   HexOrDecimal64
+		want    []byte
+		wantErr bool
+	}{
+		{
+			name:  "zero value",
+			input: HexOrDecimal64(0),
+			want:  []byte("0x0"),
+		},
+		{
+			name:  "positive value",
+			input: HexOrDecimal64(0x123abc),
+			want:  []byte("0x123abc"),
+		},
+		{
+			name:  "max uint64 value",
+			input: HexOrDecimal64(math.MaxUint64),
+			want:  []byte("0xffffffffffffffff"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.input.MarshalText()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("HexOrDecimal64.MarshalText() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !bytes.Equal(got, tt.want) {
+				t.Errorf("HexOrDecimal64.MarshalText() = %s, want %s", got, tt.want)
+			}
+		})
+	}
 }

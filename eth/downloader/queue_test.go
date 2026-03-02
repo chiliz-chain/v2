@@ -18,6 +18,7 @@ package downloader
 
 import (
 	"fmt"
+	"log/slog"
 	"math/big"
 	"math/rand"
 	"os"
@@ -32,7 +33,6 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
-	"golang.org/x/exp/slog"
 )
 
 // makeChain creates a chain of n blocks starting at and including parent.
@@ -358,16 +358,16 @@ func XTestDelivery(t *testing.T) {
 		for {
 			f, _, _ := q.ReserveReceipts(peer, rand.Intn(50))
 			if f != nil {
-				var rcs [][]*types.Receipt
+				var rcs []types.Receipts
 				for _, hdr := range f.Headers {
 					rcs = append(rcs, world.getReceipts(hdr.Number.Uint64()))
 				}
 				hasher := trie.NewStackTrie(nil)
 				hashes := make([]common.Hash, len(rcs))
 				for i, receipt := range rcs {
-					hashes[i] = types.DeriveSha(types.Receipts(receipt), hasher)
+					hashes[i] = types.DeriveSha(receipt, hasher)
 				}
-				_, err := q.DeliverReceipts(peer.id, rcs, hashes)
+				_, err := q.DeliverReceipts(peer.id, types.EncodeBlockReceiptLists(rcs), hashes)
 				if err != nil {
 					fmt.Printf("delivered %d receipts %v\n", len(rcs), err)
 				}

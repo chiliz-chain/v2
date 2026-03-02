@@ -23,24 +23,25 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
-	"github.com/ethereum/go-ethereum/core/state"
-	"github.com/ethereum/go-ethereum/crypto/kzg4844"
-	"github.com/ethereum/go-ethereum/trie"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/eth/downloader"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
+	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 	"github.com/holiman/uint256"
 )
 
@@ -87,9 +88,39 @@ func (p *testTxPool) Get(hash common.Hash) *types.Transaction {
 	return p.pool[hash]
 }
 
+// Get retrieves the transaction from local txpool with given
+// tx hash.
+func (p *testTxPool) GetRLP(hash common.Hash) []byte {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	tx := p.pool[hash]
+	if tx != nil {
+		blob, _ := rlp.EncodeToBytes(tx)
+		return blob
+	}
+	return nil
+}
+
+// GetMetadata returns the transaction type and transaction size with the given
+// hash.
+func (p *testTxPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	tx := p.pool[hash]
+	if tx != nil {
+		return &txpool.TxMetadata{
+			Type: tx.Type(),
+			Size: tx.Size(),
+		}
+	}
+	return nil
+}
+
 // Add appends a batch of transactions to the pool, and notifies any
 // listeners if the addition channel is non nil
-func (p *testTxPool) Add(txs []*types.Transaction, local bool, sync bool) []error {
+func (p *testTxPool) Add(txs []*types.Transaction, sync bool) []error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -179,7 +210,7 @@ func newTestHandlerWithBlocks(blocks int) *testHandler {
 		Config: params.TestChainConfig,
 		Alloc:  types.GenesisAlloc{testAddr: {Balance: big.NewInt(1000000)}},
 	}
-	chain, _ := core.NewBlockChain(db, nil, gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil)
+	chain, _ := core.NewBlockChain(db, gspec, ethash.NewFaker(), nil)
 
 	_, bs, _ := core.GenerateChainWithGenesis(gspec, ethash.NewFaker(), blocks, nil)
 	if _, err := chain.InsertChain(bs); err != nil {
@@ -192,10 +223,9 @@ func newTestHandlerWithBlocks(blocks int) *testHandler {
 		Database:   db,
 		Chain:      chain,
 		TxPool:     txpool,
-		Merger:     consensus.NewMerger(rawdb.NewMemoryDatabase()),
 		VotePool:   votepool,
 		Network:    1,
-		Sync:       downloader.SnapSync,
+		Sync:       ethconfig.SnapSync,
 		BloomCache: 1,
 	})
 	handler.Start(1000, 3)
@@ -221,6 +251,10 @@ func (c *mockParlia) VerifyUncles(chain consensus.ChainReader, block *types.Bloc
 	return nil
 }
 
+func (c *mockParlia) VerifyRequests(header *types.Header, Requests [][]byte) error {
+	return nil
+}
+
 func (c *mockParlia) VerifyHeader(chain consensus.ChainHeaderReader, header *types.Header) error {
 	return nil
 }
@@ -234,31 +268,30 @@ func (c *mockParlia) VerifyHeaders(chain consensus.ChainHeaderReader, headers []
 	return abort, results
 }
 
-func (c *mockParlia) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, _ *[]*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal,
-	_ *[]*types.Receipt, _ *[]*types.Transaction, _ *uint64) (err error) {
+func (c *mockParlia) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, _ *[]*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal,
+	_ *[]*types.Receipt, _ *[]*types.Transaction, _ *uint64, tracer *tracing.Hooks) (err error) {
 	return
 }
 
-func (c *mockParlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction,
-	uncles []*types.Header, receipts []*types.Receipt, withdrawals []*types.Withdrawal) (*types.Block, []*types.Receipt, error) {
+func (c *mockParlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt, tracer *tracing.Hooks) (*types.Block, []*types.Receipt, error) {
 	// Finalize block
-	c.Finalize(chain, header, state, &txs, uncles, nil, nil, nil, nil)
+	c.Finalize(chain, header, state, &body.Transactions, body.Uncles, body.Withdrawals, nil, nil, nil, tracer)
 
 	// Assign the final state root to header.
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 
 	// Header seems complete, assemble into a block and return
-	return types.NewBlock(header, txs, uncles, receipts, trie.NewStackTrie(nil)), receipts, nil
+	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)), receipts, nil
 }
 
 func (c *mockParlia) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
 	return big.NewInt(1)
 }
 
-func newTestParliaHandlerAfterCancun(t *testing.T, config *params.ChainConfig, mode downloader.SyncMode, preCancunBlks, postCancunBlks uint64) *testHandler {
+func newTestParliaHandlerAfterCancun(t *testing.T, config *params.ChainConfig, mode ethconfig.SyncMode, preCancunBlks, postCancunBlks uint64) *testHandler {
 	// Have N headers in the freezer
 	frdir := t.TempDir()
-	db, err := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), frdir, "", false, false, false, false, false)
+	db, err := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), frdir, "", false)
 	if err != nil {
 		t.Fatalf("failed to create database with ancient backend")
 	}
@@ -267,16 +300,18 @@ func newTestParliaHandlerAfterCancun(t *testing.T, config *params.ChainConfig, m
 		Alloc:  types.GenesisAlloc{testAddr: {Balance: new(big.Int).SetUint64(10 * params.Ether)}},
 	}
 	engine := &mockParlia{}
-	chain, _ := core.NewBlockChain(db, nil, gspec, nil, engine, vm.Config{}, nil, nil)
+	cfg := core.DefaultConfig()
+	cfg.StateScheme = rawdb.PathScheme
+	chain, _ := core.NewBlockChain(db, gspec, engine, cfg)
 	signer := types.LatestSigner(config)
 
 	_, bs, _ := core.GenerateChainWithGenesis(gspec, engine, int(preCancunBlks+postCancunBlks), func(i int, gen *core.BlockGen) {
 		if !config.IsCancun(gen.Number(), gen.Timestamp()) {
-			tx, _ := makeMockTx(config, signer, testKey, gen.TxNonce(testAddr), gen.BaseFee().Uint64(), eip4844.CalcBlobFee(gen.ExcessBlobGas()).Uint64(), false)
+			tx, _ := makeMockTx(config, signer, testKey, gen.TxNonce(testAddr), gen.BaseFee().Uint64(), 0, false)
 			gen.AddTxWithChain(chain, tx)
 			return
 		}
-		tx, sidecar := makeMockTx(config, signer, testKey, gen.TxNonce(testAddr), gen.BaseFee().Uint64(), eip4844.CalcBlobFee(gen.ExcessBlobGas()).Uint64(), true)
+		tx, sidecar := makeMockTx(config, signer, testKey, gen.TxNonce(testAddr), gen.BaseFee().Uint64(), eip4844.CalcBlobFee(config, gen.HeadBlock()).Uint64(), true)
 		gen.AddTxWithChain(chain, tx)
 		gen.AddBlobSidecar(&types.BlobSidecar{
 			BlobTxSidecar: *sidecar,
@@ -294,7 +329,6 @@ func newTestParliaHandlerAfterCancun(t *testing.T, config *params.ChainConfig, m
 		Database:   db,
 		Chain:      chain,
 		TxPool:     txpool,
-		Merger:     consensus.NewMerger(rawdb.NewMemoryDatabase()),
 		VotePool:   votepool,
 		Network:    1,
 		Sync:       mode,
@@ -317,7 +351,9 @@ func (b *testHandler) close() {
 	b.chain.Stop()
 }
 
-// newTestVotePool creates a mock vote pool.
+// testVotePool is a mock vote pool that simply collects and stores votes.
+// Its purpose is to simulate vote collection behavior without implementing
+// complex validation and consensus rules.
 type testVotePool struct {
 	pool map[common.Hash]*types.VoteEnvelope // Hash map of collected votes
 
@@ -340,7 +376,7 @@ func (t *testVotePool) PutVote(vote *types.VoteEnvelope) {
 	t.voteFeed.Send(core.NewVoteEvent{Vote: vote})
 }
 
-func (t *testVotePool) FetchVoteByBlockHash(blockHash common.Hash) []*types.VoteEnvelope {
+func (t *testVotePool) FetchVotesByBlockHash(blockHash common.Hash) []*types.VoteEnvelope {
 	panic("implement me")
 }
 
@@ -361,8 +397,8 @@ func (t *testVotePool) SubscribeNewVoteEvent(ch chan<- core.NewVoteEvent) event.
 
 var (
 	emptyBlob          = kzg4844.Blob{}
-	emptyBlobCommit, _ = kzg4844.BlobToCommitment(emptyBlob)
-	emptyBlobProof, _  = kzg4844.ComputeBlobProof(emptyBlob, emptyBlobCommit)
+	emptyBlobCommit, _ = kzg4844.BlobToCommitment(&emptyBlob)
+	emptyBlobProof, _  = kzg4844.ComputeBlobProof(&emptyBlob, emptyBlobCommit)
 )
 
 func makeMockTx(config *params.ChainConfig, signer types.Signer, key *ecdsa.PrivateKey, nonce uint64, baseFee uint64, blobBaseFee uint64, isBlobTx bool) (*types.Transaction, *types.BlobTxSidecar) {

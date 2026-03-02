@@ -18,8 +18,11 @@ package nat
 
 import (
 	"net"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // This test checks that autodisc doesn't hang and returns
@@ -59,5 +62,62 @@ func TestAutoDiscRace(t *testing.T) {
 				t.Errorf("result %d: got IP %v, want %v", i, rval.ip, wantIP)
 			}
 		}
+	}
+}
+
+// stun should work well
+func TestParseStun(t *testing.T) {
+	testcases := []struct {
+		natStr string
+		want   *stun
+	}{
+		{"stun", &stun{serverList: strings.Split(stunDefaultServers, "\n")}},
+		{"stun:1.2.3.4:1234", &stun{serverList: []string{"1.2.3.4:1234"}}},
+	}
+
+	for _, tc := range testcases {
+		nat, err := Parse(tc.natStr)
+		if err != nil {
+			t.Errorf("should no err, but get %v", err)
+		}
+		stun := nat.(*stun)
+		assert.Equal(t, stun.serverList, tc.want.serverList)
+	}
+}
+
+func TestExtIP_MarshalText(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   ExtIP
+		want    []byte
+		wantErr bool
+	}{
+		{
+			name:  "valid ipv4",
+			input: ExtIP{192, 168, 1, 1},
+			want:  []byte("extip:192.168.1.1"),
+		},
+		{
+			name:  "valid ipv6",
+			input: ExtIP(net.ParseIP("2001:db8::68")), // Create ExtIP from net.IP
+			want:  []byte("extip:2001:db8::68"),
+		},
+		{
+			name:  "zero ip",
+			input: ExtIP{0, 0, 0, 0},
+			want:  []byte("extip:0.0.0.0"),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.input.MarshalText()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ExtIP.MarshalText() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if string(got) != string(tt.want) { // Compare as strings for better error messages with IPs
+				t.Errorf("ExtIP.MarshalText() = %s, want %s", got, tt.want)
+			}
+		})
 	}
 }

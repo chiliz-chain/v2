@@ -55,6 +55,7 @@ services:
       # - "--verbosity=4"
       - "--maxpeers=10"
       - "--netrestrict=172.0.0.0/16"
+      - "--nat=extip:172.0.0.2"
       - "--metrics"
       - "--metrics.expensive"
       - "--metrics.addr=0.0.0.0"
@@ -66,7 +67,8 @@ services:
       - "8546:8546"
       - "6060:6060"
     networks:
-        - devnet
+        devnet:
+          ipv4_address: 172.0.0.2
 
   validator_1:
     # build: "./"
@@ -83,19 +85,21 @@ services:
       - "--allow-insecure-unlock"
       - "--unlock=0x08fae3885e299c24ff9841478eb946f41023ac69"
       - "--miner.etherbase=0x08fae3885e299c24ff9841478eb946f41023ac69"
-      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@172.0.0.2:30303"
       - "--gcmode=archive"
       - "--syncmode=full"
       - "--networkid=17243"
-      # - "--verbosity=4"
+      - "--verbosity=5"
       - "--maxpeers=10"
       - "--netrestrict=172.0.0.0/16"
+      - "--nat=extip:172.0.0.3"
     volumes:
       - "./genesis/devnet.json:/datadir/devnet.json"
       - "./genesis/keystore:/datadir/keystore"
       - "./genesis/password.txt:/datadir/password.txt"
     networks:
-        - devnet
+        devnet:
+          ipv4_address: 172.0.0.3
   validator_2:
     # build: "./"
     # build:
@@ -114,13 +118,14 @@ services:
       - "--allow-insecure-unlock"
       - "--unlock=0x751aaca849b09a3e347bbfe125cf18423cc24b40"
       - "--miner.etherbase=0x751aaca849b09a3e347bbfe125cf18423cc24b40"
-      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@172.0.0.2:30303"
       - "--gcmode=archive"
       - "--syncmode=full"
       - "--networkid=17243"
       # - "--verbosity=4"
       - "--maxpeers=10"
       - "--netrestrict=172.0.0.0/16"
+      - "--nat=extip:172.0.0.4"
     ports:
       - "1234:1234"
     security_opt:
@@ -133,7 +138,8 @@ services:
       - "./genesis/keystore:/datadir/keystore"
       - "./genesis/password.txt:/datadir/password.txt"
     networks:
-        - devnet
+        devnet:
+          ipv4_address: 172.0.0.4
   validator_3:
     # build: "./"
     build:
@@ -149,18 +155,20 @@ services:
       - "--allow-insecure-unlock"
       - "--unlock=0xa6ff33e3250cc765052ac9d7f7dfebda183c4b9b"
       - "--miner.etherbase=0xa6ff33e3250cc765052ac9d7f7dfebda183c4b9b"
-      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+      - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@172.0.0.2:30303"
       - "--gcmode=archive"
       - "--syncmode=full"
       - "--networkid=17243"
       - "--maxpeers=10"
       - "--netrestrict=172.0.0.0/16"
+      - "--nat=extip:172.0.0.5"
     volumes:
       - "./genesis/devnet.json:/datadir/devnet.json"
       - "./genesis/keystore:/datadir/keystore"
       - "./genesis/password.txt:/datadir/password.txt"
     networks:
-        - devnet
+        devnet:
+          ipv4_address: 172.0.0.5
   # validator_4:
   #   # build: "./"
   #   build:
@@ -176,18 +184,20 @@ services:
   #     - "--allow-insecure-unlock"
   #     - "--unlock=0x49c0f7c8c11a4c80dc6449efe1010bb166818da8"
   #     - "--miner.etherbase=0x49c0f7c8c11a4c80dc6449efe1010bb166818da8"
-  #     - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+  #     - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@172.0.0.2:30303"
   #     - "--gcmode=archive"
   #     - "--syncmode=full"
   #     - "--networkid=17243"
   #     - "--maxpeers=10"
   #     - "--netrestrict=172.0.0.0/16"
+  #     - "--nat=extip:172.0.0.6"
   #   volumes:
   #     - "./genesis/devnet.json:/datadir/devnet.json"
   #     - "./genesis/keystore:/datadir/keystore"
   #     - "./genesis/password.txt:/datadir/password.txt"
-  #   networks:
-  #       - devnet
+  # networks:
+  #     devnet:
+  #       ipv4_address: 172.0.0.6
   # validator_5:
   #   # build: "./"
   #   build:
@@ -203,34 +213,38 @@ services:
   #     - "--allow-insecure-unlock"
   #     - "--unlock=0x8e1ea6eaa09c3b40f4a51fcd056a031870a0549a"
   #     - "--miner.etherbase=0x8e1ea6eaa09c3b40f4a51fcd056a031870a0549a"
-  #     - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+  #     - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@172.0.0.2:30303"
   #     - "--gcmode=archive"
   #     - "--syncmode=full"
   #     - "--networkid=17243"
   #     - "--maxpeers=10"
   #     - "--netrestrict=172.0.0.0/16"
+  #     - "--nat=extip:172.0.0.7"
   #   volumes:
   #     - "./genesis/devnet.json:/datadir/devnet.json"
   #     - "./genesis/keystore:/datadir/keystore"
   #     - "./genesis/password.txt:/datadir/password.txt"
-  #   networks:
-  #       - devnet
+  # networks:
+  #     devnet:
+  #       ipv4_address: 172.0.0.7
 
   # rpc_1:
   #   build: "./"
   #   command:
   #     - "--datadir=/datadir"
   #     - "--genesis=/datadir/devnet.json"
-  #     - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@bootnode:30303"
+  #     - "--bootnodes=enode://5c8e90050fabb7e14e4921dc107caf533140112245e7a231d0edc49861cd779760ad4804e7034952a5cc79422fa9d31c54e9a6141fb4995af7a6bfce7a39140f@172.0.0.2:30303"
   #     - "--gcmode=full"
   #     - "--syncmode=snap"
   #     - "--networkid=17243"
   #     - "--maxpeers=10"
   #     - "--netrestrict=172.0.0.0/16"
+  #     - "--nat=extip:172.0.0.8"
   #   volumes:
   #     - "./genesis/devnet.json:/datadir/devnet.json"
-  #   networks:
-  #       - devnet
+  # networks:
+  #     devnet:
+  #       ipv4_address: 172.0.0.8
   prometheus:
     image: prom/prometheus:latest
     command:
@@ -240,7 +254,8 @@ services:
     ports:
       - "9090:9090"
     networks:
-      - devnet
+      devnet:
+        ipv4_address: 172.0.0.9
 
 networks:
   devnet:

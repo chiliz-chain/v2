@@ -73,11 +73,9 @@ func memoryCall(stack *Stack) (uint64, bool) {
 	if overflow {
 		return 0, true
 	}
-	if x > y {
-		return x, false
-	}
-	return y, false
+	return max(x, y), false
 }
+
 func memoryDelegateCall(stack *Stack) (uint64, bool) {
 	x, overflow := calcMemSize64(stack.Back(4), stack.Back(5))
 	if overflow {
@@ -87,10 +85,7 @@ func memoryDelegateCall(stack *Stack) (uint64, bool) {
 	if overflow {
 		return 0, true
 	}
-	if x > y {
-		return x, false
-	}
-	return y, false
+	return max(x, y), false
 }
 
 func memoryStaticCall(stack *Stack) (uint64, bool) {
@@ -102,10 +97,7 @@ func memoryStaticCall(stack *Stack) (uint64, bool) {
 	if overflow {
 		return 0, true
 	}
-	if x > y {
-		return x, false
-	}
-	return y, false
+	return max(x, y), false
 }
 
 func memoryReturn(stack *Stack) (uint64, bool) {
@@ -118,4 +110,8 @@ func memoryRevert(stack *Stack) (uint64, bool) {
 
 func memoryLog(stack *Stack) (uint64, bool) {
 	return calcMemSize64(stack.Back(0), stack.Back(1))
+}
+
+func memoryDup2MStorePush1Add(stack *Stack) (uint64, bool) {
+	return calcMemSize64WithUint(stack.Back(1), 32)
 }

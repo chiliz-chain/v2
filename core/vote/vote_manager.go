@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"math/big"
-	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -18,7 +17,12 @@ import (
 	"github.com/ethereum/go-ethereum/metrics"
 )
 
-const blocksNumberSinceMining = 5 // the number of blocks need to wait before voting, counting from the validator begin to mine
+// Many validators maintain backup machines.
+// When switching from a primary node to a backup (e.g., due to failure),
+// the new node may cast votes for the same block height that the previous node already voted on.
+// To avoid double-voting issues, the node should wait for a few blocks
+// before participating in voting after it starts mining.
+const blocksNumberSinceMining = 40
 
 var diffInTurn = big.NewInt(2) // Block difficulty for in-turn signatures
 var votesManagerCounter = metrics.NewRegisteredCounter("votesManager/local", nil)
@@ -71,6 +75,7 @@ func NewVoteManager(eth Backend, chain *core.BlockChain, pool *VotePool, journal
 	}
 	log.Info("Create voteSigner successfully")
 	voteManager.signer = voteSigner
+	metrics.GetOrRegisterLabel("miner-info", nil).Mark(map[string]interface{}{"VoteKey": common.Bytes2Hex(voteManager.signer.PubKey[:])})
 
 	// Create voteJournal
 	voteJournal, err := NewVoteJournal(journalPath)
@@ -107,7 +112,6 @@ func (voteManager *VoteManager) loop() {
 
 	startVote := true
 	blockCountSinceMining := 0
-	var once sync.Once
 	for {
 		select {
 		case ev := <-dlEventCh:
@@ -149,10 +153,15 @@ func (voteManager *VoteManager) loop() {
 
 			curHead := cHead.Header
 			if p, ok := voteManager.engine.(*parlia.Parlia); ok {
-				nextBlockMinedTime := time.Unix(int64((curHead.Time + p.Period())), 0)
-				timeForBroadcast := 50 * time.Millisecond // enough to broadcast a vote
-				if time.Now().Add(timeForBroadcast).After(nextBlockMinedTime) {
-					log.Warn("too late to vote", "Head.Time(Second)", curHead.Time, "Now(Millisecond)", time.Now().UnixMilli())
+				// Approximately equal to the block interval of next block, except for the switch block.
+				blockInterval, err := p.BlockInterval(voteManager.chain, curHead)
+				if err != nil {
+					log.Debug("failed to get BlockInterval when voting")
+				}
+				voteAssembledTime := time.UnixMilli(int64((curHead.MilliTimestamp() + p.GetAncestorGenerationDepth(curHead)*blockInterval)))
+				timeForBroadcast := 50 * time.Millisecond // enough to broadcast a vote in the same region
+				if time.Now().Add(timeForBroadcast).After(voteAssembledTime) {
+					log.Warn("too late to vote", "Head.Time(Millisecond)", curHead.MilliTimestamp(), "Now(Millisecond)", time.Now().UnixMilli())
 					continue
 				}
 			}
@@ -165,14 +174,6 @@ func (voteManager *VoteManager) loop() {
 				log.Debug("local validator with voteKey is not within the validatorSet at curHead")
 				continue
 			}
-
-			// Add VoteKey to `miner-info`
-			once.Do(func() {
-				minerInfo := metrics.Get("miner-info")
-				if minerInfo != nil {
-					minerInfo.(metrics.Label).Value()["VoteKey"] = common.Bytes2Hex(voteManager.signer.PubKey[:])
-				}
-			})
 
 			// Vote for curBlockHeader block.
 			vote := &types.VoteData{
@@ -207,6 +208,7 @@ func (voteManager *VoteManager) loop() {
 
 				log.Debug("vote manager produced vote", "votedBlockNumber", voteMessage.Data.TargetNumber, "votedBlockHash", voteMessage.Data.TargetHash, "voteMessageHash", voteMessage.Hash())
 				voteManager.pool.PutVote(voteMessage)
+				voteManager.chain.GetBlockStats(curHead.Hash()).SendVoteTime.Store(time.Now().UnixMilli())
 				votesManagerCounter.Inc(1)
 			}
 
@@ -293,9 +295,9 @@ func (voteManager *VoteManager) UnderRules(header *types.Header) (bool, uint64, 
 				log.Error("Failed to get voteData info from LRU cache.")
 				continue
 			}
-			if voteData.(*types.VoteData).SourceNumber > sourceNumber {
+			if voteData.SourceNumber > sourceNumber {
 				log.Debug(fmt.Sprintf("error: cur vote %d-->%d is across the span of other votes %d-->%d",
-					sourceNumber, targetNumber, voteData.(*types.VoteData).SourceNumber, voteData.(*types.VoteData).TargetNumber))
+					sourceNumber, targetNumber, voteData.SourceNumber, voteData.TargetNumber))
 				return false, 0, common.Hash{}
 			}
 		}
@@ -307,9 +309,9 @@ func (voteManager *VoteManager) UnderRules(header *types.Header) (bool, uint64, 
 				log.Error("Failed to get voteData info from LRU cache.")
 				continue
 			}
-			if voteData.(*types.VoteData).SourceNumber < sourceNumber {
+			if voteData.SourceNumber < sourceNumber {
 				log.Debug(fmt.Sprintf("error: cur vote %d-->%d is within the span of other votes %d-->%d",
-					sourceNumber, targetNumber, voteData.(*types.VoteData).SourceNumber, voteData.(*types.VoteData).TargetNumber))
+					sourceNumber, targetNumber, voteData.SourceNumber, voteData.TargetNumber))
 				return false, 0, common.Hash{}
 			}
 		}

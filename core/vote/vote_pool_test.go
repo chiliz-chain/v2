@@ -41,7 +41,6 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/event"
@@ -79,7 +78,7 @@ func newTestBackend() *testBackend {
 func (b *testBackend) IsMining() bool           { return true }
 func (b *testBackend) EventMux() *event.TypeMux { return b.eventMux }
 
-func (p *mockPOSA) GetJustifiedNumberAndHash(chain consensus.ChainHeaderReader, headers []*types.Header) (uint64, common.Hash, error) {
+func (mp *mockPOSA) GetJustifiedNumberAndHash(chain consensus.ChainHeaderReader, headers []*types.Header) (uint64, common.Hash, error) {
 	parentHeader := chain.GetHeaderByHash(headers[len(headers)-1].ParentHash)
 	if parentHeader == nil {
 		return 0, common.Hash{}, errors.New("unexpected error")
@@ -87,23 +86,23 @@ func (p *mockPOSA) GetJustifiedNumberAndHash(chain consensus.ChainHeaderReader, 
 	return parentHeader.Number.Uint64(), parentHeader.Hash(), nil
 }
 
-func (p *mockInvalidPOSA) GetJustifiedNumberAndHash(chain consensus.ChainHeaderReader, headers []*types.Header) (uint64, common.Hash, error) {
+func (mip *mockInvalidPOSA) GetJustifiedNumberAndHash(chain consensus.ChainHeaderReader, headers []*types.Header) (uint64, common.Hash, error) {
 	return 0, common.Hash{}, errors.New("not supported")
 }
 
-func (m *mockPOSA) VerifyVote(chain consensus.ChainHeaderReader, vote *types.VoteEnvelope) error {
+func (mp *mockPOSA) VerifyVote(chain consensus.ChainHeaderReader, vote *types.VoteEnvelope) error {
 	return nil
 }
 
-func (m *mockInvalidPOSA) VerifyVote(chain consensus.ChainHeaderReader, vote *types.VoteEnvelope) error {
+func (mip *mockInvalidPOSA) VerifyVote(chain consensus.ChainHeaderReader, vote *types.VoteEnvelope) error {
 	return nil
 }
 
-func (m *mockPOSA) IsActiveValidatorAt(chain consensus.ChainHeaderReader, header *types.Header, checkVoteKeyFn func(bLSPublicKey *types.BLSPublicKey) bool) bool {
+func (mp *mockPOSA) IsActiveValidatorAt(chain consensus.ChainHeaderReader, header *types.Header, checkVoteKeyFn func(bLSPublicKey *types.BLSPublicKey) bool) bool {
 	return true
 }
 
-func (m *mockInvalidPOSA) IsActiveValidatorAt(chain consensus.ChainHeaderReader, header *types.Header, checkVoteKeyFn func(bLSPublicKey *types.BLSPublicKey) bool) bool {
+func (mip *mockInvalidPOSA) IsActiveValidatorAt(chain consensus.ChainHeaderReader, header *types.Header, checkVoteKeyFn func(bLSPublicKey *types.BLSPublicKey) bool) bool {
 	return true
 }
 
@@ -123,11 +122,10 @@ func (journal *VoteJournal) verifyJournal(size, lastLatestVoteNumber int) bool {
 		lastIndex, _ := journal.walLog.LastIndex()
 		firstIndex, _ := journal.walLog.FirstIndex()
 		if int(lastIndex)-int(firstIndex)+1 == size {
-			return true
-		}
-		lastVote, _ := journal.ReadVote(lastIndex)
-		if lastVote != nil && lastVote.Data.TargetNumber == uint64(lastLatestVoteNumber) {
-			return true
+			lastVote, _ := journal.ReadVote(lastIndex)
+			if lastVote != nil && lastVote.Data.TargetNumber == uint64(lastLatestVoteNumber)+blocksNumberSinceMining {
+				return true
+			}
 		}
 	}
 	return false
@@ -151,7 +149,7 @@ func testVotePool(t *testing.T, isValidRules bool) {
 
 	mux := new(event.TypeMux)
 	db := rawdb.NewMemoryDatabase()
-	chain, _ := core.NewBlockChain(db, nil, genesis, nil, ethash.NewFullFaker(), vm.Config{}, nil, nil)
+	chain, _ := core.NewBlockChain(db, genesis, ethash.NewFullFaker(), nil)
 
 	var mockEngine consensus.PoSA
 	if isValidRules {
@@ -283,10 +281,10 @@ func testVotePool(t *testing.T, isValidRules bool) {
 		t.Fatalf("journal failed")
 	}
 
-	// Test future votes scenario: votes number within latestBlockHeader ~ latestBlockHeader + 13
+	// Test future votes scenario: votes number within latestBlockHeader ~ latestBlockHeader + 11
 	futureVote := &types.VoteEnvelope{
 		Data: &types.VoteData{
-			TargetNumber: 279,
+			TargetNumber: 314,
 		},
 	}
 	if err := voteManager.signer.SignVote(futureVote); err != nil {
@@ -306,7 +304,7 @@ func testVotePool(t *testing.T, isValidRules bool) {
 	// Test duplicate vote case, shouldn'd be put into vote pool
 	duplicateVote := &types.VoteEnvelope{
 		Data: &types.VoteData{
-			TargetNumber: 279,
+			TargetNumber: 314,
 		},
 	}
 	if err := voteManager.signer.SignVote(duplicateVote); err != nil {
@@ -335,14 +333,14 @@ func testVotePool(t *testing.T, isValidRules bool) {
 		t.Fatalf("put vote failed")
 	}
 
-	// Test transfer votes from future to cur, latest block header is #288 after the following generation
-	// For the above BlockNumber 279, it did not have blockHash, should be assigned as well below.
-	curNumber := 268
+	// Test transfer votes from future to cur, latest block header is #328 after the following generation
+	// For the above BlockNumber 314, it did not have blockHash, should be assigned as well below.
+	curNumber := 308
 	var futureBlockHash common.Hash
 	for i := 0; i < 20; i++ {
 		bs, _ = core.GenerateChain(params.TestChainConfig, bs[len(bs)-1], ethash.NewFaker(), db, 1, nil)
 		curNumber += 1
-		if curNumber == 279 {
+		if curNumber == 314 {
 			futureBlockHash = bs[0].Hash()
 			futureVotesMap := votePool.futureVotes
 			voteBox := futureVotesMap[common.Hash{}]

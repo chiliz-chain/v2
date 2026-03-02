@@ -24,7 +24,6 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/common/gopool"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -61,7 +60,7 @@ func makeTestStateTrie() (*testDb, *StateTrie, map[string][]byte) {
 			trie.MustUpdate(key, val)
 		}
 	}
-	root, nodes, _ := trie.Commit(false)
+	root, nodes := trie.Commit(false)
 	if err := triedb.Update(root, types.EmptyRootHash, trienode.NewWithNodeSet(nodes)); err != nil {
 		panic(fmt.Errorf("failed to commit db %v", err))
 	}
@@ -125,8 +124,7 @@ func TestStateTrieConcurrency(t *testing.T) {
 	pend := new(sync.WaitGroup)
 	pend.Add(threads)
 	for i := 0; i < threads; i++ {
-		index := i
-		gopool.Submit(func() {
+		go func(index int) {
 			defer pend.Done()
 
 			for j := byte(0); j < 255; j++ {
@@ -144,7 +142,7 @@ func TestStateTrieConcurrency(t *testing.T) {
 				}
 			}
 			tries[index].Commit(false)
-		})
+		}(i)
 	}
 	// Wait for all threads to finish
 	pend.Wait()

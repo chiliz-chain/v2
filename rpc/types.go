@@ -38,7 +38,7 @@ type API struct {
 }
 
 // ServerCodec implements reading, parsing and writing RPC messages for the server side of
-// a RPC session. Implementations must be go-routine safe since the codec can be called in
+// an RPC session. Implementations must be go-routine safe since the codec can be called in
 // multiple go-routines concurrently.
 type ServerCodec interface {
 	peerInfo() PeerInfo
@@ -63,11 +63,11 @@ type jsonWriter interface {
 type BlockNumber int64
 
 const (
+	EarliestBlockNumber  = BlockNumber(-5)
 	SafeBlockNumber      = BlockNumber(-4)
 	FinalizedBlockNumber = BlockNumber(-3)
 	LatestBlockNumber    = BlockNumber(-2)
 	PendingBlockNumber   = BlockNumber(-1)
-	EarliestBlockNumber  = BlockNumber(0)
 )
 
 // UnmarshalJSON parses the given JSON fragment into a BlockNumber. It supports:
