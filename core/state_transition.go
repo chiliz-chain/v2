@@ -26,6 +26,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/pepper8"
+	"github.com/ethereum/go-ethereum/common/pipe8"
 	"github.com/ethereum/go-ethereum/common/systemcontract"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/tracing"
@@ -354,7 +355,8 @@ func (st *stateTransition) preCheck() error {
 			// as part of header validation.
 			isSystemTx := msg.To != nil && systemcontract.IsSystemContract(*msg.To) && msg.From == st.evm.Context.Coinbase && msg.GasPrice.Cmp(big.NewInt(0)) == 0
 			isPepper8Deposit := msg.To != nil && *msg.To == pepper8.Pepper8RecipientAddress
-			if !isSystemTx && !isPepper8Deposit && msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
+			isPipe8Deposit := msg.To != nil && *msg.To == pipe8.Pipe8RecipientAddress
+			if !isSystemTx && !isPepper8Deposit && !isPipe8Deposit && msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
 				return fmt.Errorf("%w: address %v, maxFeePerGas: %s baseFee: %s", ErrFeeCapTooLow,
 					msg.From.Hex(), msg.GasFeeCap, st.evm.Context.BaseFee)
 			}
