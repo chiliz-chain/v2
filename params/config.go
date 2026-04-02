@@ -1426,9 +1426,9 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		// {name: "feynmanTime", timestamp: c.FeynmanTime}, // fork not enabled
 		// {name: "feynmanFixTime", timestamp: c.FeynmanFixTime}, // fork not enabled
 		{name: "cancunTime", timestamp: c.CancunTime},
-		{name: "haberTime", timestamp: c.HaberTime},
-		{name: "haberFixTime", timestamp: c.HaberFixTime},
-		{name: "bohrTime", timestamp: c.BohrTime},
+		// {name: "haberTime", timestamp: c.HaberTime},
+		// {name: "haberFixTime", timestamp: c.HaberFixTime},
+		// {name: "bohrTime", timestamp: c.BohrTime},
 		{name: "pascalTime", timestamp: c.PascalTime},
 		{name: "pragueTime", timestamp: c.PragueTime},
 		{name: "osakaTime", timestamp: c.OsakaTime, optional: true},

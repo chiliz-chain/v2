@@ -193,7 +193,7 @@ const (
 
 var (
 	// fermiBlockInterval                        = 0.45
-	MinTimeDurationForBlobRequests     uint64 = uint64(float64(24*3600) * 18.2)                        // it keeps blob data available for 18.2 days in local
+	MinTimeDurationForBlobRequests     uint64 = uint64(float64(24*3600) * 18.2)                     // it keeps blob data available for 18.2 days in local
 	MinBlocksForBlobRequests           uint64 = uint64(float64(MinTimeDurationForBlobRequests) / 3) // ref: https://github.com/bnb-chain/BEPs/blob/master/BEPs/BEP-524.md#421-change-table.
 	DefaultExtraReserveForBlobRequests uint64 = uint64(24 * 3600 / 3)                               // it adds more time for expired blobs for some request cases, like expiry blob when remote peer is syncing, default 1 day.
 
