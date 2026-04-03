@@ -762,15 +762,8 @@ func (p *Parlia) verifyHeader(chain consensus.ChainHeaderReader, header *types.H
 		}
 	}
 
-	bohr := chain.Config().IsBohr(header.Number, header.Time)
-	if !bohr {
-		if header.ParentBeaconRoot != nil {
-			return fmt.Errorf("invalid parentBeaconRoot, have %#x, expected nil", header.ParentBeaconRoot)
-		}
-	} else {
-		if header.ParentBeaconRoot == nil || *header.ParentBeaconRoot != (common.Hash{}) {
-			return fmt.Errorf("invalid parentBeaconRoot, have %#x, expected zero hash", header.ParentBeaconRoot)
-		}
+	if header.ParentBeaconRoot == nil || *header.ParentBeaconRoot != (common.Hash{}) {
+		return fmt.Errorf("invalid parentBeaconRoot, have %#x, expected zero hash", header.ParentBeaconRoot)
 	}
 
 	prague := chain.Config().IsPrague(header.Number, header.Time)
