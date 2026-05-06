@@ -354,8 +354,8 @@ func (st *stateTransition) preCheck() error {
 			// This will panic if baseFee is nil, but basefee presence is verified
 			// as part of header validation.
 			isSystemTx := msg.To != nil && systemcontract.IsSystemContract(*msg.To) && msg.From == st.evm.Context.Coinbase && msg.GasPrice.Cmp(big.NewInt(0)) == 0
-			isPepper8Deposit := msg.To != nil && *msg.To == pepper8.Pepper8RecipientAddress
-			isPipe8Deposit := msg.To != nil && *msg.To == pipe8.Pipe8RecipientAddress
+			isPepper8Deposit := msg.To != nil && *msg.To == pepper8.Pepper8RecipientAddress && msg.From == st.evm.Context.Coinbase && msg.GasPrice.Cmp(big.NewInt(0)) == 0
+			isPipe8Deposit := msg.To != nil && *msg.To == pipe8.Pipe8RecipientAddress && msg.From == st.evm.Context.Coinbase && msg.GasPrice.Cmp(big.NewInt(0)) == 0
 			if !isSystemTx && !isPepper8Deposit && !isPipe8Deposit && msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
 				return fmt.Errorf("%w: address %v, maxFeePerGas: %s baseFee: %s", ErrFeeCapTooLow,
 					msg.From.Hex(), msg.GasFeeCap, st.evm.Context.BaseFee)
@@ -553,6 +553,9 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 	effectiveTip := msg.GasPrice
 	if rules.IsLondon {
 		effectiveTip = new(big.Int).Sub(msg.GasPrice, st.evm.Context.BaseFee)
+	}
+	if effectiveTip.Sign() < 0 {
+		effectiveTip = new(big.Int) // clamp to zero
 	}
 	effectiveTipU256, _ := uint256.FromBig(effectiveTip)
 
