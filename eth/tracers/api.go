@@ -279,7 +279,6 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 					beforeSystemTx = true
 				)
 				posa, isPosa := api.backend.Engine().(consensus.PoSA)
-
 				// Trace all the transactions contained within
 				for i, tx := range task.block.Transactions() {
 					// upgrade built-in system contract before system txs if Feynman is enabled
@@ -301,7 +300,7 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 					msg, _ := core.TransactionToMessage(tx, signer, task.block.BaseFee())
 					if isPosa {
 						if isSystem, _ := posa.IsSystemTransaction(tx, task.block.Header()); isSystem {
-							if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &blockCtx.Coinbase) {
+							if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &blockCtx.Coinbase) || posa.IsPipe8Deposit(&msg.From, tx.To(), blockCtx.Coinbase) {
 								task.statedb.AddBalance(blockCtx.Coinbase, uint256.MustFromBig(tx.Value()), tracing.BalanceChangeUnspecified)
 							}
 						}
@@ -588,7 +587,6 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 		core.ProcessParentBlockHash(block.ParentHash(), evm)
 	}
 	posa, isPosa := api.backend.Engine().(consensus.PoSA)
-
 	for i, tx := range block.Transactions() {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -602,7 +600,7 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 					statedb.AddBalance(vmctx.Coinbase, balance, tracing.BalanceChangeUnspecified)
 				}
 
-				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &vmctx.Coinbase) {
+				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &vmctx.Coinbase) || posa.IsPipe8Deposit(&msg.From, tx.To(), vmctx.Coinbase) {
 					statedb.AddBalance(vmctx.Coinbase, uint256.MustFromBig(tx.Value()), tracing.BalanceChangeUnspecified)
 				}
 
@@ -715,7 +713,7 @@ func (api *API) traceBlock(ctx context.Context, block *types.Block, config *Trac
 		msg, _ := core.TransactionToMessage(tx, signer, block.BaseFee())
 		if isPosa {
 			if isSystem, _ := posa.IsSystemTransaction(tx, block.Header()); isSystem {
-				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &blockCtx.Coinbase) {
+				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &blockCtx.Coinbase) || posa.IsPipe8Deposit(&msg.From, tx.To(), blockCtx.Coinbase) {
 					statedb.AddBalance(blockCtx.Coinbase, uint256.MustFromBig(tx.Value()), tracing.BalanceChangeUnspecified)
 				}
 			}
@@ -818,7 +816,7 @@ txloop:
 		msg, _ := core.TransactionToMessage(tx, signer, block.BaseFee())
 		if isPosa {
 			if isSystem, _ := posa.IsSystemTransaction(tx, block.Header()); isSystem {
-				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &blockCtx.Coinbase) {
+				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &blockCtx.Coinbase) || posa.IsPipe8Deposit(&msg.From, tx.To(), blockCtx.Coinbase) {
 					statedb.AddBalance(blockCtx.Coinbase, uint256.MustFromBig(tx.Value()), tracing.BalanceChangeUnspecified)
 				}
 			}
@@ -942,7 +940,7 @@ func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block
 		msg, _ := core.TransactionToMessage(tx, signer, block.BaseFee())
 		if isPosa {
 			if isSystem, _ := posa.IsSystemTransaction(tx, block.Header()); isSystem {
-				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &vmctx.Coinbase){
+				if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &vmctx.Coinbase) || posa.IsPipe8Deposit(&msg.From, tx.To(), vmctx.Coinbase) {
 					statedb.AddBalance(vmctx.Coinbase, uint256.MustFromBig(tx.Value()), tracing.BalanceChangeUnspecified)
 				}
 			}
@@ -1055,15 +1053,9 @@ func (api *API) TraceTransaction(ctx context.Context, hash common.Hash, config *
 
 	var isSystemTx bool
 	if posa, ok := api.backend.Engine().(consensus.PoSA); ok {
-		balance := statedb.GetBalance(consensus.SystemAddress)
-		if balance.Cmp(common.U2560) > 0 {
-			statedb.SetBalance(consensus.SystemAddress, uint256.MustFromBig(big.NewInt(0)), tracing.BalanceChangeUnspecified)
-			statedb.AddBalance(vmctx.Coinbase, balance, tracing.BalanceChangeUnspecified)
-		}
 		if isSystem, _ := posa.IsSystemTransaction(tx, block.Header()); isSystem {
 			isSystemTx = true
-
-			if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &vmctx.Coinbase) {
+			if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &vmctx.Coinbase) || posa.IsPipe8Deposit(&msg.From, tx.To(), vmctx.Coinbase) {
 				statedb.AddBalance(vmctx.Coinbase, uint256.MustFromBig(tx.Value()), tracing.BalanceChangeUnspecified)
 			}
 		}

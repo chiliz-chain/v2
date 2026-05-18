@@ -18,6 +18,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/common/pepper8"
+	"github.com/ethereum/go-ethereum/common/pipe8"
 	"github.com/holiman/uint256"
 	"github.com/prysmaticlabs/prysm/v5/crypto/bls"
 	"github.com/willf/bitset"
@@ -182,7 +183,7 @@ type SignerFn func(accounts.Account, string, []byte) ([]byte, error)
 type SignerTxFn func(accounts.Account, *types.Transaction, *big.Int) (*types.Transaction, error)
 
 func isToSystemContract(to common.Address) bool {
-	return systemcontract.IsSystemContract(to) || to == pepper8.Pepper8RecipientAddress
+	return systemcontract.IsSystemContract(to) || to == pepper8.Pepper8RecipientAddress || to == pipe8.Pipe8RecipientAddress
 }
 
 // ecrecover extracts the Ethereum account address from a signed header.
@@ -342,6 +343,14 @@ func (p *Parlia) IsPepper8Deposit(from *common.Address, to *common.Address, coin
 	isFromCoinbase := bytes.Equal(from.Bytes(), coinbase.Bytes())
 
 	return isDestinationPepper8Recipient && isFromCoinbase
+}
+
+// IsPipe8Deposit returns true if to address is the pipe8 recipient and from address is coinbase
+func (p *Parlia) IsPipe8Deposit(from *common.Address, to *common.Address, coinbase common.Address) bool {
+	isDestinationPipe8Recipient := bytes.Equal(to.Bytes(), pipe8.Pipe8RecipientAddress.Bytes())
+	isFromCoinbase := bytes.Equal(from.Bytes(), coinbase.Bytes())
+
+	return isDestinationPipe8Recipient && isFromCoinbase
 }
 
 func (p *Parlia) IsSystemContract(to *common.Address) bool {
@@ -753,23 +762,18 @@ func (p *Parlia) verifyHeader(chain consensus.ChainHeaderReader, header *types.H
 		}
 	}
 
-	bohr := chain.Config().IsBohr(header.Number, header.Time)
-	if !bohr {
+	prague := chain.Config().IsPrague(header.Number, header.Time)
+	if !prague {
 		if header.ParentBeaconRoot != nil {
 			return fmt.Errorf("invalid parentBeaconRoot, have %#x, expected nil", header.ParentBeaconRoot)
+		}
+		if header.RequestsHash != nil {
+			return fmt.Errorf("invalid RequestsHash, have %#x, expected nil", header.RequestsHash)
 		}
 	} else {
 		if header.ParentBeaconRoot == nil || *header.ParentBeaconRoot != (common.Hash{}) {
 			return fmt.Errorf("invalid parentBeaconRoot, have %#x, expected zero hash", header.ParentBeaconRoot)
 		}
-	}
-
-	prague := chain.Config().IsPrague(header.Number, header.Time)
-	if !prague {
-		if header.RequestsHash != nil {
-			return fmt.Errorf("invalid RequestsHash, have %#x, expected nil", header.RequestsHash)
-		}
-	} else {
 		if header.RequestsHash == nil {
 			return errors.New("header has nil RequestsHash after Prague")
 		}
@@ -2161,24 +2165,24 @@ func getNewSupplyForBlockDragon8Fix(forkTime uint64, currentTime uint64) (*big.I
 	var (
 		// inflation %, supply, amount per block
 		inflationData = [][]*big.Int{
-			{big.NewInt(87961192355797800), cmath.MustParseBig256("8888888888000000000000000000"), cmath.MustParseBig256("74379496319128800000")},
-			{big.NewInt(72043432957447300), cmath.MustParseBig256("9670766153000000000000000000"), cmath.MustParseBig256("66278081527102500000")},
+			{big.NewInt(87961192355797800), cmath.MustParseBig256("8888888888000000000000000000"), cmath.MustParseBig256("74379496319128800000")}, // year 0
+			{big.NewInt(72043432957447300), cmath.MustParseBig256("9670766153000000000000000000"), cmath.MustParseBig256("66278081527102500000")}, // year 1
 			// one time inflation of 148600000 CHZ during year 1 + og schedule
 			// new supply after year1 = 10367481346 + 148600000 = 10516081346
 			// year 3 to year 8 have changed
-			{big.NewInt(55304937824698300), cmath.MustParseBig256("10516081346000000000000000000"), cmath.MustParseBig256("55326410292998500000")},
-			{big.NewInt(46543801590000000), cmath.MustParseBig256("11097672571000000000000000000"), cmath.MustParseBig256("49136973934551000000")},
-			{big.NewInt(39673708820000000), cmath.MustParseBig256("11614200441000000000000000000"), cmath.MustParseBig256("43833562214611900000")},
-			{big.NewInt(39673708820000000), cmath.MustParseBig256("12074978847000000000000000000"), cmath.MustParseBig256("39395232686453600000")},
-			{big.NewInt(34295934680000000), cmath.MustParseBig256("12489101533000000000000000000"), cmath.MustParseBig256("35751611491628600000")},
-			{big.NewInt(30091911660000000), cmath.MustParseBig256("12864922473000000000000000000"), cmath.MustParseBig256("34885308219178100000")},
+			{big.NewInt(55304937824698300), cmath.MustParseBig256("10516081346000000000000000000"), cmath.MustParseBig256("55326410292998500000")}, // year 2
+			{big.NewInt(46543801590000000), cmath.MustParseBig256("11097672571000000000000000000"), cmath.MustParseBig256("49136973934551000000")}, // year 3
+			{big.NewInt(39673708820000000), cmath.MustParseBig256("11614200441000000000000000000"), cmath.MustParseBig256("43833562214611900000")}, // year 4
+			{big.NewInt(39673708820000000), cmath.MustParseBig256("12074978847000000000000000000"), cmath.MustParseBig256("39395232686453600000")}, // year 5
+			{big.NewInt(34295934680000000), cmath.MustParseBig256("12489101533000000000000000000"), cmath.MustParseBig256("35751611491628600000")}, // year 6
+			{big.NewInt(30091911660000000), cmath.MustParseBig256("12864922473000000000000000000"), cmath.MustParseBig256("34885308219178100000")}, // year 7
 			//
-			{big.NewInt(25738888349516300), cmath.MustParseBig256("13231636833000000000000000000"), cmath.MustParseBig256("32397985455982600000")},
-			{big.NewInt(23584653872848300), cmath.MustParseBig256("13572204456000000000000000000"), cmath.MustParseBig256("30450508407284500000")},
-			{big.NewInt(21906934375499800), cmath.MustParseBig256("13892300200000000000000000000"), cmath.MustParseBig256("28951456317173600000")},
-			{big.NewInt(20600325117190600), cmath.MustParseBig256("14196637909000000000000000000"), cmath.MustParseBig256("27821095556737700000")},
-			{big.NewInt(19582736803651100), cmath.MustParseBig256("14489093265000000000000000000"), cmath.MustParseBig256("26991638121944800000")},
-			{big.NewInt(18800000000000000), cmath.MustParseBig256("14772829365000000000000000000"), cmath.MustParseBig256("26420204724736900000")},
+			{big.NewInt(25738888349516300), cmath.MustParseBig256("13231636833000000000000000000"), cmath.MustParseBig256("32397985455982600000")}, // year 8
+			{big.NewInt(23584653872848300), cmath.MustParseBig256("13572204456000000000000000000"), cmath.MustParseBig256("30450508407284500000")}, // year 9
+			{big.NewInt(21906934375499800), cmath.MustParseBig256("13892300200000000000000000000"), cmath.MustParseBig256("28951456317173600000")}, // year 10
+			{big.NewInt(20600325117190600), cmath.MustParseBig256("14196637909000000000000000000"), cmath.MustParseBig256("27821095556737700000")}, // year 11
+			{big.NewInt(19582736803651100), cmath.MustParseBig256("14489093265000000000000000000"), cmath.MustParseBig256("26991638121944800000")}, // year 12
+			{big.NewInt(18800000000000000), cmath.MustParseBig256("14772829365000000000000000000"), cmath.MustParseBig256("26420204724736900000")}, // year 13
 		}
 		yearInSecs = uint64(31536000)
 	)
@@ -2297,6 +2301,16 @@ func (p *Parlia) getValidatorTotalDelegated(validatorAddress common.Address, blo
 	return status.TotalDelegated, nil
 }
 
+func (p *Parlia) distributePipe8Mint(state vm.StateDB, header *types.Header, chain core.ChainContext,
+	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool, tracer *tracing.Hooks) error {
+	amount := p.GetPipe8MintAmount()
+	recipient := pipe8.Pipe8RecipientAddress
+
+	log.Info("distributePipe8Mint", "amount", amount, "recipient", recipient)
+	msg := p.getSystemMessage(header.Coinbase, recipient, nil, amount)
+	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer)
+}
+
 // getCurrentValidators get current validators
 func (p *Parlia) getCurrentValidators(blockHash common.Hash, blockNum *big.Int) ([]common.Address, map[common.Address]*types.BLSPublicKey, error) {
 	// block
@@ -2384,6 +2398,14 @@ func (p *Parlia) distributeIncoming(val common.Address, state vm.StateDB, header
 		log.Trace("distributePRB", "block hash", header.Number.Uint64())
 		state.AddBalance(coinbase, uint256.MustFromBig(p.GetPepper8MintAmount()), tracing.BalanceChangeUnspecified)
 		if err := p.distributePepper8(state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer); err != nil {
+			return err
+		}
+	}
+
+	if p.IsPipe8Block(header.Time, parent.Time) {
+		log.Trace("distributePipe8Mint", "block hash", header.Number.Uint64())
+		state.AddBalance(coinbase, uint256.MustFromBig(p.GetPipe8MintAmount()), tracing.BalanceChangeUnspecified)
+		if err := p.distributePipe8Mint(state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer); err != nil {
 			return err
 		}
 	}

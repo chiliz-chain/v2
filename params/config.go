@@ -646,6 +646,7 @@ type ChainConfig struct {
 	Dragon8FixTime         *uint64  `json:"dragon8FixTime,omitempty"`
 	Snake8Time             *uint64  `json:"snake8Time,omitempty"`
 	Pepper8Time            *uint64  `json:"pepper8Time,omitempty"`
+	Pipe8Time              *uint64  `json:"pipe8Time,omitempty"`
 
 	ShanghaiTime   *uint64 `json:"shanghaiTime,omitempty"`   // Shanghai switch time (nil = no fork, 0 = already on shanghai)
 	KeplerTime     *uint64 `json:"keplerTime,omitempty"`     // Kepler switch time (nil = no fork, 0 = already activated)
@@ -804,6 +805,11 @@ func (c *ChainConfig) String() string {
 		Pepper8Time = big.NewInt(0).SetUint64(*c.Pepper8Time)
 	}
 
+	var Pipe8Time *big.Int
+	if c.Pipe8Time != nil {
+		Pipe8Time = big.NewInt(0).SetUint64(*c.Pipe8Time)
+	}
+
 	var FeynmanTime *big.Int
 	if c.FeynmanTime != nil {
 		FeynmanTime = big.NewInt(0).SetUint64(*c.FeynmanTime)
@@ -861,7 +867,7 @@ func (c *ChainConfig) String() string {
 
 	return fmt.Sprintf("{ChainID: %v, Engine: %v, Homestead: %v DAO: %v DAOSupport: %v EIP150: %v EIP155: %v EIP158: %v Byzantium: %v Constantinople: %v Petersburg: %v Istanbul: %v, Muir Glacier: %v, Ramanujan: %v, Niels: %v, "+
 		"MirrorSync: %v, Bruno: %v, Berlin: %v, YOLO v3: %v, CatalystBlock: %v, London: %v, ArrowGlacier: %v, MergeFork:%v, Euler: %v, Gibbs: %v, Nano: %v, Moran: %v, Planck: %v,Luban: %v, Plato: %v, Hertz: %v, Hertzfix: %v, "+
-		"Dragon8Time: %v, Dragon8FixTime: %v, Snake8Time: %v, Pepper8Time: %v, ShanghaiTime: %v, KeplerTime: %v, FeynmanTime: %v, FeynmanFixTime: %v, CancunTime: %v, HaberTime: %v, HaberFixTime: %v, BohrTime: %v, PascalTime: %v,"+
+		"Dragon8Time: %v, Dragon8FixTime: %v, Snake8Time: %v, Pepper8Time: %v, Pipe8Time: %v, ShanghaiTime: %v, KeplerTime: %v, FeynmanTime: %v, FeynmanFixTime: %v, CancunTime: %v, HaberTime: %v, HaberFixTime: %v, BohrTime: %v, PascalTime: %v,"+
 		"PragueTime: %v, LorentzTime: %v, MaxwellTime: %v, FermiTime: %v}",
 		c.ChainID,
 		engine,
@@ -899,6 +905,7 @@ func (c *ChainConfig) String() string {
 		Dragon8FixTime,
 		Snake8Time,
 		Pepper8Time,
+		Pipe8Time,
 		ShanghaiTime,
 		KeplerTime,
 		FeynmanTime,
@@ -933,6 +940,11 @@ func (c *ChainConfig) IsSnake8(time uint64) bool {
 // IsPepper8Time returns whether num is either equal to the Pepper8 fix fork block or greater.
 func (c *ChainConfig) IsPepper8Time(time uint64) bool {
 	return isTimestampForked(c.Pepper8Time, time)
+}
+
+// IsPipe8Time returns whether num is either equal to the Pipe8 fork timestamp or greater.
+func (c *ChainConfig) IsPipe8Time(time uint64) bool {
+	return isTimestampForked(c.Pipe8Time, time)
 }
 
 // BlobConfig specifies the target and max blobs per block for the associated fork.
@@ -1414,9 +1426,9 @@ func (c *ChainConfig) CheckConfigForkOrder() error {
 		// {name: "feynmanTime", timestamp: c.FeynmanTime}, // fork not enabled
 		// {name: "feynmanFixTime", timestamp: c.FeynmanFixTime}, // fork not enabled
 		{name: "cancunTime", timestamp: c.CancunTime},
-		{name: "haberTime", timestamp: c.HaberTime},
-		{name: "haberFixTime", timestamp: c.HaberFixTime},
-		{name: "bohrTime", timestamp: c.BohrTime},
+		// {name: "haberTime", timestamp: c.HaberTime},
+		// {name: "haberFixTime", timestamp: c.HaberFixTime},
+		// {name: "bohrTime", timestamp: c.BohrTime},
 		{name: "pascalTime", timestamp: c.PascalTime},
 		{name: "pragueTime", timestamp: c.PragueTime},
 		{name: "osakaTime", timestamp: c.OsakaTime, optional: true},

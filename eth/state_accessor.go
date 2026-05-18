@@ -295,12 +295,7 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 		// Not yet the searched for transaction, execute on top of the current state
 		if posa, ok := eth.Engine().(consensus.PoSA); ok && msg.From == context.Coinbase &&
 			posa.IsSystemContract(msg.To) && msg.GasPrice.Cmp(big.NewInt(0)) == 0 {
-			balance := statedb.GetBalance(consensus.SystemAddress)
-			if balance.Cmp(common.U2560) > 0 {
-				statedb.SetBalance(consensus.SystemAddress, uint256.MustFromBig(big.NewInt(0)), tracing.BalanceChangeUnspecified)
-				statedb.AddBalance(context.Coinbase, balance, tracing.BalanceChangeUnspecified)
-			}
-			if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &context.Coinbase) {
+			if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &context.Coinbase) || posa.IsPipe8Deposit(&msg.From, tx.To(), context.Coinbase) {
 				statedb.AddBalance(context.Coinbase, uint256.MustFromBig(tx.Value()), tracing.BalanceChangeUnspecified)
 			}
 		}
