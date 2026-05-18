@@ -998,6 +998,7 @@ func (w *worker) prepareWork(genParams *generateParams, witness bool) (*environm
 				header.ParentBeaconRoot = new(common.Hash)
 			}
 			if w.chainConfig.IsPrague(header.Number, header.Time) {
+				header.ParentBeaconRoot = new(common.Hash)
 				header.RequestsHash = &types.EmptyRequestsHash
 			}
 		}

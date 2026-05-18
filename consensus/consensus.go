@@ -168,5 +168,8 @@ type PoSA interface {
 	IsPepper8Deposit(from *common.Address, to *common.Address, coinbase *common.Address) bool
 	IsPepper8Block(currentBlockTime uint64, parentBlockTime uint64) bool
 	GetPepper8MintAmount() *big.Int
+	IsPipe8Deposit(from *common.Address, to *common.Address, coinbase common.Address) bool
+	IsPipe8Block(currentBlockTime uint64, parentBlockTime uint64) bool
+	GetPipe8MintAmount() *big.Int
 	NextProposalBlock(chain ChainHeaderReader, header *types.Header, proposer common.Address) (uint64, uint64, error)
 }
