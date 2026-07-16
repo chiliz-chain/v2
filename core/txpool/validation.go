@@ -31,12 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 )
 
-var (
-	// blobTxMinBlobGasPrice is the big.Int version of the configured protocol
-	// parameter to avoid constructing a new big integer for every transaction.
-	blobTxMinBlobGasPrice = big.NewInt(params.BlobTxMinBlobGasprice)
-)
-
 // ValidationOptions define certain differences between transaction validation
 // across the different pools without having to duplicate those checks.
 type ValidationOptions struct {
@@ -91,6 +85,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if rules.IsShanghai && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSize {
 		return fmt.Errorf("%w: code size %v, limit %v", core.ErrMaxInitCodeSizeExceeded, len(tx.Data()), params.MaxInitCodeSize)
 	}
+	if rules.IsOsaka && tx.Gas() > params.MaxTxGas {
+		return fmt.Errorf("%w (cap: %d, tx: %d)", core.ErrGasLimitTooHigh, params.MaxTxGas, tx.Gas())
+	}
 	// Transactions can't be negative. This may never happen using RLP decoded
 	// transactions but may occur for transactions created using the RPC.
 	if tx.Value().Sign() < 0 {
@@ -102,8 +99,8 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 
 	// Ensure the transaction doesn't exceed the current miner max acceptable limit gas
-	if opts.MaxGas > 0 && opts.MaxGas < tx.Gas() {
-		return ErrGasLimit
+	if opts.MaxGas > 0 && tx.Gas() > opts.MaxGas {
+		return fmt.Errorf("%w (cap: %d, tx: %d)", core.ErrGasLimitTooHigh, opts.MaxGas, tx.Gas())
 	}
 
 	// Sanity check for extremely large numbers (supported by RLP or RPC)
@@ -120,6 +117,10 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	// Make sure the transaction is signed properly
 	if _, err := types.Sender(signer, tx); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidSender, err)
+	}
+	// Limit nonce to 2^64-1 per EIP-2681
+	if tx.Nonce()+1 < tx.Nonce() {
+		return core.ErrNonceMax
 	}
 	// Ensure the transaction has more gas than the bare minimum needed to cover
 	// the transaction metadata
@@ -145,23 +146,30 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.GasTipCap(), opts.MinTip)
 	}
 	if tx.Type() == types.BlobTxType {
-		return validateBlobTx(tx, head, opts)
+		return ValidateBlobTx(tx, head, opts)
 	}
 	if tx.Type() == types.SetCodeTxType {
 		if len(tx.SetCodeAuthorizations()) == 0 {
-			return fmt.Errorf("set code tx must have at least one authorization tuple")
+			return errors.New("set code tx must have at least one authorization tuple")
 		}
 	}
 	return nil
 }
 
-// validateBlobTx implements the blob-transaction specific validations.
-func validateBlobTx(tx *types.Transaction, head *types.Header, opts *ValidationOptions) error {
+// ValidateBlobTx validates blob-transaction specific fields including sidecar
+// commitment hashes and KZG proofs.
+func ValidateBlobTx(tx *types.Transaction, head *types.Header, opts *ValidationOptions) error {
 	sidecar := tx.BlobTxSidecar()
 	if sidecar == nil {
 		return errors.New("missing sidecar in blob transaction")
 	}
-	// Ensure the blob fee cap satisfies the minimum blob gas price
+	// Ensure the blob fee cap satisfies the minimum blob gas price.
+	// opts may be nil in unit tests; MinBlobGasprice handles a nil config.
+	var chainConfig *params.ChainConfig
+	if opts != nil {
+		chainConfig = opts.Config
+	}
+	blobTxMinBlobGasPrice := eip4844.MinBlobGasprice(chainConfig)
 	if tx.BlobGasFeeCapIntCmp(blobTxMinBlobGasPrice) < 0 {
 		return fmt.Errorf("%w: blob fee cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.BlobGasFeeCap(), blobTxMinBlobGasPrice)
 	}
@@ -171,9 +179,8 @@ func validateBlobTx(tx *types.Transaction, head *types.Header, opts *ValidationO
 	if len(hashes) == 0 {
 		return errors.New("blobless blob transaction")
 	}
-	maxBlobs := eip4844.MaxBlobsPerBlock(opts.Config, head.Time)
-	if len(hashes) > maxBlobs {
-		return fmt.Errorf("too many blobs in transaction: have %d, permitted %d", len(hashes), maxBlobs)
+	if len(hashes) > params.BlobTxMaxBlobs {
+		return fmt.Errorf("too many blobs in transaction: have %d, permitted %d", len(hashes), params.BlobTxMaxBlobs)
 	}
 	if len(sidecar.Blobs) != len(hashes) {
 		return fmt.Errorf("invalid number of %d blobs compared to %d blob hashes", len(sidecar.Blobs), len(hashes))
@@ -182,35 +189,33 @@ func validateBlobTx(tx *types.Transaction, head *types.Header, opts *ValidationO
 		return err
 	}
 	// Fork-specific sidecar checks, including proof verification.
-	if opts.Config.IsOsaka(head.Number, head.Time) {
+	if sidecar.Version == types.BlobSidecarVersion1 {
 		return validateBlobSidecarOsaka(sidecar, hashes)
+	} else {
+		return validateBlobSidecarLegacy(sidecar, hashes)
 	}
-	return validateBlobSidecarLegacy(sidecar, hashes)
 }
 
 func validateBlobSidecarLegacy(sidecar *types.BlobTxSidecar, hashes []common.Hash) error {
-	if sidecar.Version != 0 {
-		return fmt.Errorf("invalid sidecar version pre-osaka: %v", sidecar.Version)
-	}
 	if len(sidecar.Proofs) != len(hashes) {
 		return fmt.Errorf("invalid number of %d blob proofs expected %d", len(sidecar.Proofs), len(hashes))
 	}
 	for i := range sidecar.Blobs {
 		if err := kzg4844.VerifyBlobProof(&sidecar.Blobs[i], sidecar.Commitments[i], sidecar.Proofs[i]); err != nil {
-			return fmt.Errorf("invalid blob %d: %v", i, err)
+			return fmt.Errorf("%w: invalid blob proof: %v", ErrKZGVerificationError, err)
 		}
 	}
 	return nil
 }
 
 func validateBlobSidecarOsaka(sidecar *types.BlobTxSidecar, hashes []common.Hash) error {
-	if sidecar.Version != 1 {
-		return fmt.Errorf("invalid sidecar version post-osaka: %v", sidecar.Version)
-	}
 	if len(sidecar.Proofs) != len(hashes)*kzg4844.CellProofsPerBlob {
 		return fmt.Errorf("invalid number of %d blob proofs expected %d", len(sidecar.Proofs), len(hashes)*kzg4844.CellProofsPerBlob)
 	}
-	return kzg4844.VerifyCellProofs(sidecar.Blobs, sidecar.Commitments, sidecar.Proofs)
+	if err := kzg4844.VerifyCellProofs(sidecar.Blobs, sidecar.Commitments, sidecar.Proofs); err != nil {
+		return fmt.Errorf("%w: %v", ErrKZGVerificationError, err)
+	}
+	return nil
 }
 
 // ValidationOptionsWithState define certain differences between stateful transaction

@@ -39,9 +39,6 @@ type ChainHeaderReader interface {
 	// Config retrieves the blockchain's chain configuration.
 	Config() *params.ChainConfig
 
-	// GenesisHeader retrieves the chain's genesis block header.
-	GenesisHeader() *types.Header
-
 	// CurrentHeader retrieves the current header from the local chain.
 	CurrentHeader() *types.Header
 
@@ -54,6 +51,9 @@ type ChainHeaderReader interface {
 	// GetHeaderByHash retrieves a block header from the database by its hash.
 	GetHeaderByHash(hash common.Hash) *types.Header
 
+	// GenesisHeader retrieves the chain's genesis block header.
+	GenesisHeader() *types.Header
+
 	// GetTd retrieves the total difficulty from the database by hash and number.
 	GetTd(hash common.Hash, number uint64) *big.Int
 
@@ -62,13 +62,10 @@ type ChainHeaderReader interface {
 
 	// GetVerifiedBlockByHash retrieves the highest verified block.
 	GetVerifiedBlockByHash(hash common.Hash) *types.Header
-
-	// ChasingHead return the best chain head of peers.
-	ChasingHead() *types.Header
 }
 
 type VotePool interface {
-	FetchVotesByBlockHash(blockHash common.Hash) []*types.VoteEnvelope
+	FetchVotesByBlockHash(targetBlockHash common.Hash, sourceBlockNum uint64) []*types.VoteEnvelope
 }
 
 // ChainReader defines a small collection of methods needed to access the local
@@ -162,6 +159,7 @@ type PoSA interface {
 	IsLocalBlock(header *types.Header) bool
 	GetJustifiedNumberAndHash(chain ChainHeaderReader, headers []*types.Header) (uint64, common.Hash, error)
 	GetFinalizedHeader(chain ChainHeaderReader, header *types.Header) *types.Header
+	CheckFinalityAndNotify(chain ChainHeaderReader, targetBlockHash common.Hash, notifyFn func(finalizedHeader *types.Header))
 	VerifyVote(chain ChainHeaderReader, vote *types.VoteEnvelope) error
 	IsActiveValidatorAt(chain ChainHeaderReader, header *types.Header, checkVoteKeyFn func(bLSPublicKey *types.BLSPublicKey) bool) bool
 	IsTokenomicsDeposit(to *common.Address, data []byte) bool

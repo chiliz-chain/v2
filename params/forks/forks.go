@@ -44,6 +44,14 @@ const (
 	Maxwell
 	Fermi
 	Osaka
+	Mendel
+	Pasteur // BOP1 will be skipped in BSC, so let Pasteur be the next to Mendel
+	BPO1
+	BPO2
+	BPO3
+	BPO4
+	BPO5
+	Amsterdam
 )
 
 // String implements fmt.Stringer.
@@ -79,4 +87,12 @@ var forkToString = map[Fork]string{
 	Maxwell:          "Maxwell",
 	Fermi:            "Fermi",
 	Osaka:            "Osaka",
+	Mendel:           "Mendel",
+	BPO1:             "BPO1",
+	BPO2:             "BPO2",
+	BPO3:             "BPO3",
+	BPO4:             "BPO4",
+	BPO5:             "BPO5",
+	Amsterdam:        "Amsterdam",
+	Pasteur:          "Pasteur",
 }

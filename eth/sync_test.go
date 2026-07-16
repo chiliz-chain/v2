@@ -88,15 +88,18 @@ func testSnapSyncDisabling(t *testing.T, ethVer uint, snapVer uint) {
 	// Wait a bit for the above handlers to start
 	time.Sleep(250 * time.Millisecond)
 
-	// Check that snap sync was disabled
-	op := peerToSyncOp(ethconfig.SnapSync, empty.handler.peers.peerWithHighestTD())
-	if err := empty.handler.doSync(op); err != nil {
-		t.Fatal("sync failed:", err)
-	}
-	time.Sleep(time.Second * 5) // Downloader internally has to wait a timer (3s) to be expired before exiting
-
-	if empty.handler.snapSync.Load() {
-		t.Fatalf("snap sync not disabled after successful synchronisation")
+	// Check that snap sync was disabled. Note: Chiliz/BSC set defaultMinSyncPeers
+	// to 1 (upstream go-ethereum uses 5), so the background chain syncer
+	// auto-starts a sync as soon as the single peer registers. Driving doSync
+	// manually here would race that background sync and return errBusy, so
+	// instead wait for the background sync to complete and disable snap sync.
+	// See COR-39.
+	deadline := time.Now().Add(30 * time.Second)
+	for empty.handler.snapSync.Load() {
+		if time.Now().After(deadline) {
+			t.Fatalf("snap sync not disabled after successful synchronisation")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 
@@ -173,13 +176,16 @@ func testChainSyncWithBlobs(t *testing.T, mode downloader.SyncMode, preCancunBlk
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	op := peerToSyncOp(mode, empty.handler.peers.peerWithHighestTD())
-	if err := empty.handler.doSync(op); err != nil {
-		t.Fatal("sync failed:", err)
-	}
-	// Check that snap sync was disabled
-	if !empty.handler.synced.Load() {
-		t.Fatalf("full sync not done after successful synchronisation")
+	// With defaultMinSyncPeers == 1 (Chiliz/BSC divergence from upstream's 5) the
+	// background chain syncer auto-starts the sync once the peer registers, so
+	// wait for it to finish instead of driving doSync manually (which would race
+	// it and return errBusy). See COR-39.
+	deadline := time.Now().Add(60 * time.Second)
+	for !empty.handler.synced.Load() {
+		if time.Now().After(deadline) {
+			t.Fatalf("full sync not done after successful synchronisation")
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 
 	// check blocks and blobs

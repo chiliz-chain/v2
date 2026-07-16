@@ -84,6 +84,7 @@ type StateReleaseFunc func()
 type Backend interface {
 	HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error)
 	HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error)
+	CurrentHeader() *types.Header
 	BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error)
 	BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error)
 	GetCanonicalTransaction(txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64)
@@ -403,8 +404,8 @@ func (api *API) traceChain(start, end *types.Block, config *TraceConfig, closed 
 			// if the relevant state is available in disk.
 			var preferDisk bool
 			if statedb != nil {
-				s1, s2, s3, s4 := statedb.Database().TrieDB().Size()
-				preferDisk = s1+s2+s3+s4 > defaultTracechainMemLimit
+				s1, s2, s3 := statedb.Database().TrieDB().Size()
+				preferDisk = s1+s2+s3 > defaultTracechainMemLimit
 			}
 			statedb, release, err = api.backend.StateAtBlock(ctx, block, reexec, statedb, false, preferDisk)
 			if err != nil {
@@ -611,6 +612,9 @@ func (api *API) IntermediateRoots(ctx context.Context, hash common.Hash, config 
 			}
 		}
 
+		if !beforeSystemTx {
+			msg.SkipTransactionChecks = true
+		}
 		statedb.SetTxContext(tx.Hash(), i)
 		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(msg.GasLimit)); err != nil {
 			log.Warn("Tracing intermediate roots did not complete", "txindex", i, "txhash", tx.Hash(), "err", err)
@@ -832,6 +836,9 @@ txloop:
 		}
 
 		// Generate the next state snapshot fast without tracing
+		if !beforeSystemTx {
+			msg.SkipTransactionChecks = true
+		}
 		statedb.SetTxContext(tx.Hash(), i)
 		if _, err := core.ApplyMessage(evm, msg, new(core.GasPool).AddGas(msg.GasLimit)); err != nil {
 			failed = err
@@ -944,6 +951,9 @@ func (api *API) standardTraceBlockToFile(ctx context.Context, block *types.Block
 					statedb.AddBalance(vmctx.Coinbase, uint256.MustFromBig(tx.Value()), tracing.BalanceChangeUnspecified)
 				}
 			}
+		}
+		if !beforeSystemTx {
+			msg.SkipTransactionChecks = true
 		}
 		if txHash != (common.Hash{}) && tx.Hash() != txHash {
 			// Process the tx to update state, but don't trace it.
@@ -1160,7 +1170,7 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 		return nil, err
 	}
 	var (
-		msg         = args.ToMessage(blockContext.BaseFee, true, true)
+		msg         = args.ToMessage(blockContext.BaseFee, true)
 		tx          = args.ToTransaction(types.LegacyTxType)
 		traceConfig *TraceConfig
 	)
@@ -1232,6 +1242,7 @@ func (api *API) traceTx(ctx context.Context, tx *types.Transaction, message *cor
 	// Run the transaction with tracing enabled.
 	if isSystemTx {
 		intrinsicGas, _ = core.IntrinsicGas(message.Data, message.AccessList, message.SetCodeAuthorizations, false, true, true, false)
+		message.SkipTransactionChecks = true
 	}
 
 	// Call Prepare to clear out the statedb access list
@@ -1290,16 +1301,72 @@ func overrideConfig(original *params.ChainConfig, override *params.ChainConfig) 
 		copy.ShanghaiTime = timestamp
 		canon = false
 	}
+	if timestamp := override.KeplerTime; timestamp != nil {
+		copy.KeplerTime = timestamp
+		canon = false
+	}
+	if timestamp := override.FeynmanTime; timestamp != nil {
+		copy.FeynmanTime = timestamp
+		canon = false
+	}
+	if timestamp := override.FeynmanFixTime; timestamp != nil {
+		copy.FeynmanFixTime = timestamp
+		canon = false
+	}
 	if timestamp := override.CancunTime; timestamp != nil {
 		copy.CancunTime = timestamp
+		canon = false
+	}
+	if timestamp := override.HaberTime; timestamp != nil {
+		copy.HaberTime = timestamp
+		canon = false
+	}
+	if timestamp := override.HaberFixTime; timestamp != nil {
+		copy.HaberFixTime = timestamp
+		canon = false
+	}
+	if timestamp := override.BohrTime; timestamp != nil {
+		copy.BohrTime = timestamp
+		canon = false
+	}
+	if timestamp := override.PascalTime; timestamp != nil {
+		copy.PascalTime = timestamp
 		canon = false
 	}
 	if timestamp := override.PragueTime; timestamp != nil {
 		copy.PragueTime = timestamp
 		canon = false
 	}
+	if timestamp := override.LorentzTime; timestamp != nil {
+		copy.LorentzTime = timestamp
+		canon = false
+	}
+	if timestamp := override.MaxwellTime; timestamp != nil {
+		copy.MaxwellTime = timestamp
+		canon = false
+	}
+	if timestamp := override.FermiTime; timestamp != nil {
+		copy.FermiTime = timestamp
+		canon = false
+	}
 	if timestamp := override.OsakaTime; timestamp != nil {
 		copy.OsakaTime = timestamp
+		canon = false
+	}
+	if timestamp := override.MendelTime; timestamp != nil {
+		copy.MendelTime = timestamp
+		canon = false
+	}
+	if timestamp := override.BPO1Time; timestamp != nil {
+		copy.BPO1Time = timestamp
+		canon = false
+	}
+	if timestamp := override.BPO2Time; timestamp != nil {
+		copy.BPO2Time = timestamp
+		canon = false
+	}
+	if timestamp := override.PasteurTime; timestamp != nil {
+		copy.PasteurTime = timestamp
 		canon = false
 	}
 	if timestamp := override.VerkleTime; timestamp != nil {

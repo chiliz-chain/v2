@@ -178,8 +178,8 @@ func (eth *Ethereum) hashState(ctx context.Context, block *types.Block, reexec u
 		parent = root
 	}
 	if report {
-		diff, nodes, immutablenodes, imgs := tdb.Size() // all memory is contained within the nodes return in hashdb
-		log.Info("Historical state regenerated", "block", current.NumberU64(), "elapsed", time.Since(start), "layer", diff, "nodes", nodes, "immutablenodes", immutablenodes, "preimages", imgs)
+		diff, nodes, imgs := tdb.Size() // all memory is contained within the nodes return in hashdb
+		log.Info("Historical state regenerated", "block", current.NumberU64(), "elapsed", time.Since(start), "layer", diff, "nodes", nodes, "preimages", imgs)
 	}
 	return statedb, func() { tdb.Dereference(block.Root()) }, nil
 }
@@ -291,6 +291,9 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 		}
 		// Assemble the transaction call message and return if the requested offset
 		msg, _ := core.TransactionToMessage(tx, signer, block.BaseFee())
+		if !beforeSystemTx {
+			msg.SkipTransactionChecks = true
+		}
 
 		// Not yet the searched for transaction, execute on top of the current state
 		if posa, ok := eth.Engine().(consensus.PoSA); ok && msg.From == context.Coinbase &&

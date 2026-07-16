@@ -23,6 +23,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -56,7 +57,7 @@ func TestBuildSchema(t *testing.T) {
 	}
 	defer stack.Close()
 	// Make sure the schema can be parsed and matched up to the object model.
-	if _, err := newHandler(stack, nil, nil, []string{}, []string{}); err != nil {
+	if _, err := newHandler(stack, nil, nil, false, []string{}, []string{}); err != nil {
 		t.Errorf("Could not construct GraphQL handler: %v", err)
 	}
 }
@@ -70,7 +71,7 @@ func TestGraphQLBlockSerialization(t *testing.T) {
 		GasLimit:   11500000,
 		Difficulty: big.NewInt(1048576),
 	}
-	newGQLService(t, stack, false, genesis, 10, func(i int, gen *core.BlockGen) {})
+	newGQLService(t, stack, false, false, genesis, 10, func(i int, gen *core.BlockGen) {})
 	// start node
 	if err := stack.Start(); err != nil {
 		t.Fatalf("could not start node: %v", err)
@@ -202,7 +203,7 @@ func TestGraphQLBlockSerializationEIP2718(t *testing.T) {
 		BaseFee: big.NewInt(params.InitialBaseFee),
 	}
 	signer := types.LatestSigner(genesis.Config)
-	newGQLService(t, stack, false, genesis, 1, func(i int, gen *core.BlockGen) {
+	newGQLService(t, stack, false, false, genesis, 1, func(i int, gen *core.BlockGen) {
 		gen.SetCoinbase(common.Address{1})
 		tx, _ := types.SignNewTx(key, signer, &types.LegacyTx{
 			Nonce:    uint64(0),
@@ -303,7 +304,7 @@ func TestGraphQLConcurrentResolvers(t *testing.T) {
 	defer stack.Close()
 
 	var tx *types.Transaction
-	handler, chain := newGQLService(t, stack, false, genesis, 1, func(i int, gen *core.BlockGen) {
+	handler, chain := newGQLService(t, stack, false, false, genesis, 1, func(i int, gen *core.BlockGen) {
 		tx, _ = types.SignNewTx(key, signer, &types.LegacyTx{To: &dad, Gas: 100000, GasPrice: big.NewInt(params.InitialBaseFee)})
 		gen.AddTx(tx)
 		tx, _ = types.SignNewTx(key, signer, &types.LegacyTx{To: &dad, Nonce: 1, Gas: 100000, GasPrice: big.NewInt(params.InitialBaseFee)})
@@ -389,7 +390,7 @@ func TestWithdrawals(t *testing.T) {
 	)
 	defer stack.Close()
 
-	handler, _ := newGQLService(t, stack, true, genesis, 1, func(i int, gen *core.BlockGen) {
+	handler, _ := newGQLService(t, stack, true, false, genesis, 1, func(i int, gen *core.BlockGen) {
 		tx, _ := types.SignNewTx(key, signer, &types.LegacyTx{To: &common.Address{}, Gas: 100000, GasPrice: big.NewInt(params.InitialBaseFee)})
 		gen.AddTx(tx)
 		gen.AddWithdrawal(&types.Withdrawal{
@@ -431,6 +432,158 @@ func TestWithdrawals(t *testing.T) {
 	}
 }
 
+// TestGraphQLMaxDepth ensures that queries exceeding the configured maximum depth
+// are rejected to prevent resource exhaustion from deeply nested operations.
+func TestGraphQLMaxDepth(t *testing.T) {
+	stack := createNode(t)
+	defer stack.Close()
+
+	h, err := newHandler(stack, nil, nil, false, []string{}, []string{})
+	if err != nil {
+		t.Fatalf("could not create graphql service: %v", err)
+	}
+
+	var b strings.Builder
+	for i := 0; i < maxQueryDepth+1; i++ {
+		b.WriteString("ommers{")
+	}
+	b.WriteString("number")
+	for i := 0; i < maxQueryDepth+1; i++ {
+		b.WriteString("}")
+	}
+	query := fmt.Sprintf("{block{%s}}", b.String())
+
+	res := h.Schema.Exec(context.Background(), query, "", nil)
+	var found bool
+	for _, err := range res.Errors {
+		if err.Rule == "MaxDepthExceeded" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected max depth exceeded error, got %v", res.Errors)
+	}
+}
+
+// TestGraphQLLogsRangeLimit ensures the root `logs` query honours the configured
+// block-range limit: when --rangelimit is enabled, a range wider than
+// maxFilterBlockRange (5000) must be rejected just like eth_getLogs, and when it
+// is disabled the query is served unrestricted.
+func TestGraphQLLogsRangeLimit(t *testing.T) {
+	genesis := func() *core.Genesis {
+		return &core.Genesis{
+			Config:     params.AllEthashProtocolChanges,
+			GasLimit:   11500000,
+			Difficulty: big.NewInt(1048576),
+		}
+	}
+	// A range of 6000 blocks exceeds the 5000-block limit. The limit is checked
+	// against the requested range before any block scanning, so no blocks need to
+	// be generated (which also keeps the test independent of the shared
+	// params.AllEthashProtocolChanges global that other tests mutate).
+	const query = `{logs(filter:{fromBlock:0,toBlock:6000}){index}}`
+
+	t.Run("enabled rejects oversized range", func(t *testing.T) {
+		stack := createNode(t)
+		defer stack.Close()
+		handler, _ := newGQLService(t, stack, false, true, genesis(), 0, func(i int, gen *core.BlockGen) {})
+		if err := stack.Start(); err != nil {
+			t.Fatalf("could not start node: %v", err)
+		}
+		res := handler.Schema.Exec(context.Background(), query, "", map[string]interface{}{})
+		var found bool
+		for _, e := range res.Errors {
+			if strings.Contains(e.Message, "exceed maximum block range") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected an 'exceed maximum block range' error for oversized range query, got: %v", res.Errors)
+		}
+	})
+
+	t.Run("disabled does not apply range limit", func(t *testing.T) {
+		stack := createNode(t)
+		defer stack.Close()
+		handler, _ := newGQLService(t, stack, false, false, genesis(), 0, func(i int, gen *core.BlockGen) {})
+		if err := stack.Start(); err != nil {
+			t.Fatalf("could not start node: %v", err)
+		}
+		// With the range limit disabled the same query must not be rejected by the
+		// block-range cap. Any other error (e.g. the end block being beyond head) is
+		// unrelated to the limit and acceptable here.
+		res := handler.Schema.Exec(context.Background(), query, "", map[string]interface{}{})
+		for _, e := range res.Errors {
+			if strings.Contains(e.Message, "exceed maximum block range") {
+				t.Fatalf("range limit applied even though it is disabled: %v", e.Message)
+			}
+		}
+	})
+}
+
+// TestGraphQLBodyLimit ensures that the GraphQL HTTP handler rejects request
+// bodies larger than maxRequestContentLength instead of reading them entirely
+// into memory, preventing a memory-exhaustion DoS, while still serving requests
+// within the limit.
+func TestGraphQLBodyLimit(t *testing.T) {
+	stack := createNode(t)
+	defer stack.Close()
+	genesis := &core.Genesis{
+		Config:     params.AllEthashProtocolChanges,
+		GasLimit:   11500000,
+		Difficulty: big.NewInt(1048576),
+	}
+	// Use a real backend so the within-limit request actually resolves a block
+	// and returns 200; the oversized requests are rejected before the backend is
+	// ever consulted. No blocks are generated (the genesis block is enough to
+	// resolve {block{number}}), which keeps the test independent of the shared
+	// params.AllEthashProtocolChanges global that other tests mutate.
+	handler, _ := newGQLService(t, stack, false, false, genesis, 0, func(i int, gen *core.BlockGen) {})
+	if err := stack.Start(); err != nil {
+		t.Fatalf("could not start node: %v", err)
+	}
+
+	// Build a JSON body that is larger than the allowed limit. The filler lives in
+	// a valid variables object so the request is otherwise well-formed and would
+	// succeed if not for the size limit (proving the limit is what rejects it).
+	oversized := fmt.Sprintf(`{"query": "{block{number}}","variables": {"x": "%s"}}`,
+		strings.Repeat("a", maxRequestContentLength))
+
+	t.Run("rejected via Content-Length", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(oversized))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("oversized body: have status %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+		}
+	})
+
+	t.Run("rejected when Content-Length unknown", func(t *testing.T) {
+		// Strip the Content-Length so the body must be enforced while streaming.
+		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(oversized))
+		req.Header.Set("Content-Type", "application/json")
+		req.ContentLength = -1
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("oversized streamed body: have status %d, want %d", rec.Code, http.StatusRequestEntityTooLarge)
+		}
+	})
+
+	t.Run("accepts body within limit", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/graphql", strings.NewReader(`{"query": "{block{number}}","variables": null}`))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("valid body: have status %d, want %d (body: %s)", rec.Code, http.StatusOK, rec.Body.String())
+		}
+	})
+}
+
 func createNode(t *testing.T) *node.Node {
 	stack, err := node.New(&node.Config{
 		HTTPHost:     "127.0.0.1",
@@ -445,7 +598,7 @@ func createNode(t *testing.T) *node.Node {
 	return stack
 }
 
-func newGQLService(t *testing.T, stack *node.Node, shanghai bool, gspec *core.Genesis, genBlocks int, genfunc func(i int, gen *core.BlockGen)) (*handler, []*types.Block) {
+func newGQLService(t *testing.T, stack *node.Node, shanghai bool, rangeLimit bool, gspec *core.Genesis, genBlocks int, genfunc func(i int, gen *core.BlockGen)) (*handler, []*types.Block) {
 	ethConf := &ethconfig.Config{
 		Genesis:        gspec,
 		NetworkId:      1337,
@@ -480,7 +633,7 @@ func newGQLService(t *testing.T, stack *node.Node, shanghai bool, gspec *core.Ge
 	}
 	// Set up handler
 	filterSystem := filters.NewFilterSystem(ethBackend.APIBackend, filters.Config{})
-	handler, err := newHandler(stack, ethBackend.APIBackend, filterSystem, []string{}, []string{})
+	handler, err := newHandler(stack, ethBackend.APIBackend, filterSystem, rangeLimit, []string{}, []string{})
 	if err != nil {
 		t.Fatalf("could not create graphql service: %v", err)
 	}
