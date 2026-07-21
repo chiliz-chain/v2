@@ -64,4 +64,3 @@ func IsSystemContract(address common.Address) bool {
 }
 
 var EvmHookRuntimeUpgradeAddress = common.HexToAddress("0x0000000000000000000000000000000000007f01")
-var EvmHookDeployerProxyAddress = common.HexToAddress("0x0000000000000000000000000000000000007f02")

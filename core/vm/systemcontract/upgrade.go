@@ -72,3 +72,7 @@ func (sc *evmHookRuntimeUpgrade) RequiredGas(input []byte) uint64 {
 	// don't charge gas for these cals
 	return 0
 }
+
+func (sc *evmHookRuntimeUpgrade) Name() string {
+	return "RuntimeUpgrade"
+}

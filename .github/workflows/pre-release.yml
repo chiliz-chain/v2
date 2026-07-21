@@ -15,19 +15,19 @@ jobs:
     name: Build Release
     strategy:
       matrix:
-        go-version: [1.24.x]
+        go-version: [1.25.x]
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v5
         with:
           go-version: ${{ matrix.go-version }}
 
-      - uses: actions/cache@v3
+      - uses: actions/cache@v4
         with:
           # In order:
           # * Module download cache
@@ -56,6 +56,11 @@ jobs:
           GIT_COMMIT=$(git rev-parse HEAD)
           GIT_COMMIT_DATE=$(git log -n1 --pretty='format:%cd' --date=format:'%Y%m%d')
           GOOS=linux GOARCH=amd64 CGO_ENABLED=1 CC=$(pwd)/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc go build -ldflags "-X main.gitCommit=$GIT_COMMIT -X main.gitDate=$GIT_COMMIT_DATE -extldflags=-static" -o ./build/bin/geth -a ./cmd/geth
+      
+      - name: Temporary replace BLS for Windows
+        if: matrix.os == 'windows-latest'
+        shell: cmd
+        run: go mod edit -replace=github.com/herumi/bls-eth-go-binary=github.com/herumi/bls-eth-go-binary@v0.0.0-20210917013441-d37c07cfda4e && go mod tidy
 
       - name: Build Binary for ${{matrix.os}}
         if: matrix.os != 'ubuntu-latest'
@@ -94,7 +99,7 @@ jobs:
         with:
           name: macos
           path: ./build/bin/geth
-
+      
       - name: Upload Windows Build
         uses: actions/upload-artifact@v4.3.3
         if: matrix.os == 'windows-latest'
@@ -118,7 +123,7 @@ jobs:
         run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
 
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       # ==============================
       #       Download artifacts
@@ -129,25 +134,25 @@ jobs:
         with:
           name: linux
           path: ./linux
-
+      
       - name: Download Artifacts
         uses: actions/download-artifact@v4.1.7
         with:
           name: macos
           path: ./macos
-
+      
       - name: Download Artifacts
         uses: actions/download-artifact@v4.1.7
         with:
           name: windows
           path: ./windows
-
+      
       - name: Download Artifacts
         uses: actions/download-artifact@v4.1.7
         with:
           name: arm64
           path: ./arm64
-
+      
       - name: Download Config File
         run: |
           . ./.github/release.env
@@ -166,7 +171,7 @@ jobs:
           mv ./windows/geth.exe ./windows/geth_windows.exe
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
         with:

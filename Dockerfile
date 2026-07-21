@@ -1,5 +1,5 @@
 # Build Geth in a stock Go builder container
-FROM golang:1.25.5-alpine AS builder
+FROM golang:1.26.4-alpine3.23 AS builder
 
 RUN apk add --no-cache make cmake gcc musl-dev linux-headers git bash build-base libc-dev libstdc++
 
@@ -14,7 +14,7 @@ ENV CGO_CFLAGS_ALLOW="-O -D__BLST_PORTABLE__"
 RUN cd /go-ethereum && go run build/ci.go install -static ./cmd/geth
 
 # Pull Geth into a second stage deploy alpine container
-FROM alpine:latest
+FROM alpine:3.23.3
 
 RUN apk add --no-cache ca-certificates curl jq tini
 COPY --from=builder /go-ethereum/build/bin/geth /usr/local/bin/

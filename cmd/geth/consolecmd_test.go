@@ -38,9 +38,9 @@ const (
 // memory and disk IO. If the args don't set --datadir, the
 // child g gets a temporary data directory.
 func runMinimalGeth(t *testing.T, args ...string) *testgeth {
-	// --holesky to make the 'writing genesis to disk' faster (no accounts)
+	// --spicy (Chiliz testnet) for a pre-configured Parlia genesis
 	// --syncmode=full to avoid allocating fast sync bloom
-	allArgs := []string{"--chapel", "--syncmode=full", "--port", "0",
+	allArgs := []string{"--spicy", "--syncmode=full", "--port", "0",
 		"--nat", "none", "--nodiscover", "--maxpeers", "0", "--cache", "64",
 		"--datadir.minfreedisk", "0"}
 	return runGeth(t, append(allArgs, args...)...)

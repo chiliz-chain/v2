@@ -28,6 +28,7 @@ import (
 	"math/big"
 	"sort"
 
+	"github.com/bits-and-blooms/bitset"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/consensus"
@@ -234,6 +235,10 @@ func (s *Snapshot) updateAttestation(header *types.Header, chainConfig *params.C
 			return
 		}
 	}
+
+	// Update vote count metric after validation passed
+	voteCount := bitset.From([]uint64{uint64(attestation.VoteAddressSet)}).Count()
+	attestationVoteCountGauge.Update(int64(voteCount))
 
 	// Update attestation
 	// Two scenarios for s.Attestation being nil:
@@ -570,54 +575,114 @@ func (s *Snapshot) indexOfVal(validator common.Address) int {
 	return -1
 }
 
-// getValidatorBytesFromHeader retrieves the validator frequency data bytes from the header.Extra
-// Header.Extra after snake8 fork:   |---Extra Vanity---|---Validators Bytes (or Empty) ---|---Turn Length (or Empty)---/---Vote Attestation (or Empty)---/---Frequency Data Prefix---|---Parent Timestamp---|---Frequency data---|---Extra Seal---|
-func parseValidatorFrequencies(header *types.Header, chainConfig *params.ChainConfig) ([]byte, error) {
-	if !chainConfig.IsSnake8(header.Time) {
-		return nil, fmt.Errorf("block %d: not a Snake8 fork block", header.Number.Uint64())
-	}
-
+// snake8FreqDataOffset returns the index in header.Extra at which the Snake8
+// validator-frequency block begins. The block layout after the Snake8 fork is:
+//
+//	|---Extra Vanity---|---Validators Bytes (or Empty)---|---Turn Length (or Empty)---|---Frequency Data Prefix---|---Parent Timestamp---|---Frequency data---|---Vote Attestation (or Empty)---|---Extra Seal---|
+//
+// The frequency block is appended in Prepare immediately after the validator and
+// turn-length sections; any Vote Attestation is inserted afterwards by Seal
+// (assembleVoteAttestation, just before the seal), so it sits *after* the
+// frequency data — this function therefore does not, and must not, skip over it.
+// Note that on networks where Luban is not active (e.g. Chiliz mainnet/Spicy) no
+// vote attestation is ever produced, so the frequency block runs straight to the
+// seal.
+//
+// It performs a purely structural computation by walking the fixed-width fields
+// that precede the frequency block; it never trusts the value of any byte it
+// walks over. It returns (0, false) when header.Extra is too short or otherwise
+// malformed for this layout, so callers can never read out of bounds.
+func snake8FreqDataOffset(header *types.Header, chainConfig *params.ChainConfig) (int, bool) {
 	if len(header.Extra) <= extraVanity+extraSeal {
-		return nil, fmt.Errorf("block %d: insufficient extra data", header.Number.Uint64())
+		return 0, false
 	}
 
-	// Non-epoch blocks do not have validator data
+	// Non-epoch blocks carry no validator/turn-length data: the frequency block
+	// starts immediately after the vanity.
 	if header.Number.Uint64()%chainConfig.Parlia.Epoch != 0 {
-		return header.Extra[extraVanity+len(validatorFrequencyDataPrefix)+8 : len(header.Extra)-extraSeal], nil
+		return extraVanity, true
 	}
 
-	// Start parsing after vanity
 	start := extraVanity
 	end := len(header.Extra) - extraSeal
 
-	// Skip validator data (only on epoch blocks)
+	// Skip validator data (only on epoch blocks).
 	if !chainConfig.IsLuban(header.Number) {
-		// Before Luban: validators are 20 bytes each, no count byte
-		// Calculate validator count by using getValidatorBytesFromHeader logic
+		// Before Luban: validators are 20 bytes each, no count byte.
 		validatorBytes := getValidatorBytesFromHeader(header, chainConfig, chainConfig.Parlia.Epoch)
-		if validatorBytes != nil {
-			start += len(validatorBytes)
-		}
+		start += len(validatorBytes)
 	} else {
-		// After Luban: first byte is count, then count * 68 bytes
+		// After Luban: first byte is the validator count, then count * 68 bytes.
 		if start >= end {
-			return nil, fmt.Errorf("block %d: no validator count byte", header.Number.Uint64())
+			return 0, false
 		}
 		num := int(header.Extra[start])
 		start += validatorNumberSize
 		start += num * validatorBytesLength
 	}
 
-	// Skip turn length (only on Bohr fork epoch blocks)
+	// Skip turn length (only on Bohr fork epoch blocks).
 	if chainConfig.IsBohr(header.Number, header.Time) {
 		start += turnLengthSize
 	}
 
-	if end <= start {
-		return nil, fmt.Errorf("block %d: no validator frequencies data", header.Number.Uint64())
+	if start < extraVanity || start >= end {
+		return 0, false
+	}
+	return start, true
+}
+
+// extractSnake8ParentTimestamp validates that the Snake8 validator-frequency
+// block is present at its expected offset (strict prefix and length checks) and
+// returns the parent block timestamp embedded in it. It returns (0, false) for
+// any malformed/short/misplaced header so callers never read out of bounds or
+// trust a forged field at the wrong position. NOTE: the embedded value is
+// producer-controlled and must be cross-validated against the real parent (see
+// Parlia.verifySnake8Extra) before it is trusted.
+func extractSnake8ParentTimestamp(header *types.Header, chainConfig *params.ChainConfig) (uint64, bool) {
+	start, ok := snake8FreqDataOffset(header, chainConfig)
+	if !ok {
+		return 0, false
 	}
 
-	return header.Extra[start+len(validatorFrequencyDataPrefix)+8 : end], nil
+	prefixLen := len(validatorFrequencyDataPrefix)
+	tsEnd := start + prefixLen + 8
+	// The prefix + 8-byte timestamp must fit entirely before the seal region.
+	if tsEnd > len(header.Extra)-extraSeal {
+		return 0, false
+	}
+	// Strict: the frequency block must actually start with the "VFQ" prefix.
+	if !bytes.Equal(header.Extra[start:start+prefixLen], validatorFrequencyDataPrefix) {
+		return 0, false
+	}
+
+	return binary.LittleEndian.Uint64(header.Extra[start+prefixLen : tsEnd]), true
+}
+
+// parseValidatorFrequencies retrieves the RLP-encoded validator frequency data
+// bytes from header.Extra (the bytes following the prefix and embedded parent
+// timestamp). See snake8FreqDataOffset for the field layout.
+func parseValidatorFrequencies(header *types.Header, chainConfig *params.ChainConfig) ([]byte, error) {
+	if !chainConfig.IsSnake8(header.Time) {
+		return nil, fmt.Errorf("block %d: not a Snake8 fork block", header.Number.Uint64())
+	}
+
+	start, ok := snake8FreqDataOffset(header, chainConfig)
+	if !ok {
+		return nil, fmt.Errorf("block %d: malformed snake8 extra data", header.Number.Uint64())
+	}
+
+	prefixLen := len(validatorFrequencyDataPrefix)
+	dataStart := start + prefixLen + 8
+	end := len(header.Extra) - extraSeal
+	if dataStart > end {
+		return nil, fmt.Errorf("block %d: no validator frequencies data", header.Number.Uint64())
+	}
+	if !bytes.Equal(header.Extra[start:start+prefixLen], validatorFrequencyDataPrefix) {
+		return nil, fmt.Errorf("block %d: missing frequency data prefix", header.Number.Uint64())
+	}
+
+	return header.Extra[dataStart:end], nil
 }
 
 func parseValidators(header *types.Header, chainConfig *params.ChainConfig, epochLength uint64) ([]common.Address, []types.BLSPublicKey, error) {
@@ -797,12 +862,18 @@ func (s *Snapshot) selectValidatorFromFrequencyRLP(freqRLP []byte) common.Addres
 	var candidates []CandidateEntry
 	err := rlp.DecodeBytes(freqRLP, &candidates)
 	if err != nil {
-		log.Error("selectValidatorFromFrequencyRLP failed", err, "freq", hex.EncodeToString(freqRLP))
-		return common.Address{}
+		// Never return the zero address: that would leave no validator in-turn for
+		// the whole epoch and break backoff. Fall back to round-robin selection and
+		// warn loudly so the malformed data is visible.
+		log.Warn("selectValidatorFromFrequencyRLP failed to decode, falling back to round-robin",
+			"number", s.Number, "err", err, "freq", hex.EncodeToString(freqRLP))
+		return s.selectValidatorRoundRobin()
 	}
 
 	if len(candidates) == 0 {
-		return common.Address{}
+		log.Warn("selectValidatorFromFrequencyRLP found no candidates, falling back to round-robin",
+			"number", s.Number)
+		return s.selectValidatorRoundRobin()
 	}
 
 	sort.Slice(candidates, func(i, j int) bool {

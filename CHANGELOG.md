@@ -1,4 +1,135 @@
 # Changelog
+## v1.7.3
+v1.7.3 is a maintenance release, which mainly fixes online block pruning and kvdb abnormal continuous growth, pls refer change log for detail.
+
+### BUGFIX
+- [\#3653](https://github.com/bnb-chain/bsc/pull/3653) core/rawdb: fix freeze header-number shadowing for block prune
+- [\#3633](https://github.com/bnb-chain/bsc/pull/3633) core/rawdb: increase SlowFreezerBatchLimit from 100 to 200, fixing kvdb abnormal continuous growth
+- [\#3631](https://github.com/bnb-chain/bsc/pull/3631) core/vote: fix deadlock in votepool when stop client
+- [\#3627](https://github.com/bnb-chain/bsc/pull/3627) core/vm: fix super-instruction LT comparison after swap1
+- [\#3652](https://github.com/bnb-chain/bsc/pull/3652) consensus/parlia: fix big.Int pointer comparison in isIntentionalDelayMining
+
+### FEATURE
+- [\#3624](https://github.com/bnb-chain/bsc/pull/3624) cmd/utils: disabled transaction unindexing for archive node by default; when running in archive mode, the `--history.transactions` flag is now respected to specify transaction history range instead of being forced to index all history
+- [\#3634](https://github.com/bnb-chain/bsc/pull/3634) eth/ethconfig: set default value to 576000 for history.logs
+
+### IMPROVEMENT
+- [\#3626](https://github.com/bnb-chain/bsc/pull/3626) eth: tune timing parameters and broadcast queue for 450ms block
+- [\#3618](https://github.com/bnb-chain/bsc/pull/3618) [\#3629](https://github.com/bnb-chain/bsc/pull/3629) miner: async blob tx validation during bid simulation with worker pool
+- [\#3650](https://github.com/bnb-chain/bsc/pull/3650) miner: shrink greedy merge buffer
+- [\#3645](https://github.com/bnb-chain/bsc/pull/3645) core: use now for DA check instead of chasingHead.time
+- [\#3622](https://github.com/bnb-chain/bsc/pull/3622) core/vm: continue after super-instruction fallback
+
+### Others
+- [\#3639](https://github.com/bnb-chain/bsc/pull/3639) go.mod: use go1.25.0 and update otel
+- [\#3637](https://github.com/bnb-chain/bsc/pull/3637) build(deps): bump go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp from 1.34.0 to 1.43.0
+- [\#3617](https://github.com/bnb-chain/bsc/pull/3617) build(deps): bump github.com/mattn/go-colorable from 0.1.13 to 0.1.14
+- [\#3616](https://github.com/bnb-chain/bsc/pull/3616) build(deps): bump github.com/gorilla/mux from 1.8.0 to 1.8.1
+- [\#3648](https://github.com/bnb-chain/bsc/pull/3648) Revert ".github: change dependabot target branch to develop"
+
+## MetaInfo
+Mandatory Update Required: No
+Target Audience: all BSC Mainnet/Testnet users
+Procedure: simply binary replacement should be good from v1.7.x, ensure no 'JournalFileEnabled' field in config file if from v1.6.x
+Schedule(Timeline): no scheduled upgrade timeline
+
+## v1.7.2
+v1.7.2 is for BSC Mainnet [Osaka/Mendel hardfork](https://github.com/bnb-chain/BEPs/blob/master/BEPs/BEP-658.md),the hard fork time is 2026-04-28 02:30:00 AM UTC
+
+### BUGFIX
+- [\#3597](https://github.com/bnb-chain/bsc/pull/3597) miner: support blob sidecar validation for bids
+- [\#3590](https://github.com/bnb-chain/bsc/pull/3590) eth: delayed p2p message decoding
+- [\#3601](https://github.com/bnb-chain/bsc/pull/3601) core: reject future chasing heads for DA checks
+
+## v1.7.1
+v1.7.1 is for BSC Chapel testnet [Osaka/Mendel hardfork](https://github.com/bnb-chain/BEPs/blob/master/BEPs/BEP-658.md),the hard fork time is 2026-03-24 02:30:00 AM UTC
+
+### FEATURE
+- [feat: support bid block size check for BEP-655](https://github.com/bnb-chain/bsc/pull/3529)
+- [feat: support mev bid gas check of bep 652](https://github.com/bnb-chain/bsc/pull/3528)
+- [eip4844.go: disable eip-7918 for bsc](https://github.com/bnb-chain/bsc/pull/3531)
+- [feat: implement BEP-657 - Limit Blob Transaction Inclusion by Block Number](https://github.com/bnb-chain/bsc/pull/3533)
+
+### BUGFIX
+- [core/types: fix typo in vote comparison (#3573)](https://github.com/bnb-chain/bsc/pull/3573)
+- [Fee history issue](https://github.com/bnb-chain/bsc/pull/3577)
+- [go.mod: upgrade otel to fix CVE-2026-24051](https://github.com/bnb-chain/bsc/pull/3554)
+- [fix: fix gaslimit check in trace api (#3580)](https://github.com/bnb-chain/bsc/pull/3580)
+- [miner: fix missing tcount increment in commitBlobTransaction (#3581)](https://github.com/bnb-chain/bsc/pull/3581)
+- [fix: superinstruction bad block (#3582)](https://github.com/bnb-chain/bsc/pull/3582)
+- [core/vm: align super-instruction minStack and maxStack bounds (#3584)](https://github.com/bnb-chain/bsc/pull/3584)
+- [rlp: finalize listIterator on parse error to prevent non-advancing loops (#3586)](https://github.com/bnb-chain/bsc/pull/3586)
+- [eth/protocols/snap: restore peers to idle pool on request revert (#3587)](https://github.com/bnb-chain/bsc/pull/3587)
+
+## v1.7.0
+v1.7.0-alpha is a preview release for upstream code sync, it catches up with [go-ethereum release [v1.16.7]](https://github.com/ethereum/go-ethereum/releases/tag/v1.16.7) and also include several bug fix and improvements.
+
+### Code Sync
+- [upstream: merge geth-v1.16.2 ～ geth-v1.16.7](https://github.com/bnb-chain/bsc/pull/3505)
+Key changes from the code sync include:
+  - Osaka:
+    - Implement EIP-7823 - Set upper bounds for MODEXP
+    - Implement EIP-7825 - Transaction Gas Limit Cap.
+    - Implement EIP-7883 - ModExp Gas Cost Increase.
+    - Implement EIP-7918 - Blob base fee bounded by execution cost.
+    - Implement EIP-7934 - RLP Execution Block Size Limit.
+    - Implement EIP-7939 - CLZ opcode.
+    - Implement EIP-7951 - Precompile for secp256r1 Curve Support.
+  - eth_sendRawTransactionSync: Synchronous transaction submission
+  - Performance Optimizations: Multiple improvements to enhance overall performance
+  - Code Refactoring: Major cleanup and improvements to components including:
+    - TriePrefetcher prefetch trie nodes in a account in parallel.
+    - Introduced a file-based state journal and refactored state history writes
+
+### FEATURE
+- [internal/ethapi: recover GetDiffAccounts and GetDiffAccountsWithScope](https://github.com/bnb-chain/bsc/pull/3516)
+
+### IMPROVEMENT
+- [miner: enable more prefetch threads in local mining mode](https://github.com/bnb-chain/bsc/pull/3496)
+- [miner/minerconfig: get defaultNoInterruptLeftOver automatically](https://github.com/bnb-chain/bsc/pull/3509)
+
+### BUGFIX
+- core/state: fix handleDestruction for fast node ([#3501](https://github.com/bnb-chain/bsc/pull/3501),[#3517](https://github.com/bnb-chain/bsc/pull/3517),[#3519](https://github.com/bnb-chain/bsc/pull/3519))
+- [fix: add back Contract CodeAddr for superinstruction](https://github.com/bnb-chain/bsc/pull/3502)
+- [fix: fix pruned node init filtermap err](https://github.com/bnb-chain/bsc/pull/3522)
+
+### Others
+- [ci: upgrade github actions to latest versions](https://github.com/bnb-chain/bsc/pull/3515)
+- [ci: ignore nancy failre of quic-go@v0.49.1](https://github.com/bnb-chain/bsc/pull/3512)
+
+## v1.6.7
+### BUGFIX
+crypto/secp256k1: fix coordinate check
+crypto/ecies: fix ECIES invalid-curve handling
+
+## v1.6.6
+### BUGFIX
+core/txpool: drop peers on invalid KZG proofs
+crypto/ecies: use aes blocksize
+
+## v1.6.5
+### FEATURE
+[\#3488](https://github.com/bnb-chain/bsc/pull/3488) miner: optional transaction gas limit cap
+
+### IMPROVEMENT
+[\#3483](https://github.com/bnb-chain/bsc/pull/3483) feat: remove the handshake from the bsc protocol
+[\#3486](https://github.com/bnb-chain/bsc/pull/3486) feat: update filtermaps checkpoints
+
+## v1.6.4
+### FEATURE
+[\#3466](https://github.com/bnb-chain/bsc/pull/3466) config: update BSC Mainnet hardfork time: Fermi
+[\#3454](https://github.com/bnb-chain/bsc/pull/3454) eth: support fetch commit id info from extra data
+
+### BUGFIX
+[\#3448](https://github.com/bnb-chain/bsc/pull/3448) TxPool: change lifetime back to 3 hours
+[\#3457](https://github.com/bnb-chain/bsc/pull/3457) cmd/geth: stop supporting multidatabase flag
+[\#3467](https://github.com/bnb-chain/bsc/pull/3467) go.mod: downgrade bls-eth-go-binary to run on windows
+
+### IMPROVEMENT
+[\#3445](https://github.com/bnb-chain/bsc/pull/3445) eth: improve prefetch by using cached reader
+[\#3459](https://github.com/bnb-chain/bsc/pull/3459) feat: transactionReceipts auto-unsubscribe implementation
+[\#3468](https://github.com/bnb-chain/bsc/pull/3468) metric: add metric for vote count
+
 ## v1.6.3
 ### FEATURE
 NA

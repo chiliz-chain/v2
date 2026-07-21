@@ -27,9 +27,12 @@ func TestGasUsage(t *testing.T, config *params.ChainConfig, engine consensus.Eng
 		db = rawdb.NewMemoryDatabase()
 
 		// A sender who makes transactions, has some funds
-		key, _        = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
-		address       = crypto.PubkeyToAddress(key.PublicKey)
-		balanceBefore = big.NewInt(1000000000000000)
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		address = crypto.PubkeyToAddress(key.PublicKey)
+		// Fund generously: on Chiliz/BSC (Parlia) configs the base fee is
+		// InitialBaseFeeForBSC (2500 gwei), so the sender must be able to cover
+		// initialGas * baseFee for the transaction below.
+		balanceBefore = big.NewInt(1000000000000000000)
 		gspec         = &core.Genesis{
 			Config: config,
 			Alloc: types.GenesisAlloc{
@@ -51,10 +54,12 @@ func TestGasUsage(t *testing.T, config *params.ChainConfig, engine consensus.Eng
 		// One transaction to 0xAAAA
 		signer := types.LatestSigner(gspec.Config)
 		tx, _ := types.SignNewTx(key, signer, &types.LegacyTx{
-			Nonce:    0,
-			To:       &aa,
-			Gas:      initialGas,
-			GasPrice: newGwei(5),
+			Nonce: 0,
+			To:    &aa,
+			Gas:   initialGas,
+			// Must be >= the block base fee, which is InitialBaseFeeForBSC
+			// (2500 gwei) on the Chiliz/BSC (Parlia) configs these tests use.
+			GasPrice: newGwei(3000),
 		})
 		b.AddTx(tx)
 	})

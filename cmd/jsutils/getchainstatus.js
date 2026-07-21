@@ -6,7 +6,7 @@ program.option("--startNum <startNum>", "start num");
 program.option("--endNum <endNum>", "end num");
 program.option("--miner <miner>", "miner", "");
 program.option("--num <Num>", "validator num", 21);
-program.option("--turnLength <Num>", "the consecutive block length", 16);
+program.option("--turnLength <Num>", "the consecutive block length", 8);
 program.option("--topNum <Num>", "top num of address to be displayed", 20);
 program.option("--blockNum <Num>", "block num", 0);
 program.option("--gasUsedThreshold <Num>", "gas used threshold", 5000000);
@@ -41,7 +41,7 @@ function printUsage() {
     console.log("  --stepNum    the step num, default: 1");
     console.log("\nExample:");
     console.log("  node getchainstatus.js GetMaxTxCountInBlockRange --rpc https://bsc-testnet-dataseed.bnbchain.org --startNum 40000001  --endNum 40000005");
-    console.log("  node getchainstatus.js GetBinaryVersion --rpc https://bsc-testnet-dataseed.bnbchain.org --num 21 --turnLength 16");
+    console.log("  node getchainstatus.js GetBinaryVersion --rpc https://bsc-testnet-dataseed.bnbchain.org --num 21 --turnLength 8");
     console.log("  node getchainstatus.js GetTopAddr --rpc https://bsc-testnet-dataseed.bnbchain.org --startNum 40000001  --endNum 40000010 --topNum 10");
     console.log("  node getchainstatus.js GetSlashCount --rpc https://bsc-testnet-dataseed.bnbchain.org --blockNum 40000001"); // default: latest block
     console.log("  node getchainstatus.js GetPerformanceData --rpc https://bsc-testnet-dataseed.bnbchain.org --startNum 40000001  --endNum 40000010");
@@ -225,7 +225,12 @@ const builderMap = new Map([
     ["0x48FeE1BB3823D72fdF80671ebaD5646Ae397BB48", "puissant us"],
     ["0x48B4bBEbF0655557A461e91B8905b85864B8BB48", "puissant x"],
     ["0x4827b423D03a349b7519Dda537e9A28d31ecBB48", "puissant y"],
-    ["0x48B2665E5E9a343409199D70F7495c8aB660BB48", "puissant:z"],
+    ["0x48B2665E5E9a343409199D70F7495c8aB660BB48", "puissant z"],
+    //     unknown 
+    ["0x48265F91F542dCE47ABE5E6683bb086c0f36BB48", "unknown-1"],
+    ["0x48437A0d4AB091b81c6DeD43dEbf23cdfC85BB48", "unknown-2"],
+    ["0x4851f44038fE746173e9E3C4A6e7E904c619BB48", "unknown-3"],
+    ["0x4880cb180d3bb665748f7b66f75F1fEE68D8BB48", "unknown-4"],
     //     blockroute
     ["0xD4376FdC9b49d90e6526dAa929f2766a33BFFD52", "blockroute dublin"],
     ["0x2873fc7aD9122933BECB384f5856f0E87918388d", "blockroute frankfurt"],
@@ -239,10 +244,13 @@ const builderMap = new Map([
     ["0x36CB523286D57680efBbfb417C63653115bCEBB5", "jetbldr ap"],
     ["0x3aD6121407f6EDb65C8B2a518515D45863C206A8", "jetbldr eu"],
     ["0x345324dC15F1CDcF9022E3B7F349e911fb823b4C", "jetbldr us"],
+    ["0xfd38358475078F81a45077f6e59dff8286e0dCA1", "jetbldr dublin"],
+    ["0x7F5fbFd8e2eB3160dF4c96757DEEf29E26F969a3", "jetbldr tokyo"],
+    ["0xA0Cde9891C6966fCe740817cc5576De2C669AB43", "jetbldr virginia"],
     //      blockbus
-    ["0x3FC0c936c00908c07723ffbf2d536D6E0f62C3A4", "jetbldr dublin"],
-    ["0x17e9F0D7E45A500f0148B29C6C98EfD19d95F138", "jetbldr tokyo"],
-    ["0x1319Be8b8Ec4AA81f501924BdCF365fBcAa8d753", "jetbldr virginia"],
+    ["0x3FC0c936c00908c07723ffbf2d536D6E0f62C3A4", "blockbus dublin"],
+    ["0x17e9F0D7E45A500f0148B29C6C98EfD19d95F138", "blockbus tokyo"],
+    ["0x1319Be8b8Ec4AA81f501924BdCF365fBcAa8d753", "blockbus virginia"],
     //     txboost(blocksmith)
     ["0x6Dddf681C908705472D09B1D7036B2241B50e5c7", "txboost ap"],
     ["0x76736159984AE865a9b9Cc0Df61484A49dA68191", "txboost eu"],
@@ -256,17 +264,20 @@ const builderMap = new Map([
     ["0xb49f86586a840AB9920D2f340a85586E50FD30a2", "inblock eu"],
     ["0x0F6D8b72F3687de6f2824903a83B3ba13c0e88A0", "inblock us"],
     //      nodereal
-    ["0x79102dB16781ddDfF63F301C9Be557Fd1Dd48fA0", "nodereal ap"],
-    ["0xd0d56b330a0dea077208b96910ce452fd77e1b6f", "nodereal eu"],
-    ["0x4f24ce4cd03a6503de97cf139af2c26347930b99", "nodereal us"],
+    ["0x79102dB16781ddDfF63F301C9Be557Fd1Dd48fA0", "nodereal ap-1"],
+    ["0x5B526b45e833704d84b5C2EB0F41323dA9466c48", "nodereal ap-2"],
+    ["0xd0d56b330a0dea077208b96910ce452fd77e1b6f", "nodereal eu-1"],
+    ["0xa547F87B2BADE689a404544859314CBC01f2605e", "nodereal eu-2"],
+    ["0x4f24ce4cd03a6503de97cf139af2c26347930b99", "nodereal us-1"],
+    ["0xFD3F1Ad459D585C50Cf4630649817C6E0cec7335", "nodereal us-2"],
     //      xzbuilder
     ["0x812720cb4639550D7BDb1d8F2be463F4a9663762", "xzbuilder"],
 
     // Chapel
     ["0x627fE6AFA2E84e461CB7AE7C2c46e8adf9a954a2", "txboost"],
-    ["0x5EC60f73f938e36400ec3CC3Ff4d7a7703F7c005", "nodereal ap"],
+    ["0xa5559F1761e6dCa79Ac0c7A301CCDcC71D378fee", "nodereal ap"],
     ["0x6C98EB21139F6E12db5b78a4AeD4d8eBA147FB7b", "nodereal eu"],
-    ["0x5b67a234592331e85fC57Bb148769c1d2fF62520", "nodereal us"],
+    ["0x4E8cbf5912717B212db5b450ae7737455A5cc0aF", "nodereal us"],
     ["0x4827b423D03a349b7519Dda537e9A28d31ecBB48", "club48 ap"],
     ["0x48B2665E5E9a343409199D70F7495c8aB660BB48", "club48 eu"],
     ["0x48B4bBEbF0655557A461e91B8905b85864B8BB48", "club48 us"],
@@ -313,10 +324,53 @@ async function getBinaryVersion() {
     let turnLength = program.turnLength;
     for (let i = 0; i < program.num; i++) {
         let blockData = await provider.getBlock(blockNum - i * turnLength);
-        // 1.get Geth client version
-        let major = ethers.toNumber(ethers.dataSlice(blockData.extraData, 2, 3));
-        let minor = ethers.toNumber(ethers.dataSlice(blockData.extraData, 3, 4));
-        let patch = ethers.toNumber(ethers.dataSlice(blockData.extraData, 4, 5));
+
+        let major = 0, minor = 0, patch = 0;
+        let commitID = "";
+
+        try {
+            major = ethers.toNumber(ethers.dataSlice(blockData.extraData, 2, 3));
+            minor = ethers.toNumber(ethers.dataSlice(blockData.extraData, 3, 4));
+            patch = ethers.toNumber(ethers.dataSlice(blockData.extraData, 4, 5));
+            
+            // Check version: >= 1.6.4 uses new format with commitID
+            const isNewFormat = major > 1 || (major === 1 && minor > 6) || (major === 1 && minor === 6 && patch >= 4);
+            
+            if (isNewFormat) {
+                const extraVanity = 28;
+                let vanityBytes = ethers.getBytes(ethers.dataSlice(blockData.extraData, 0, extraVanity));
+
+                let rlpLength = vanityBytes.length;
+                if (vanityBytes[0] >= 0xC0 && vanityBytes[0] <= 0xF7) {
+                    rlpLength = (vanityBytes[0] - 0xC0) + 1; 
+                }
+                
+                const rlpData = ethers.dataSlice(blockData.extraData, 0, rlpLength);
+                const decoded = ethers.decodeRlp(rlpData);
+                
+                if (Array.isArray(decoded) && decoded.length >= 2) {
+                     const secondElemHex = decoded[1];
+                     let secondElemStr = "";
+                     try {
+                         secondElemStr = ethers.toUtf8String(secondElemHex);
+                     } catch (e) {
+                         secondElemStr = secondElemHex;
+                     }
+                     
+                     if (secondElemStr.length > 0 && secondElemStr !== "geth") {
+                         commitID = secondElemStr.startsWith("0x") ? secondElemStr.substring(2) : secondElemStr;
+                     }
+                }
+            }
+        } catch (e) {
+            console.log("Parsing failed:", e.message);
+        }
+
+        // Format version string
+        let versionStr = major + "." + minor + "." + patch;
+        if (commitID && commitID.length > 0) {
+            versionStr = versionStr + "-" + commitID;
+        }
 
         // 2.get minimum txGasPrice based on the last non-zero-gasprice transaction
         let lastGasPrice = 0;
@@ -330,7 +384,7 @@ async function getBinaryVersion() {
             break;
         }
         var moniker = await getValidatorMoniker(blockData.miner, blockNum);
-        console.log(blockNum - i * turnLength, blockData.miner, "version =", major + "." + minor + "." + patch, " MinGasPrice = " + lastGasPrice, moniker);
+        console.log(blockNum - i * turnLength, blockData.miner, "version =", versionStr, " MinGasPrice = " + lastGasPrice, moniker);
     }
 }
 

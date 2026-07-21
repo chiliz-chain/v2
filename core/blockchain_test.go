@@ -842,13 +842,13 @@ func testFastVsFullChains(t *testing.T, scheme string) {
 		}
 
 		// Check that hash-to-number mappings are present in all databases.
-		if m := rawdb.ReadHeaderNumber(fastDb, hash); m == nil || *m != num {
+		if m, ok := rawdb.ReadHeaderNumber(fastDb, hash); !ok || m != num {
 			t.Errorf("block #%d [%x]: wrong hash-to-number mapping in fastdb: %v", num, hash, m)
 		}
-		if m := rawdb.ReadHeaderNumber(ancientDb, hash); m == nil || *m != num {
+		if m, ok := rawdb.ReadHeaderNumber(ancientDb, hash); !ok || m != num {
 			t.Errorf("block #%d [%x]: wrong hash-to-number mapping in ancientdb: %v", num, hash, m)
 		}
-		if m := rawdb.ReadHeaderNumber(archiveDb, hash); m == nil || *m != num {
+		if m, ok := rawdb.ReadHeaderNumber(archiveDb, hash); !ok || m != num {
 			t.Errorf("block #%d [%x]: wrong hash-to-number mapping in archivedb: %v", num, hash, m)
 		}
 	}
@@ -1678,7 +1678,7 @@ func TestTrieForkGC(t *testing.T) {
 		chain.TrieDB().Dereference(blocks[len(blocks)-1-i].Root())
 		chain.TrieDB().Dereference(forks[len(blocks)-1-i].Root())
 	}
-	if _, nodes, _, _ := chain.TrieDB().Size(); nodes > 0 { // all memory is returned in the nodes return for hashdb
+	if _, nodes, _ := chain.TrieDB().Size(); nodes > 0 { // all memory is returned in the nodes return for hashdb
 		t.Fatalf("stale tries still alive after garbase collection")
 	}
 }
@@ -3270,8 +3270,11 @@ func testEIP2718TransitionWithConfig(t *testing.T, scheme string, config *params
 		// A sender who makes transactions, has some funds
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		address = crypto.PubkeyToAddress(key.PublicKey)
-		funds   = big.NewInt(1000000000000000)
-		gspec   = &Genesis{
+		// Fund generously: on Chiliz/BSC (Parlia) configs the base fee is
+		// InitialBaseFeeForBSC (2500 gwei), so the tx below (GasPrice == baseFee)
+		// must be affordable.
+		funds = big.NewInt(1000000000000000000)
+		gspec = &Genesis{
 			Config: config,
 			Alloc: types.GenesisAlloc{
 				address: {Balance: funds},
@@ -4184,16 +4187,29 @@ func TestParliaBlobFeeReward(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
+	// CHILIZ DIVERGENCE FROM BSC — keep this when reconciling with upstream pulls.
+	//
+	// Chiliz burns the EIP-1559 base fee: only the effective tip (gasPrice -
+	// baseFee) and the full blob fee are credited to the system address (see the
+	// Parlia branch in core/state_transition.go). Upstream BSC instead credits
+	// the system with the *full* gas fee including the base fee, so the upstream
+	// version of this assertion uses receipt.EffectiveGasPrice * GasUsed directly.
+	//
+	// When a future BSC merge re-introduces the upstream computation, do NOT take
+	// it verbatim — the gas portion must stay tip-only (EffectiveGasPrice -
+	// baseFee) to match Chiliz's burned base fee. See COR-39.
 	expect := new(big.Int)
 	for _, block := range bs {
+		baseFee := block.BaseFee()
 		receipts := chain.GetReceiptsByHash(block.Hash())
 		for _, receipt := range receipts {
+			// Gas portion: only the tip reaches the system address; base fee is burned.
+			tip := new(big.Int).Sub(receipt.EffectiveGasPrice, baseFee)
+			expect.Add(expect, new(big.Int).Mul(tip, new(big.Int).SetUint64(receipt.GasUsed)))
+			// Blob portion: the full blob fee is credited to the system address.
 			if receipt.BlobGasPrice != nil {
-				blob := receipt.BlobGasPrice.Mul(receipt.BlobGasPrice, new(big.Int).SetUint64(receipt.BlobGasUsed))
-				expect.Add(expect, blob)
+				expect.Add(expect, new(big.Int).Mul(receipt.BlobGasPrice, new(big.Int).SetUint64(receipt.BlobGasUsed)))
 			}
-			plain := receipt.EffectiveGasPrice.Mul(receipt.EffectiveGasPrice, new(big.Int).SetUint64(receipt.GasUsed))
-			expect.Add(expect, plain)
 		}
 	}
 	actual := stateDB.GetBalance(params.SystemAddress)
