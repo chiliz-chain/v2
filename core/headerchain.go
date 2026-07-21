@@ -132,15 +132,15 @@ func (hc *HeaderChain) GenesisHeader() *types.Header {
 
 // GetBlockNumber retrieves the block number belonging to the given hash
 // from the cache or database
-func (hc *HeaderChain) GetBlockNumber(hash common.Hash) *uint64 {
+func (hc *HeaderChain) GetBlockNumber(hash common.Hash) (uint64, bool) {
 	if cached, ok := hc.numberCache.Get(hash); ok {
-		return &cached
+		return cached, true
 	}
-	number := rawdb.ReadHeaderNumber(hc.chainDb, hash)
-	if number != nil {
-		hc.numberCache.Add(hash, *number)
+	number, ok := rawdb.ReadHeaderNumber(hc.chainDb, hash)
+	if ok {
+		hc.numberCache.Add(hash, number)
 	}
-	return number
+	return number, ok
 }
 
 type headerWriteResult struct {
@@ -426,10 +426,6 @@ func (hc *HeaderChain) GetVerifiedBlockByHash(hash common.Hash) *types.Header {
 	return hc.GetHeaderByHash(hash)
 }
 
-func (hc *HeaderChain) ChasingHead() *types.Header {
-	return nil
-}
-
 // GetAncestor retrieves the Nth ancestor of a given block. It assumes that either the given block or
 // a close ancestor of it is canonical. maxNonCanonical points to a downwards counter limiting the
 // number of blocks to be individually checked before we reach the canonical chain.
@@ -504,11 +500,11 @@ func (hc *HeaderChain) GetHeader(hash common.Hash, number uint64) *types.Header 
 // GetHeaderByHash retrieves a block header from the database by hash, caching it if
 // found.
 func (hc *HeaderChain) GetHeaderByHash(hash common.Hash) *types.Header {
-	number := hc.GetBlockNumber(hash)
-	if number == nil {
+	number, ok := hc.GetBlockNumber(hash)
+	if !ok {
 		return nil
 	}
-	return hc.GetHeader(hash, *number)
+	return hc.GetHeader(hash, number)
 }
 
 // HasHeader checks if a block header is present in the database or not.

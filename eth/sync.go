@@ -37,7 +37,7 @@ const (
 // syncTransactions starts sending all currently pending transactions to the given peer.
 func (h *handler) syncTransactions(p *eth.Peer) {
 	var hashes []common.Hash
-	for _, batch := range h.txpool.Pending(txpool.PendingFilter{OnlyPlainTxs: true}) {
+	for _, batch := range h.txpool.Pending(txpool.PendingFilter{BlobTxs: false}) {
 		for _, tx := range batch {
 			hashes = append(hashes, tx.Hash)
 		}
@@ -162,6 +162,14 @@ func (cs *chainSyncer) nextSyncOp() *chainSyncOp {
 	}
 	mode, ourTD := cs.modeAndLocalHead()
 	op := peerToSyncOp(mode, peer)
+	// Chiliz/BSC set defaultMinSyncPeers to 1 (upstream uses 5), so this
+	// background syncer runs with a single peer and can observe a transient
+	// nil TD — either ours (GetTd for the snap block before its TD is
+	// persisted mid snap-sync) or the peer's (registered before its head is
+	// known). A nil TD means we can't decide yet; skip this round and retry.
+	if op.td == nil || ourTD == nil {
+		return nil
+	}
 	if op.td.Cmp(ourTD) <= 0 {
 		if !cs.handler.acceptTxs.Load() {
 			// Occurs only during a quick restart.
@@ -260,7 +268,11 @@ func (h *handler) doSync(op *chainSyncOp) error {
 		// degenerate connectivity, but it should be healthy for the mainnet too to
 		// more reliably update peers or the local TD state.
 		if block := h.chain.GetBlock(head.Hash(), head.Number.Uint64()); block != nil {
-			h.BroadcastBlock(block, false)
+			if head.Number.Uint64() == 1 { // Update TD from all receivers during network initialization.
+				h.BroadcastBlock(block, true)
+			} else {
+				h.BroadcastBlock(block, false)
+			}
 		}
 	}
 	return nil

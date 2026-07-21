@@ -39,6 +39,11 @@ const (
 	contentType      = "application/json"
 )
 
+// DefaultBodyLimit is the default maximum size (in bytes) of an HTTP request
+// body accepted by the JSON-RPC server. It is exported so other endpoints (e.g.
+// the GraphQL handler) can enforce the same cap from a single source of truth.
+const DefaultBodyLimit = defaultBodyLimit
+
 // https://www.jsonrpc.org/historical/json-rpc-over-http.html#id13
 var acceptedContentTypes = []string{contentType, "application/json-rpc", "application/jsonrequest"}
 

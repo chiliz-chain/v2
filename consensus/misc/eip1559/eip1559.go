@@ -31,7 +31,7 @@ import (
 // - gas limit check
 // - basefee check
 func VerifyEIP1559Header(config *params.ChainConfig, parent, header *types.Header) error {
-	if config.Parlia == nil {
+	if config.IsNotInBSC() {
 		// Verify that the gas limit remains within allowed bounds
 		parentGasLimit := parent.GasLimit
 		if !config.IsLondon(parent.Number) {
@@ -58,7 +58,11 @@ func VerifyEIP1559Header(config *params.ChainConfig, parent, header *types.Heade
 // CalcBaseFee calculates the basefee of the header.
 func CalcBaseFee(config *params.ChainConfig, parent *types.Header) *big.Int {
 	// If the current block is the first EIP-1559 block, return the InitialBaseFee.
+	// Chiliz/BSC (Parlia) networks use a higher initial base fee than upstream.
 	if !config.IsLondon(parent.Number) {
+		if config.Parlia != nil {
+			return new(big.Int).SetUint64(params.InitialBaseFeeForBSC)
+		}
 		return new(big.Int).SetUint64(params.InitialBaseFee)
 	}
 
@@ -92,10 +96,16 @@ func CalcBaseFee(config *params.ChainConfig, parent *types.Header) *big.Int {
 		num.Div(num, denom.SetUint64(parentGasTarget))
 		num.Div(num, denom.SetUint64(config.BaseFeeChangeDenominator()))
 
-		initialBaseFeeBig := new(big.Int).SetUint64(params.InitialBaseFee)
+		// Chiliz/BSC (Parlia) networks floor the base fee at InitialBaseFeeForBSC
+		// as a tokenomics policy; upstream Ethereum (and the execution-spec / unit
+		// tests, which run on non-Parlia configs) floor at zero.
+		floor := common.Big0
+		if config.Parlia != nil {
+			floor = new(big.Int).SetUint64(params.InitialBaseFeeForBSC)
+		}
 		baseFee := num.Sub(parent.BaseFee, num)
-		if baseFee.Cmp(initialBaseFeeBig) < 0 {
-			baseFee = initialBaseFeeBig
+		if baseFee.Cmp(floor) < 0 {
+			baseFee.Set(floor)
 		}
 		return baseFee
 	}

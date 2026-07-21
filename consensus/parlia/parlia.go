@@ -16,12 +16,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/bits-and-blooms/bitset"
 	"github.com/ethereum/go-ethereum/common/lru"
 	"github.com/ethereum/go-ethereum/common/pepper8"
 	"github.com/ethereum/go-ethereum/common/pipe8"
 	"github.com/holiman/uint256"
 	"github.com/prysmaticlabs/prysm/v5/crypto/bls"
-	"github.com/willf/bitset"
 	"golang.org/x/crypto/sha3"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -104,6 +104,7 @@ var (
 	validVotesfromSelfCounter         = metrics.NewRegisteredCounter("parlia/VerifyVote/self", nil)
 	doubleSignCounter                 = metrics.NewRegisteredCounter("parlia/doublesign", nil)
 	intentionalDelayMiningCounter     = metrics.NewRegisteredCounter("parlia/intentionalDelayMining", nil)
+	attestationVoteCountGauge         = metrics.NewRegisteredGauge("parlia/attestation/voteCount", nil)
 )
 
 // Various error messages to mark blocks invalid. These should be private to
@@ -134,6 +135,16 @@ var (
 	// errInvalidTurnLength is returned if a block contains an
 	// invalid length of turn (i.e. no data left after parsing validators).
 	errInvalidTurnLength = errors.New("invalid turnLength")
+
+	// errInvalidSnake8Extra is returned if a Snake8 block's extra-data does not
+	// contain a well-formed validator-frequency block (missing/short/misplaced
+	// prefix or embedded parent timestamp).
+	errInvalidSnake8Extra = errors.New("invalid snake8 frequency extra data")
+
+	// errMismatchedSnake8ParentTime is returned if the parent timestamp embedded
+	// in a Snake8 block's extra-data does not match the real parent.Time. This
+	// guards against forged activation timestamps causing a consensus split.
+	errMismatchedSnake8ParentTime = errors.New("snake8 embedded parent timestamp mismatch")
 
 	// errInvalidMixDigest is returned if a block's mix digest is non-zero.
 	errInvalidMixDigest = errors.New("non-zero mix digest")
@@ -499,57 +510,62 @@ func (p *Parlia) getParent(chain consensus.ChainHeaderReader, header *types.Head
 	return parent, nil
 }
 
-// isSnake8Enabled returns true if parent block's timestamp >= snake8Time
+// isSnake8Enabled returns true if the parent block's timestamp >= snake8Time.
+//
+// When the parent header is available locally (the common case) the decision is
+// made from the trusted parent.Time. During batch sync the parent may not yet be
+// in the local store, in which case we provisionally fall back to the parent
+// timestamp embedded in header.Extra. That embedded value is producer-controlled
+// and MUST NOT be trusted on its own; verifySnake8Extra cross-validates it
+// against the real parent.Time during full verification, so a forged value can
+// never make a block accepted on the wrong side of the fork boundary.
 func (p *Parlia) isSnake8Enabled(chain consensus.ChainHeaderReader, header *types.Header) bool {
 	parent := chain.GetHeaderByHash(header.ParentHash)
 	if parent != nil {
 		return p.chainConfig.IsSnake8(parent.Time)
 	}
 
-	// extract parent block's timestamp from Extra
-	if len(header.Extra) <= extraVanity+extraSeal {
-		log.Trace("failed to extract parent timestamp. insufficient extra data", "number", header.Number.Uint64())
+	// Parent not in cache: provisionally read the embedded parent timestamp using
+	// the strict, bounds-checked extractor. Any malformed layout yields false
+	// rather than an out-of-bounds read on attacker-controlled bytes.
+	ts, ok := extractSnake8ParentTimestamp(header, p.chainConfig)
+	if !ok {
+		log.Trace("failed to extract parent timestamp from extra", "number", header.Number.Uint64())
 		return false
 	}
-
-	if header.Number.Uint64()%p.chainConfig.Parlia.Epoch != 0 {
-		ts := binary.LittleEndian.Uint64(header.Extra[extraVanity+len(validatorFrequencyDataPrefix) : extraVanity+len(validatorFrequencyDataPrefix)+8])
-		return p.chainConfig.IsSnake8(ts)
-	}
-
-	start := extraVanity
-	end := len(header.Extra) - extraSeal
-	// Skip validator data (only on epoch blocks)
-	if !p.chainConfig.IsLuban(header.Number) {
-		// Before Luban: validators are 20 bytes each, no count byte
-		// Calculate validator count by using getValidatorBytesFromHeader logic
-		validatorBytes := getValidatorBytesFromHeader(header, p.chainConfig, p.chainConfig.Parlia.Epoch)
-		if validatorBytes != nil {
-			start += len(validatorBytes)
-		}
-	} else {
-		// After Luban: first byte is count, then count * 68 bytes
-		if start >= end {
-			log.Trace("failed to extract parent timestamp. no validator count byte", "number", header.Number.Uint64())
-			return false
-		}
-		num := int(header.Extra[start])
-		start += validatorNumberSize
-		start += num * validatorBytesLength
-	}
-
-	// Skip turn length (only on Bohr fork epoch blocks)
-	if p.chainConfig.IsBohr(header.Number, header.Time) {
-		start += turnLengthSize
-	}
-
-	if end <= start {
-		log.Trace("failed to extract parent timestamp. no parent ts", "number", header.Number.Uint64())
-		return false
-	}
-
-	ts := binary.LittleEndian.Uint64(header.Extra[start+len(validatorFrequencyDataPrefix) : start+len(validatorFrequencyDataPrefix)+8])
 	return p.chainConfig.IsSnake8(ts)
+}
+
+// verifySnake8Extra authoritatively validates the Snake8 fork data embedded in a
+// header's extra-data against the real (now-known) parent header. Fork
+// activation is decided solely from the trusted parent.Time, never from
+// producer-controlled bytes:
+//
+//   - When Snake8 is active for this block, the header must carry a well-formed
+//     validator-frequency block whose embedded parent timestamp equals
+//     parent.Time. A forged or absent timestamp is rejected here, so a malicious
+//     producer cannot push syncing nodes onto the wrong side of the fork.
+//   - When Snake8 is not yet active, the header must not carry a frequency block.
+func (p *Parlia) verifySnake8Extra(header, parent *types.Header) error {
+	ts, ok := extractSnake8ParentTimestamp(header, p.chainConfig)
+
+	if !p.chainConfig.IsSnake8(parent.Time) {
+		// Pre-fork block: it must not carry a Snake8 frequency block.
+		if ok {
+			return errInvalidSnake8Extra
+		}
+		return nil
+	}
+
+	// Snake8 is active: a well-formed frequency block is mandatory and its
+	// embedded parent timestamp must match the real parent.
+	if !ok {
+		return errInvalidSnake8Extra
+	}
+	if ts != parent.Time {
+		return errMismatchedSnake8ParentTime
+	}
+	return nil
 }
 
 // trimParents safely removes last element if exists.
@@ -796,6 +812,14 @@ func (p *Parlia) verifyCascadingFields(chain consensus.ChainHeaderReader, header
 
 	parent, err := p.getParent(chain, header, parents)
 	if err != nil {
+		return err
+	}
+
+	// Now that the real parent is known, authoritatively validate the Snake8
+	// fork-activation data embedded in the header's extra-data. This rejects
+	// forged embedded parent timestamps that would otherwise split consensus
+	// between syncing and fully-synced nodes (BLK-3750).
+	if err := p.verifySnake8Extra(header, parent); err != nil {
 		return err
 	}
 
@@ -1183,7 +1207,7 @@ func (p *Parlia) assembleVoteAttestation(chain consensus.ChainHeaderReader, head
 		if err != nil {
 			return err
 		}
-		votes = p.VotePool.FetchVotesByBlockHash(targetHeader.Hash())
+		votes = p.VotePool.FetchVotesByBlockHash(targetHeader.Hash(), justifiedBlockNumber)
 		quorum := cmath.CeilDiv(len(snap.Validators)*2, 3)
 		if len(votes) >= quorum {
 			targetHeaderParentSnap = snap
@@ -1553,7 +1577,7 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 		return err
 	}
 
-	cx := chainContext{Chain: chain, parlia: p}
+	cx := chainContext{ChainHeaderReader: chain, parlia: p}
 
 	parent := chain.GetHeaderByHash(header.ParentHash)
 	if parent == nil {
@@ -1565,7 +1589,7 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 	if p.chainConfig.IsOnFeynman(header.Number, parent.Time, header.Time) {
 		err := p.initializeFeynmanContract(state, header, cx, txs, receipts, systemTxs, usedGas, false, tracer)
 		if err != nil {
-			log.Error("init feynman contract failed", "error", err)
+			return fmt.Errorf("init feynman contract failed: %v", err)
 		}
 	}
 
@@ -1599,7 +1623,6 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 			log.Trace("slash validator", "block hash", header.Hash(), "address", spoiledVal)
 			err = p.slash(spoiledVal, state, header, cx, txs, receipts, systemTxs, usedGas, false, tracer)
 			if err != nil {
-				// it is possible that slash validator failed because of the slash channel is disabled.
 				log.Error("slash validator failed", "block hash", header.Hash(), "address", spoiledVal, "err", err)
 			}
 		}
@@ -1646,7 +1669,7 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB,
 	body *types.Body, receipts []*types.Receipt, tracer *tracing.Hooks) (*types.Block, []*types.Receipt, error) {
 	// No block rewards in PoA, so the state remains as is and uncles are dropped
-	cx := chainContext{Chain: chain, parlia: p}
+	cx := chainContext{ChainHeaderReader: chain, parlia: p}
 
 	if body.Transactions == nil {
 		body.Transactions = make([]*types.Transaction, 0)
@@ -1665,7 +1688,7 @@ func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 	if p.chainConfig.IsOnFeynman(header.Number, parent.Time, header.Time) {
 		err := p.initializeFeynmanContract(state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, true, tracer)
 		if err != nil {
-			log.Error("init feynman contract failed", "error", err)
+			return nil, nil, fmt.Errorf("init feynman contract failed: %v", err)
 		}
 	}
 
@@ -1697,7 +1720,6 @@ func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 		if !signedRecently {
 			err = p.slash(spoiledVal, state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, true, tracer)
 			if err != nil {
-				// it is possible that slash validator failed because of the slash channel is disabled.
 				log.Error("slash validator failed", "block hash", header.Hash(), "address", spoiledVal)
 			}
 		}
@@ -2368,7 +2390,7 @@ func (p *Parlia) isIntentionalDelayMining(chain consensus.ChainHeaderReader, hea
 		return false, err
 	}
 	isIntentional := header.Coinbase == parent.Coinbase &&
-		header.Difficulty == diffInTurn && parent.Difficulty == diffInTurn &&
+		header.Difficulty.Cmp(diffInTurn) == 0 && parent.Difficulty.Cmp(diffInTurn) == 0 &&
 		parent.MilliTimestamp()+blockInterval < header.MilliTimestamp()
 	return isIntentional, nil
 }
@@ -2392,7 +2414,7 @@ func (p *Parlia) distributeIncoming(val common.Address, state vm.StateDB, header
 		if err != nil {
 			return err
 		}
-		state.SetCode(p.getPepper8DeterministicDeploymentProxyAddress(), bytecode)
+		state.SetCode(p.getPepper8DeterministicDeploymentProxyAddress(), bytecode, tracing.CodeChangeSystemContractUpgrade)
 
 		// distribute Pepper8
 		log.Trace("distributePRB", "block hash", header.Number.Uint64())
@@ -2501,7 +2523,9 @@ func (p *Parlia) initContract(state vm.StateDB, header *types.Header, chain core
 		common.HexToAddress(systemcontract.GovernanceContract),
 		common.HexToAddress(systemcontract.ChainConfigContract),
 		common.HexToAddress(systemcontract.RuntimeUpgradeContract),
-		common.HexToAddress(systemcontract.DeployerProxyContract),
+	}
+	if !p.chainConfig.IsDeployerProxySunsetTime(header.Time) {
+		contracts = append(contracts, common.HexToAddress(systemcontract.DeployerProxyContract))
 	}
 	if p.chainConfig.IsDragon8(header.Time) || p.chainConfig.IsDragon8Fix(header.Time) {
 		contracts = append(contracts, common.HexToAddress(systemcontract.TokenomicsContract))
@@ -2643,6 +2667,8 @@ func (p *Parlia) applyTransaction(
 		return err
 	}
 	*txs = append(*txs, expectedTx)
+	// increment nonce only when tx is included
+	state.SetNonce(msg.From, nonce+1, tracing.NonceChangeEoACall)
 	var root []byte
 	if p.chainConfig.IsByzantium(header.Number) {
 		state.Finalise(true)
@@ -2688,6 +2714,8 @@ func (p *Parlia) GetJustifiedNumberAndHash(chain consensus.ChainHeaderReader, he
 }
 
 // GetFinalizedHeader returns highest finalized block header.
+// It first checks VotePool for votes that may have reached quorum but not yet included in block headers,
+// then falls back to the attestation in the snapshot.
 func (p *Parlia) GetFinalizedHeader(chain consensus.ChainHeaderReader, header *types.Header) *types.Header {
 	if chain == nil || header == nil {
 		return nil
@@ -2711,7 +2739,49 @@ func (p *Parlia) GetFinalizedHeader(chain consensus.ChainHeaderReader, header *t
 		return chain.GetHeaderByNumber(0) // keep consistent with GetJustifiedNumberAndHash
 	}
 
-	return chain.GetHeader(snap.Attestation.SourceHash, snap.Attestation.SourceNumber)
+	finalizedHash := snap.Attestation.SourceHash
+	finalizedNumber := snap.Attestation.SourceNumber
+
+	currentJustifiedHash := snap.Attestation.TargetHash
+	currentJustifiedNumber := snap.Attestation.TargetNumber
+	// Try to check if currentJustifiedNumber can become finalized by checking VotePool.
+	// We only need to check currentJustifiedNumber + 1, since currentJustifiedNumber is already the latest justified.
+	if p.VotePool != nil && currentJustifiedNumber == header.Number.Uint64()-1 {
+		parentSnap, err := p.snapshot(chain, header.Number.Uint64()-1, header.ParentHash, nil, p.isSnake8Enabled(chain, header), header)
+		if err == nil {
+			// Check if the next block (direct child) has reached quorum in VotePool
+			votes := p.VotePool.FetchVotesByBlockHash(header.Hash(), currentJustifiedNumber)
+			quorum := cmath.CeilDiv(len(parentSnap.Validators)*2, 3)
+
+			if len(votes) >= quorum {
+				finalizedHash = currentJustifiedHash
+				finalizedNumber = currentJustifiedNumber
+			}
+		} else {
+			log.Error("Failed to get parent snapshot for finality check",
+				"error", err, "blockNumber", header.Number.Uint64()-1, "blockHash", header.ParentHash)
+		}
+	}
+
+	return chain.GetHeader(finalizedHash, finalizedNumber)
+}
+
+// CheckFinalityAndNotify checks if votes for the target block have reached quorum,
+// and if so, notifies the blockchain of early finalization via the notifyFn callback.
+func (p *Parlia) CheckFinalityAndNotify(chain consensus.ChainHeaderReader, targetBlockHash common.Hash, notifyFn func(finalizedHeader *types.Header)) {
+	// Get target block header directly by hash (don't rely on currentHeader which may have moved forward)
+	targetHeader := chain.GetHeaderByHash(targetBlockHash)
+	if targetHeader == nil {
+		return
+	}
+
+	finalizedHeader := p.GetFinalizedHeader(chain, targetHeader)
+	if finalizedHeader == nil || finalizedHeader.Number.Uint64() == 0 {
+		return
+	}
+
+	// Notify via callback (NotifyFinalized has its own deduplication logic)
+	notifyFn(finalizedHeader)
 }
 
 // ===========================     utility function        ==========================
@@ -2883,20 +2953,12 @@ func (p *Parlia) GetAncestorGenerationDepth(header *types.Header) uint64 {
 
 // chain context
 type chainContext struct {
-	Chain  consensus.ChainHeaderReader
+	consensus.ChainHeaderReader
 	parlia consensus.Engine
 }
 
 func (c chainContext) Engine() consensus.Engine {
 	return c.parlia
-}
-
-func (c chainContext) GetHeader(hash common.Hash, number uint64) *types.Header {
-	return c.Chain.GetHeader(hash, number)
-}
-
-func (c chainContext) Config() *params.ChainConfig {
-	return c.Chain.Config()
 }
 
 // apply message
@@ -2915,8 +2977,6 @@ func applyMessage(
 	} else {
 		state.ClearAccessList()
 	}
-	// Increment the nonce for the next transaction
-	state.SetNonce(msg.From, state.GetNonce(msg.From)+1, tracing.NonceChangeEoACall)
 
 	ret, returnGas, err := evm.Call(
 		msg.From,

@@ -1291,6 +1291,9 @@ func (p *Pending) EstimateGas(ctx context.Context, args struct {
 type Resolver struct {
 	backend      ethapi.Backend
 	filterSystem *filters.FilterSystem
+	// rangeLimit, when true, caps `logs` range queries to maxFilterBlockRange
+	// blocks, mirroring the eth_getLogs behaviour gated by the --rangelimit flag.
+	rangeLimit bool
 }
 
 func (r *Resolver) Block(ctx context.Context, args struct {
@@ -1438,8 +1441,9 @@ func (r *Resolver) Logs(ctx context.Context, args struct{ Filter FilterCriteria 
 	if args.Filter.Topics != nil {
 		topics = *args.Filter.Topics
 	}
-	// Construct the range filter
-	filter := r.filterSystem.NewRangeFilter(begin, end, addresses, topics, false)
+	// Construct the range filter, honouring the configured block-range limit so
+	// that GraphQL `logs` queries cannot bypass the cap enforced for eth_getLogs.
+	filter := r.filterSystem.NewRangeFilter(begin, end, addresses, topics, r.rangeLimit)
 	return runFilter(ctx, r, filter)
 }
 

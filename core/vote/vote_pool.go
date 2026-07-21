@@ -78,6 +78,7 @@ type VotePool struct {
 	highestVerifiedBlockSub event.Subscription
 
 	votesCh chan *types.VoteEnvelope
+	quit    chan struct{}
 
 	engine consensus.PoSA
 }
@@ -94,6 +95,7 @@ func NewVotePool(chain *core.BlockChain, engine consensus.PoSA) *VotePool {
 		futureVotesPq:          &votesPriorityQueue{},
 		highestVerifiedBlockCh: make(chan core.HighestVerifiedBlockEvent, highestVerifiedBlockChanSize),
 		votesCh:                make(chan *types.VoteEnvelope, voteBufferForPut),
+		quit:                   make(chan struct{}),
 		engine:                 engine,
 	}
 
@@ -110,6 +112,8 @@ func (pool *VotePool) loop() {
 
 	for {
 		select {
+		case <-pool.quit:
+			return
 		// Handle ChainHeadEvent.
 		case ev := <-pool.highestVerifiedBlockCh:
 			if ev.Header != nil {
@@ -128,7 +132,11 @@ func (pool *VotePool) loop() {
 }
 
 func (pool *VotePool) PutVote(vote *types.VoteEnvelope) {
-	pool.votesCh <- vote
+	select {
+	case pool.votesCh <- vote:
+	default:
+		log.Warn("VotePool channel full, vote dropped", "hash", vote.Hash())
+	}
 }
 
 func (pool *VotePool) putIntoVotePool(vote *types.VoteEnvelope) bool {
@@ -224,6 +232,10 @@ func (pool *VotePool) putVote(m map[common.Hash]*VoteBox, votesPq *votesPriority
 		localFutureVotesCounter.Inc(1)
 	} else {
 		localCurVotesCounter.Inc(1)
+		// Skip if target block is already finalized and notified
+		if highestNotified := pool.chain.HighestNotifiedFinal(); highestNotified == nil || targetNumber > highestNotified.Number.Uint64()+1 {
+			go pool.engine.CheckFinalityAndNotify(pool.chain, targetHash, pool.chain.NotifyFinalized)
+		}
 	}
 	localReceivedVotesGauge.Update(int64(pool.receivedVotes.Cardinality()))
 }
@@ -302,6 +314,9 @@ func (pool *VotePool) transfer(blockHash common.Hash) {
 
 	localCurVotesCounter.Inc(int64(len(validVotes)))
 	localFutureVotesCounter.Dec(int64(len(voteBox.voteMessages)))
+
+	// Use goroutine to avoid deadlock (see putVote for details).
+	go pool.engine.CheckFinalityAndNotify(pool.chain, blockHash, pool.chain.NotifyFinalized)
 }
 
 // Prune old data of duplicationSet, curVotePq and curVotesMap.
@@ -345,11 +360,17 @@ func (pool *VotePool) GetVotes() []*types.VoteEnvelope {
 	return votesRes
 }
 
-func (pool *VotePool) FetchVotesByBlockHash(blockHash common.Hash) []*types.VoteEnvelope {
+func (pool *VotePool) FetchVotesByBlockHash(targetBlockHash common.Hash, sourceBlockNum uint64) []*types.VoteEnvelope {
 	pool.mu.RLock()
 	defer pool.mu.RUnlock()
-	if _, ok := pool.curVotes[blockHash]; ok {
-		return pool.curVotes[blockHash].voteMessages
+	if voteBox, ok := pool.curVotes[targetBlockHash]; ok {
+		var res []*types.VoteEnvelope
+		for _, vote := range voteBox.voteMessages {
+			if vote.Data.SourceNumber == sourceBlockNum {
+				res = append(res, vote)
+			}
+		}
+		return res
 	}
 	return nil
 }
@@ -384,6 +405,11 @@ func (pool *VotePool) basicVerify(vote *types.VoteEnvelope, headNumber uint64, m
 	}
 
 	return true
+}
+
+func (pool *VotePool) Stop() {
+	close(pool.quit)
+	pool.scope.Close()
 }
 
 func (pq votesPriorityQueue) Less(i, j int) bool {

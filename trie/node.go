@@ -68,10 +68,6 @@ type (
 	}
 )
 
-// nilValueNode is used when collapsing internal trie nodes for hashing, since
-// unset children need to serialize correctly.
-var nilValueNode = valueNode(nil)
-
 // EncodeRLP encodes a full node into the consensus RLP format.
 func (n *fullNode) EncodeRLP(w io.Writer) error {
 	eb := rlp.NewEncoderBuffer(w)
@@ -169,11 +165,14 @@ func decodeNodeUnsafe(hash, buf []byte) (node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decode error: %v", err)
 	}
-	switch c, _ := rlp.CountValues(elems); c {
-	case 2:
+	c, err := rlp.CountValues(elems)
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("invalid node list: %v", err)
+	case c == 2:
 		n, err := decodeShort(hash, elems)
 		return n, wrapError(err, "short")
-	case 17:
+	case c == 17:
 		n, err := decodeFull(hash, elems)
 		return n, wrapError(err, "full")
 	default:

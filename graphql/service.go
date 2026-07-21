@@ -19,6 +19,7 @@ package graphql
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"sync"
@@ -32,17 +33,41 @@ import (
 	gqlErrors "github.com/graph-gophers/graphql-go/errors"
 )
 
+// maxQueryDepth limits the maximum field nesting depth allowed in GraphQL queries.
+const maxQueryDepth = 20
+
+// maxRequestContentLength caps the size of a GraphQL HTTP request body to protect
+// against memory-exhaustion DoS via oversized payloads. It reuses the JSON-RPC
+// HTTP server's body limit so both endpoints share a single source of truth;
+// without it the GraphQL endpoint would read an unbounded body into memory.
+const maxRequestContentLength = rpc.DefaultBodyLimit
+
 type handler struct {
 	Schema *graphql.Schema
 }
 
 func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Reject bodies larger than the limit and ensure decoding never reads more
+	// than maxRequestContentLength bytes into memory.
+	if r.ContentLength > maxRequestContentLength {
+		http.Error(w, "content length too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestContentLength)
+
 	var params struct {
 		Query         string                 `json:"query"`
 		OperationName string                 `json:"operationName"`
 		Variables     map[string]interface{} `json:"variables"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&params); err != nil {
+		// A streamed body that exceeds the limit (unknown Content-Length) surfaces
+		// here as *http.MaxBytesError; report it as 413 rather than a generic 400.
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "content length too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -106,17 +131,17 @@ func (h handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // New constructs a new GraphQL service instance.
-func New(stack *node.Node, backend ethapi.Backend, filterSystem *filters.FilterSystem, cors, vhosts []string) error {
-	_, err := newHandler(stack, backend, filterSystem, cors, vhosts)
+func New(stack *node.Node, backend ethapi.Backend, filterSystem *filters.FilterSystem, rangeLimit bool, cors, vhosts []string) error {
+	_, err := newHandler(stack, backend, filterSystem, rangeLimit, cors, vhosts)
 	return err
 }
 
 // newHandler returns a new `http.Handler` that will answer GraphQL queries.
 // It additionally exports an interactive query browser on the / endpoint.
-func newHandler(stack *node.Node, backend ethapi.Backend, filterSystem *filters.FilterSystem, cors, vhosts []string) (*handler, error) {
-	q := Resolver{backend, filterSystem}
+func newHandler(stack *node.Node, backend ethapi.Backend, filterSystem *filters.FilterSystem, rangeLimit bool, cors, vhosts []string) (*handler, error) {
+	q := Resolver{backend: backend, filterSystem: filterSystem, rangeLimit: rangeLimit}
 
-	s, err := graphql.ParseSchema(schema, &q)
+	s, err := graphql.ParseSchema(schema, &q, graphql.MaxDepth(maxQueryDepth))
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,289 @@
+name: BSC Upstream Sync
+
+# Semi-automated upstream sync (COR-37). Weekly, this workflow detects new
+# bnb-chain/bsc release tags, merges them tag by tag, lets a headless Claude
+# Code agent resolve any conflicts (guided by CLAUDE.md), opens a DRAFT PR
+# with a resolution report, and pings Slack. It NEVER merges to develop —
+# a human always reviews and promotes the PR.
+#
+# Required secrets (the workflow cannot run without these):
+#   secrets.INFRA_GITHUB_CI_BOT_APP_ID       infra bot GitHub App — its
+#   secrets.INFRA_GITHUB_CI_BOT_PRIVATE_KEY  installation token does the
+#                               checkout/push and opens the PR (the default
+#                               GITHUB_TOKEN is not allowed to create PRs).
+#
+# Optional secrets / vars (the workflow degrades gracefully without these):
+#   secrets.ANTHROPIC_API_KEY   enables the conflict-resolution + release-impact
+#                               agent. When absent, conflicting tags are reported
+#                               for manual merge instead (clean merges still flow).
+#   secrets.SLACK_WEBHOOK_URL   incoming webhook for #bu-chiliz-core-squad.
+#   vars.BSC_SYNC_CLAUDE_MODEL  optional model override for the agent.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays, 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: "Explicit space-separated tag list (overrides auto-detection)"
+        required: false
+        default: ""
+      include_prerelease:
+        description: "Include -alpha/-beta/-rc/-feature tags during auto-detection"
+        type: boolean
+        default: false
+
+# The bot App token (generated per-run) performs checkout, push, and PR
+# creation, so the default GITHUB_TOKEN only needs read access here.
+permissions:
+  contents: read
+
+concurrency:
+  group: bsc-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      # The default GITHUB_TOKEN is not permitted to create pull requests
+      # ("GitHub Actions is not permitted to create or approve pull requests").
+      # Use the infra bot GitHub App instead — its installation token is not
+      # subject to that restriction and also authenticates the branch push.
+      - name: Generate bot app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.INFRA_GITHUB_CI_BOT_APP_ID }}
+          private-key: ${{ secrets.INFRA_GITHUB_CI_BOT_PRIVATE_KEY }}
+
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false # never touch the genesis submodule pointer
+          token: ${{ steps.app-token.outputs.token }} # push + PR as the bot app
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.25.x
+
+      - name: Configure git identity
+        run: |
+          git config user.name "chiliz-sync-bot"
+          git config user.email "bot@chiliz.com"
+
+      - name: Determine agent availability
+        id: agent
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "skip=" >> "$GITHUB_OUTPUT"
+            echo "Agent ENABLED (ANTHROPIC_API_KEY present)."
+          else
+            echo "skip=1" >> "$GITHUB_OUTPUT"
+            echo "::warning::ANTHROPIC_API_KEY not set — conflicts will be reported for manual merge."
+          fi
+
+      - name: Install Claude Code CLI
+        if: steps.agent.outputs.skip == ''
+        # Pinned for reproducible, supply-chain-safe runs (this job has
+        # contents: write). Bump via the CLAUDE_CODE_VERSION repo variable.
+        env:
+          CLAUDE_CODE_VERSION: ${{ vars.CLAUDE_CODE_VERSION || '2.1.181' }}
+        run: npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+
+      - name: Detect new BSC tags
+        id: detect
+        env:
+          TAGS_INPUT: ${{ github.event.inputs.tags }}
+          INCLUDE_PRERELEASE: ${{ github.event.inputs.include_prerelease == 'true' && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          : > major-tags.txt
+          if [ -n "${TAGS_INPUT:-}" ]; then
+            # Explicit manual list: the human chose these deliberately, so the
+            # major-release gate is bypassed (STOP_AT_MAJOR=0 semantics).
+            printf '%s\n' "$TAGS_INPUT" | tr ' ' '\n' | sed '/^$/d' > new-tags.txt
+            echo "Using explicit tag list from dispatch input (major gate bypassed)."
+          else
+            MAJOR_TAGS_FILE="$PWD/major-tags.txt" \
+              .github/scripts/bsc-sync/detect-new-tags.sh > new-tags.txt
+          fi
+          count=$(grep -c . new-tags.txt || true)
+          major_count=$(grep -c . major-tags.txt || true)
+          major_tags=$(paste -sd' ' major-tags.txt 2>/dev/null || true)
+          {
+            echo "count=$count"
+            echo "major_count=$major_count"
+            echo "major_tags=$major_tags"
+          } >> "$GITHUB_OUTPUT"
+          echo "Detected $count syncable tag(s); $major_count major release(s) held."
+
+      - name: Merge tags & resolve conflicts
+        if: steps.detect.outputs.count != '0'
+        env:
+          SKIP_AGENT: ${{ steps.agent.outputs.skip }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Pin the model for reproducible conflict resolution (don't rely on
+          # the CLI's shifting default). Override via the BSC_SYNC_CLAUDE_MODEL
+          # repo variable.
+          CLAUDE_MODEL: ${{ vars.BSC_SYNC_CLAUDE_MODEL || 'claude-opus-4-8' }}
+        run: |
+          set -euo pipefail
+          # Include run_attempt so re-running a workflow run pushes to a fresh
+          # branch instead of colliding (non-fast-forward) with the previous
+          # attempt's branch on the remote.
+          branch="bsc-sync/run-${{ github.run_id }}-${{ github.run_attempt }}"
+          git checkout -b "$branch"
+          echo "branch=$branch" >> "$GITHUB_ENV"
+
+          mapfile -t tags < new-tags.txt
+          .github/scripts/bsc-sync/run-sync.sh "${tags[@]}"
+
+          # Export run-sync summary into the job environment.
+          cat bsc-sync.env >> "$GITHUB_ENV"
+
+      - name: Bump sync state & push
+        if: steps.detect.outputs.count != '0' && env.has_changes == 'true'
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$last_committed" > .github/bsc-sync/last-synced-tag
+          git add .github/bsc-sync/last-synced-tag
+          git commit -m "chore(bsc-sync): advance last-synced tag to $last_committed [COR-37]"
+          git push origin "$branch"
+
+      - name: Open draft PR
+        id: pr
+        if: steps.detect.outputs.count != '0' && env.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          url=$(gh pr create --draft --base develop --head "$branch" \
+            --title "chore: sync upstream BSC ($synced_tags) [COR-37]" \
+            --body-file bsc-sync-report.md)
+          echo "Created draft PR: $url"
+          echo "pr_url=$url" >> "$GITHUB_ENV"
+
+      - name: Upload agent logs & reports
+        if: always() && steps.detect.outputs.count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bsc-sync-agent-logs
+          path: |
+            .bsc-sync-agent/
+            bsc-sync-report.md
+          if-no-files-found: ignore
+
+      - name: Notify Slack (#bu-chiliz-core-squad)
+        if: always()
+        continue-on-error: true
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          DETECT_COUNT: ${{ steps.detect.outputs.count }}
+          MAJOR_COUNT: ${{ steps.detect.outputs.major_count }}
+          MAJOR_TAGS: ${{ steps.detect.outputs.major_tags }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+            echo "SLACK_WEBHOOK_URL not set — skipping Slack notification."
+            exit 0
+          fi
+
+          # Slack mrkdwn links (fall back to plain text if a URL is missing).
+          run_link="<${RUN_URL}|the workflow run>"
+          pr_link="draft PR"
+          [ -n "${pr_url:-}" ] && pr_link="<${pr_url}|draft PR>"
+
+          # Human-readable tag lists (comma-separated; tags are space-separated).
+          # Default to empty FIRST: on a no-new-tags / early-failure run the
+          # merge step never exports these, and `${var// /, }` on an unset var
+          # under `set -u` aborts this (always-run) step on bash 4.4+ (the CI
+          # runner) — which would silently drop the notification.
+          synced_tags="${synced_tags:-}"; errored_tags="${errored_tags:-}"
+          tags_disp="${synced_tags// /, }"
+          errored_disp="${errored_tags// /, }"
+          synced_n="$(printf '%s' "${synced_tags:-}" | wc -w | tr -d ' ')"
+
+          # Characterize the synced releases by semver: a bumped patch (x.y.Z,
+          # Z>0) is a maintenance / bug-fix release; x.y.0 starts a new minor
+          # line = feature release. A quick at-a-glance hint (heuristic).
+          kind=""
+          if [ -n "${synced_tags:-}" ]; then
+            feat=0; maint=0
+            while IFS= read -r t; do
+              [ -n "$t" ] || continue
+              p="$(printf '%s' "$t" | sed -nE 's/^v?[0-9]+\.[0-9]+\.([0-9]+).*/\1/p')"
+              [ -z "$p" ] && continue
+              if [ "$p" = "0" ]; then feat=1; else maint=1; fi
+            done < <(printf '%s\n' "${synced_tags}" | tr ' ' '\n')
+            if [ "$feat" = 1 ] && [ "$maint" = 1 ]; then kind="feature + maintenance releases"
+            elif [ "$feat" = 1 ]; then kind="feature release(s) — new minor version"
+            elif [ "$maint" = 1 ]; then kind="maintenance / bug-fix release(s) — patch"
+            else kind="release(s)"; fi
+          fi
+
+          # Major-release note (appended to whatever the run produced).
+          major_line=""
+          if [ "${MAJOR_COUNT:-0}" != "0" ] && [ -n "${MAJOR_COUNT:-}" ]; then
+            major_line=":mega: *Heads up — major release(s) NOT auto-merged* (too risky for the bot): ${MAJOR_TAGS}. A human needs to sync these manually."
+          fi
+
+          if [ "${agent_error:-0}" != "0" ] && [ -n "${agent_error:-}" ]; then
+            # Highest severity: the AI stopped working mid-run — the sync is
+            # INCOMPLETE. Say so loudly; a green message must not read as success.
+            text=$(printf '%s\n' \
+              ":rotating_light: *BSC upstream sync FAILED — incomplete*" \
+              "The AI that resolves merge conflicts stopped partway (usually a Claude API / usage-limit error), so the sync did *not* finish." \
+              "• *Synced OK:* ${tags_disp:-none}" \
+              "• *NOT synced (need a re-run):* ${errored_disp:-unknown} — and any releases after them" \
+              "*What to do:* re-run ${run_link} once the Claude API is available again.${pr_url:+ A partial ${pr_link} was opened for the releases that did sync.}")
+            [ -n "$major_line" ] && text=$(printf '%s\n' "$text" "$major_line")
+          elif [ "${DETECT_COUNT}" = "0" ]; then
+            if [ -n "$major_line" ]; then
+              text=$(printf '%s\n' ":information_source: *BSC upstream sync*" "No standard releases to auto-merge this week." "$major_line")
+            else
+              text=$(printf '%s\n' ":white_check_mark: *BSC upstream sync — nothing to do*" "No new upstream BSC releases this week; our fork is already up to date.")
+            fi
+          elif [ "${has_changes:-false}" = "true" ]; then
+            # Build a plain-language conflict summary from the non-zero buckets.
+            cs=""
+            add() { [ -n "$cs" ] && cs="$cs; "; cs="$cs$1"; }
+            [ "${high:-0}" != "0" ] && add "Claude auto-resolved ${high} file(s)"
+            [ "${low:-0}" != "0" ] && add ":large_yellow_circle: ${low} file(s) flagged as low-confidence (search the diff for \`TODO: Claude flagged\`)"
+            [ "${unresolved:-0}" != "0" ] && add ":red_circle: ${unresolved} file(s) could NOT be resolved (raw conflict markers left in place)"
+            [ "${unverified:-0}" != "0" ] && add ":large_yellow_circle: ${unverified} tag(s) resolved but unverified — please eyeball"
+            [ -z "$cs" ] && cs="all releases merged cleanly — no conflicts :white_check_mark:"
+
+            # Call to action scales with severity.
+            if [ "${unresolved:-0}" != "0" ]; then
+              action=":red_circle: *Action required:* fix the unresolved conflicts, then review & merge the ${pr_link}."
+            elif [ "${low:-0}" != "0" ] || [ "${unverified:-0}" != "0" ]; then
+              action=":eyes: *Action:* double-check the flagged/unverified resolutions, then review & merge the ${pr_link}."
+            else
+              action=":white_check_mark: *Action:* sanity-check the resolutions, then review & merge the ${pr_link}."
+            fi
+
+            text=$(printf '%s\n' \
+              ":arrows_counterclockwise: *BSC upstream sync — ${synced_n} new release(s) ready for review*" \
+              "• *Releases:* ${tags_disp:-none}" \
+              "• *Type:* ${kind:-release(s)}" \
+              "• *Conflicts:* ${cs}" \
+              "$action")
+            [ -n "$major_line" ] && text=$(printf '%s\n' "$text" "$major_line")
+          else
+            # New releases found but nothing could be committed (e.g. AI
+            # unavailable, or a merge that couldn't even start).
+            text=$(printf '%s\n' \
+              ":warning: *BSC upstream sync — could not complete*" \
+              "New upstream release(s) were found but none could be merged automatically, so no PR was opened." \
+              "*What to do:* check ${run_link} and sync manually.")
+            [ -n "$major_line" ] && text=$(printf '%s\n' "$text" "$major_line")
+          fi
+          payload=$(jq -n --arg t "$text" '{text: $t}')
+          curl -sSf -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL"
+          echo "Slack notification sent."
