@@ -117,7 +117,8 @@ Take the upstream side by default in these areas (still build + test afterwards)
 ## Verification after a merge
 
 - `make geth` must build.
-- `go test ./consensus/parlia/... ./core/vm/... ./params/...` as a minimum smoke set; full `make test` has known pre-existing failures unrelated to merges (see notes below).
+- `go test ./consensus/parlia/... ./core/vm/... ./params/... ./internal/replay/...` as a minimum smoke set; full `make test` has known pre-existing failures unrelated to merges (see notes below).
+- `TestReplayFixtures` (`internal/replay`) re-executes real historical mainnet/spicy transactions offline against their captured pre-state and pins the gas the chain charged. It is the tripwire for **any un-fork-gated change that alters gas retroactively** — the COR-193 class of bug, where a resync stops dead at a block the fleet already produced. If it fails after a merge, the merge changed replay semantics; find the change, don't retune the fixture. To widen the net after a merge, point `cmd/replaycheck` (usage: `docs/replaycheck.md`) at a live endpoint (`--upgrades`, `--governance`, or a block range): it replays those blocks with the merged build and fails on any delta. New blocks worth pinning permanently can be captured with `--save-fixture internal/replay/testdata`.
 - Known pre-existing failure: `TestParlia_applyTransactionTracing` fails on develop independently of upstream merges (Feynman-related, disabled in our config).
 
 ## Historical conflict patterns
