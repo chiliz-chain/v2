@@ -50,6 +50,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/common/pepper8"
+	"github.com/ethereum/go-ethereum/common/pipe8"
 	"github.com/ethereum/go-ethereum/common/systemcontract"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/internal/replay"
@@ -465,15 +467,29 @@ func sweep(ctx context.Context, client *rpc.Client, address common.Address, topi
 
 // isSystemTransaction reports whether tx is one of the transactions parlia injects during
 // Finalize: sent by the block's coinbase to a system contract at a zero gas price. Mirrors
-// Parlia.IsSystemTransaction closely enough to classify a mined block.
+// Parlia.IsSystemTransaction.
+//
+// The destination check matters. Before London there was no base-fee floor to stop a
+// validator sending an ordinary zero-priced transaction of its own, and misreading one as a
+// system transaction would replay it through the wrong execution path (no intrinsic gas) and
+// report a bogus ~21000-gas divergence.
 func isSystemTransaction(tx *rpcTransaction, coinbase common.Address) bool {
-	if tx.To == nil || tx.From != coinbase {
+	if tx.To == nil || tx.From != coinbase || !isToSystemContract(*tx.To) {
 		return false
 	}
 	if price := tx.GasPrice.ToInt(); price != nil && price.Sign() != 0 {
 		return false
 	}
 	return true
+}
+
+// isToSystemContract mirrors parlia's isToSystemContract: the system-contract registry plus
+// the Pepper8/Pipe8 mint recipients, which are system-transaction destinations without being
+// system contracts.
+func isToSystemContract(to common.Address) bool {
+	return systemcontract.IsSystemContract(to) ||
+		to == pepper8.Pepper8RecipientAddress ||
+		to == pipe8.Pipe8RecipientAddress
 }
 
 // drainsFeePool reports whether tx is one of the parlia system transactions that pay out
@@ -505,7 +521,7 @@ func effectiveTip(tx *rpcTransaction, receipt *rpcReceipt, baseFee *big.Int) *bi
 		// Pre-London receipts and endpoints that omit the field: fall back to the
 		// transaction's own pricing.
 		gasPrice = tx.GasPrice.ToInt()
-		if tx.MaxFeePerGas != nil && baseFee != nil {
+		if tx.MaxFeePerGas != nil && tx.MaxPriorityFeePerGas != nil && baseFee != nil {
 			gasPrice = new(big.Int).Add(baseFee, tx.MaxPriorityFeePerGas.ToInt())
 			if capped := tx.MaxFeePerGas.ToInt(); gasPrice.Cmp(capped) > 0 {
 				gasPrice = capped
