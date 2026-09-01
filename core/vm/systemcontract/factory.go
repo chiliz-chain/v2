@@ -10,3 +10,9 @@ func CreateEvmHook(address common.Address, context EvmHookContext) EvmHook {
 	}
 	return nil
 }
+
+// IsEvmHook reports whether address dispatches to an EVM hook instead of to
+// ordinary account code. Keep in sync with CreateEvmHook.
+func IsEvmHook(address common.Address) bool {
+	return address == evmHookRuntimeUpgradeAddress
+}

@@ -270,6 +270,7 @@ func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, g
 	}
 	snapshot := evm.StateDB.Snapshot()
 	p, isPrecompile := evm.precompileOrHook(addr, caller)
+	evm.warmDeployerProxyOnHookDispatch(addr) // COR-193, see core/vm/chiliz.go
 
 	if !evm.StateDB.Exist(addr) {
 		if !isPrecompile && evm.chainRules.IsEIP4762 && !isSystemCall(caller) {
