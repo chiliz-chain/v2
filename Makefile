@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: geth evm faucet all test truffle-test lint fmt clean devtools help
+.PHONY: geth evm faucet replaycheck all test truffle-test lint fmt clean devtools help
 .PHONY: docker
 
 GOBIN = ./build/bin
@@ -32,6 +32,12 @@ evm:
 	$(GORUN) build/ci.go install ./cmd/evm
 	@echo "Done building."
 	@echo "Run \"$(GOBIN)/evm\" to launch evm."
+
+#? replaycheck: Build replaycheck, the block replay-divergence checker.
+replaycheck:
+	$(GORUN) build/ci.go install ./cmd/replaycheck
+	@echo "Done building."
+	@echo "Run \"$(GOBIN)/replaycheck --help\" for usage."
 
 #? all: Build all packages and executables.
 all:

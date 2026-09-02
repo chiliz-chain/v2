@@ -1,4 +1,33 @@
 # Changelog
+
+## v2.9.5
+
+### BUGFIX
+- COR-193 `core/vm`: warm the DeployerProxy `0x...7005` when `EVM.Call` dispatches an EVM
+  hook, restoring replay of the blocks that run a runtime upgrade of the DeployerProxy
+  (mainnet 31,384,697 and spicy 32,196,267). Client 2.7.3 moved the invocation hook behind
+  the precompile/hook dispatch, so calling the runtime-upgrade hook `0x...7f01` no longer
+  touched `0x...7005`; the following access to it was charged as cold, and those two blocks
+  re-executed 2,500 gas more expensive than the canonical chain, failing every archive
+  resync past them. Affects every release from 2.7.3 onward. **Mandatory fleet upgrade:**
+  governance must not execute a `0x...7005` runtime upgrade until the whole validator set
+  runs a patched build.
+
+### FEATURE
+- `cmd/replaycheck` + `internal/replay`: new tool that answers "does this build reproduce
+  the gas the chain charged?". Give it a block number (or a range, or `--upgrades` /
+  `--governance` to sweep every runtime upgrade / governance execution on a network); it
+  pulls the block, the receipts, each transaction in signed form and the pre-state each one
+  saw from an RPC endpoint, then re-executes them **locally, with the rules compiled into
+  the binary**, and compares against the canonical receipts. It also recomputes the parlia
+  fee pool from the gas it measured and checks it against what the block's system
+  transactions actually paid out — the same comparison an importing node makes, so a
+  mismatch is the bad block a resync would hit. The endpoint is only a source of history and
+  is never asked to judge anything; `--remote-trace` additionally reports what the endpoint
+  itself charges, which is how you tell a patched build from a patched endpoint.
+  `--save-fixture` writes a fixture that `internal/replay`'s test suite replays offline, so
+  any block can be turned into a permanent regression test.
+
 ## v1.7.3
 v1.7.3 is a maintenance release, which mainly fixes online block pruning and kvdb abnormal continuous growth, pls refer change log for detail.
 
