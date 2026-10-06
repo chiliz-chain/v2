@@ -22,6 +22,13 @@ import (
 // COR-184), because distributeIncoming branches on IsDragon8Fix first and the
 // pre-fix schedule never ran there. That exception is pinned to chain 88888
 // only, so it cannot spread to another network unnoticed.
+//
+// Snake8Fix and DeployerProxySunset must be scheduled more than two block
+// periods apart, so that at normal block cadence the two activations do not
+// share a boundary window (COR-225). This is a scheduling rule, not a runtime
+// guarantee: after a halt spanning both timestamps, the first resumed block is
+// stamped with wall-clock time and the two can still activate on consecutive
+// blocks.
 func TestEmbeddedChilizForkSchedules(t *testing.T) {
 	networks := []struct {
 		name    string
@@ -55,6 +62,21 @@ func TestEmbeddedChilizForkSchedules(t *testing.T) {
 			}
 			if cfg.Snake8FixTime != nil && cfg.Snake8Time == nil {
 				t.Fatalf("snake8FixTime=%d scheduled without snake8Time", *cfg.Snake8FixTime)
+			}
+			// Snake8Fix is gated on parent.Time and DeployerProxySunset on the
+			// block's own time, so a shared timestamp activates them one block
+			// apart and puts two changes in a two-block boundary window
+			// (COR-225). At normal cadence, timestamps within a couple of block
+			// periods of each other collapse into the same window, so require
+			// more than two periods between them, in either order. A halt that
+			// spans both timestamps defeats any gap; that is accepted.
+			if cfg.Snake8FixTime != nil && cfg.DeployerProxySunsetTime != nil {
+				a, b := *cfg.Snake8FixTime, *cfg.DeployerProxySunsetTime
+				gap := max(a, b) - min(a, b)
+				if gap <= 2*cfg.Parlia.Period {
+					t.Fatalf("snake8FixTime=%d and deployerProxySunsetTime=%d are %ds apart, want more than %ds (two block periods)",
+						a, b, gap, 2*cfg.Parlia.Period)
+				}
 			}
 
 			// Probe every scheduled fork time and its neighbours. Block forks
@@ -109,4 +131,41 @@ func deref(t *uint64) any {
 		return nil
 	}
 	return *t
+}
+
+// TestEmbeddedRolloutForkTimes pins the activation timestamps of the forks that
+// are being rolled out network by network (COR-198 Snake8Fix, COR-225
+// DeployerProxySunset). The expected values are golden literals taken from the
+// rollout tickets, not read back from the embedded files, so an accidental edit
+// or a merge that drops or moves a key fails here instead of shipping a
+// different activation time to the fleet. nil means "not scheduled".
+func TestEmbeddedRolloutForkTimes(t *testing.T) {
+	u64 := func(v uint64) *uint64 { return &v }
+	networks := []struct {
+		name                    string
+		cfg                     *params.ChainConfig
+		snake8FixTime           *uint64
+		deployerProxySunsetTime *uint64
+	}{
+		{"chiliz", ChilizMainnetGenesisConfig.Config, nil, nil},
+		// COR-227 sunset: Wed 2026-10-07 08:00 UTC; COR-200 Snake8Fix two
+		// hours later, 10:00 UTC.
+		{"spicy", SpicyGenesisConfig.Config, u64(1791367200), u64(1791360000)},
+		{"scoville", ScovilleGenesisConfig.Config, nil, nil},
+	}
+	for _, n := range networks {
+		t.Run(n.name, func(t *testing.T) {
+			for _, f := range []struct {
+				key       string
+				got, want *uint64
+			}{
+				{"snake8FixTime", n.cfg.Snake8FixTime, n.snake8FixTime},
+				{"deployerProxySunsetTime", n.cfg.DeployerProxySunsetTime, n.deployerProxySunsetTime},
+			} {
+				if (f.got == nil) != (f.want == nil) || (f.got != nil && *f.got != *f.want) {
+					t.Errorf("%s = %v, want %v", f.key, deref(f.got), deref(f.want))
+				}
+			}
+		})
+	}
 }
