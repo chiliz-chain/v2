@@ -1,0 +1,11 @@
+go test fuzz v1
+uint64(1700000000)
+int64(3000)
+uint16(0)
+uint16(100)
+uint8(4)
+uint16(0)
+bool(false)
+[]byte("")
+int64(-9223372036854775808)
+uint16(0)

@@ -54,6 +54,9 @@ var (
 	defaultBuilderFeeCeil      = "0"
 	defaultValidatorCommission = uint64(100)
 	defaultMaxBidsPerBuilder   = uint32(2) // Simple strategy: send one bid early, another near deadline
+	// MEV validators accept SendBidBlock by default; the RPC stays gated on the
+	// Pasteur fork and can be disabled via Mev.BidBlockEnabled=false.
+	defaultBidBlockEnabled = true
 )
 
 // Config is the configuration parameters of mining.
@@ -68,7 +71,6 @@ type Config struct {
 	VoteEnable             bool           // Whether to vote when mining
 	MaxWaitProposalInSecs  *uint64        `toml:",omitempty"` // The maximum time to wait for the proposal to be done, it's aimed to prevent validator being slashed when restarting
 	DisableVoteAttestation bool           // Whether to skip assembling vote attestation
-	TxGasLimit             uint64         // Maximum gas for per transaction(will be removed after Mendel hardfork)
 
 	Mev MevConfig // Mev configuration
 }
@@ -98,6 +100,7 @@ type BuilderConfig struct {
 
 type MevConfig struct {
 	Enabled               *bool           `toml:",omitempty"` // Whether to enable Mev or not
+	BidBlockEnabled       *bool           `toml:",omitempty"` // Whether to accept SendBidBlock RPC (BEP-675); coexists with legacy SendBid
 	GreedyMergeTx         *bool           `toml:",omitempty"` // Whether to merge local transactions to the bid
 	BuilderFeeCeil        *string         `toml:",omitempty"` // The maximum builder fee of a bid
 	SentryURL             string          // The url of Mev sentry
@@ -110,6 +113,7 @@ type MevConfig struct {
 
 var DefaultMevConfig = MevConfig{
 	Enabled:               &defaultMevEnabled,
+	BidBlockEnabled:       &defaultBidBlockEnabled,
 	GreedyMergeTx:         &defaultGreedyMergeTx,
 	BuilderFeeCeil:        &defaultBuilderFeeCeil,
 	SentryURL:             "",
@@ -144,6 +148,10 @@ func ApplyDefaultMinerConfig(cfg *Config) {
 	if cfg.Mev.Enabled == nil {
 		cfg.Mev.Enabled = &defaultMevEnabled
 		log.Info("ApplyDefaultMinerConfig", "Mev.Enabled", *cfg.Mev.Enabled)
+	}
+	if cfg.Mev.BidBlockEnabled == nil {
+		cfg.Mev.BidBlockEnabled = &defaultBidBlockEnabled
+		log.Info("ApplyDefaultMinerConfig", "Mev.BidBlockEnabled", *cfg.Mev.BidBlockEnabled)
 	}
 	if cfg.Mev.BuilderFeeCeil == nil {
 		cfg.Mev.BuilderFeeCeil = &defaultBuilderFeeCeil

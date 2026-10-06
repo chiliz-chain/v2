@@ -37,7 +37,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
-	"github.com/ethereum/go-ethereum/beacon/fakebeacon"
 	bparams "github.com/ethereum/go-ethereum/beacon/params"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/fdlimit"
@@ -102,12 +101,6 @@ var (
 		Name:     "datadir",
 		Usage:    "Data directory for the databases and keystore",
 		Value:    flags.DirectoryString(node.DefaultDataDir()),
-		Category: flags.EthCategory,
-	}
-	MultiDataBaseFlag = &cli.BoolFlag{
-		Name: "multidatabase",
-		Usage: "Enable a separated state database, it will be created subdirectory called state, " +
-			"Users can copy this state directory to another directory or disk, and then create a symbolic link to the state directory under the chaindata",
 		Category: flags.EthCategory,
 	}
 	DirectBroadcastFlag = &cli.BoolFlag{
@@ -187,11 +180,6 @@ var (
 	ChapelFlag = &cli.BoolFlag{
 		Name:     "chapel",
 		Usage:    "Chapel network: pre-configured Proof-of-Stake-Authority BSC test network",
-		Category: flags.EthCategory,
-	}
-	EnableBALFlag = &cli.BoolFlag{
-		Name:     "enablebal",
-		Usage:    "Enable block access list feature, validator will generate BAL for each block",
 		Category: flags.EthCategory,
 	}
 	// Dev mode
@@ -346,6 +334,11 @@ var (
 		Usage:    "Manually specify the Mendel fork timestamp, overriding the bundled setting",
 		Category: flags.EthCategory,
 	}
+	OverridePasteur = &cli.Uint64Flag{
+		Name:     "override.pasteur",
+		Usage:    "Manually specify the Pasteur fork timestamp, overriding the bundled setting",
+		Category: flags.EthCategory,
+	}
 	OverrideBPO1 = &cli.Uint64Flag{
 		Name:     "override.bpo1",
 		Usage:    "Manually specify the bpo1 fork timestamp, overriding the bundled setting",
@@ -354,11 +347,6 @@ var (
 	OverrideBPO2 = &cli.Uint64Flag{
 		Name:     "override.bpo2",
 		Usage:    "Manually specify the bpo2 fork timestamp, overriding the bundled setting",
-		Category: flags.EthCategory,
-	}
-	OverridePasteur = &cli.Uint64Flag{
-		Name:     "override.pasteur",
-		Usage:    "Manually specify the Pasteur fork timestamp, overriding the bundled setting",
 		Category: flags.EthCategory,
 	}
 	OverrideVerkle = &cli.Uint64Flag{
@@ -588,12 +576,6 @@ var (
 		Value:    ethconfig.Defaults.TxPool.GlobalQueue,
 		Category: flags.TxPoolCategory,
 	}
-	TxPoolOverflowPoolSlotsFlag = &cli.Uint64Flag{
-		Name:     "txpool.overflowpoolslots",
-		Usage:    "Maximum number of transaction slots in overflow pool",
-		Value:    ethconfig.Defaults.TxPool.OverflowPoolSlots,
-		Category: flags.TxPoolCategory,
-	}
 	TxPoolLifetimeFlag = &cli.DurationFlag{
 		Name:     "txpool.lifetime",
 		Usage:    "Maximum amount of time non-executable transaction are queued",
@@ -605,11 +587,6 @@ var (
 		Usage:    "Duration for announcing local pending transactions again (default = 10 years, minimum = 1 minute)",
 		Value:    ethconfig.Defaults.TxPool.ReannounceTime,
 		Category: flags.TxPoolCategory,
-	}
-	MinerTxGasLimitFlag = &cli.Uint64Flag{
-		Name:     "miner.txgaslimit",
-		Usage:    fmt.Sprintf("Maximum gas allowed per transaction (default = 0, disabled; min = %d)", params.MaxTxGas),
-		Category: flags.MinerCategory,
 	}
 	// Blob transaction pool settings
 	BlobPoolDataDirFlag = &cli.StringFlag{
@@ -1348,25 +1325,6 @@ Please note that --` + MetricsHTTPFlag.Name + ` must be set to start the server.
 		Category: flags.MiscCategory,
 	}
 
-	// Fake beacon
-	FakeBeaconEnabledFlag = &cli.BoolFlag{
-		Name:     "fake-beacon",
-		Usage:    "Enable the HTTP-RPC server of fake-beacon",
-		Category: flags.APICategory,
-	}
-	FakeBeaconAddrFlag = &cli.StringFlag{
-		Name:     "fake-beacon.addr",
-		Usage:    "HTTP-RPC server listening addr of fake-beacon",
-		Value:    fakebeacon.DefaultAddr,
-		Category: flags.APICategory,
-	}
-	FakeBeaconPortFlag = &cli.IntFlag{
-		Name:     "fake-beacon.port",
-		Usage:    "HTTP-RPC server listening port of fake-beacon",
-		Value:    fakebeacon.DefaultPort,
-		Category: flags.APICategory,
-	}
-
 	// incremental snapshot related flags
 	EnableIncrSnapshotFlag = &cli.BoolFlag{
 		Name:     "incr.enable",
@@ -1889,9 +1847,6 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 	if ctx.IsSet(DisableSnapProtocolFlag.Name) {
 		cfg.DisableSnapProtocol = ctx.Bool(DisableSnapProtocolFlag.Name)
 	}
-	if ctx.IsSet(EnableBALFlag.Name) {
-		cfg.EnableBAL = ctx.Bool(EnableBALFlag.Name)
-	}
 	if ctx.IsSet(RangeLimitFlag.Name) {
 		cfg.RangeLimit = ctx.Bool(RangeLimitFlag.Name)
 	}
@@ -2025,7 +1980,7 @@ func setTxPool(ctx *cli.Context, cfg *legacypool.Config) {
 		cfg.GlobalQueue = ctx.Uint64(TxPoolGlobalQueueFlag.Name)
 	}
 	if ctx.IsSet(TxPoolOverflowPoolSlotsFlag.Name) {
-		cfg.OverflowPoolSlots = ctx.Uint64(TxPoolOverflowPoolSlotsFlag.Name)
+		log.Warn("The flag --txpool.overflowpoolslots is deprecated and has no effect")
 	}
 	if ctx.IsSet(TxPoolLifetimeFlag.Name) {
 		cfg.Lifetime = ctx.Duration(TxPoolLifetimeFlag.Name)
@@ -2077,11 +2032,7 @@ func setMiner(ctx *cli.Context, cfg *minerconfig.Config) {
 		cfg.DisableVoteAttestation = true
 	}
 	if ctx.IsSet(MinerTxGasLimitFlag.Name) {
-		limit := ctx.Uint64(MinerTxGasLimitFlag.Name)
-		if limit != 0 && limit < params.MaxTxGas {
-			Fatalf("Invalid --miner.txgaslimit: %d (must be >= %d or 0)", limit, params.MaxTxGas)
-		}
-		cfg.TxGasLimit = limit
+		log.Warn("The flag --miner.txgaslimit is deprecated and has no effect; per-transaction gas limit is now enforced by EIP-7825")
 	}
 }
 
@@ -2119,6 +2070,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	flags.CheckExclusive(ctx, BSCMainnetFlag, DeveloperFlag, ChilizMainnetFlag, ChilizTestnetFlag, ChilizSpicyFlag, NetworkIdFlag, OverrideGenesisFlag)
 	flags.CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
 
+	if ctx.IsSet(EnableBALFlag.Name) {
+		log.Warn("The flag --enable-bal is deprecated and has no effect; BEP-592 block access list has been removed")
+	}
 	// Set configurations from CLI flags
 	setEtherbase(ctx, cfg)
 	setGPO(ctx, &cfg.GPO)
@@ -2203,9 +2157,6 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	}
 	if ctx.IsSet(CacheNoPrefetchFlag.Name) {
 		cfg.NoPrefetch = ctx.Bool(CacheNoPrefetchFlag.Name)
-	}
-	if ctx.IsSet(EnableBALFlag.Name) {
-		cfg.EnableBAL = ctx.Bool(EnableBALFlag.Name)
 	}
 	// Read the value from the flag no matter if it's set or not.
 	cfg.Preimages = ctx.Bool(CachePreimagesFlag.Name)
@@ -2642,17 +2593,16 @@ func EnableNodeInfo(poolConfig *legacypool.Config, nodeInfo *p2p.NodeInfo) Setup
 	return func() {
 		// register node info into metrics
 		metrics.GetOrRegisterLabel("node-info", nil).Mark(map[string]interface{}{
-			"Enode":             nodeInfo.Enode,
-			"ENR":               nodeInfo.ENR,
-			"ID":                nodeInfo.ID,
-			"PriceLimit":        poolConfig.PriceLimit,
-			"PriceBump":         poolConfig.PriceBump,
-			"AccountSlots":      poolConfig.AccountSlots,
-			"GlobalSlots":       poolConfig.GlobalSlots,
-			"AccountQueue":      poolConfig.AccountQueue,
-			"GlobalQueue":       poolConfig.GlobalQueue,
-			"OverflowPoolSlots": poolConfig.OverflowPoolSlots,
-			"Lifetime":          poolConfig.Lifetime,
+			"Enode":        nodeInfo.Enode,
+			"ENR":          nodeInfo.ENR,
+			"ID":           nodeInfo.ID,
+			"PriceLimit":   poolConfig.PriceLimit,
+			"PriceBump":    poolConfig.PriceBump,
+			"AccountSlots": poolConfig.AccountSlots,
+			"GlobalSlots":  poolConfig.GlobalSlots,
+			"AccountQueue": poolConfig.AccountQueue,
+			"GlobalQueue":  poolConfig.GlobalQueue,
+			"Lifetime":     poolConfig.Lifetime,
 		})
 	}
 }
@@ -2699,9 +2649,6 @@ func parseDBFeatures(cfg *ethconfig.Config, stack *node.Node) string {
 		features = append(features, "PBSS")
 	} else if cfg.StateScheme == rawdb.HashScheme {
 		features = append(features, "HBSS")
-	}
-	if stack.CheckIfMultiDataBase() {
-		features = append(features, "MultiDB")
 	}
 	if cfg.PruneAncientData || cfg.BlockHistory > 0 {
 		features = append(features, "PruneBlocks")
@@ -2829,33 +2776,11 @@ func MakeChainDatabase(ctx *cli.Context, stack *node.Node, readonly bool) ethdb.
 			EraDirectory:      ctx.String(EraFlag.Name),
 		}
 		chainDb, err = stack.OpenDatabaseWithOptions("chaindata", options)
-		// set the separate state database
-		if stack.CheckIfMultiDataBase() && err == nil {
-			stateDiskDb := MakeStateDataBase(ctx, stack, readonly)
-			chainDb.SetStateStore(stateDiskDb)
-		}
 	}
 	if err != nil {
 		Fatalf("Could not open database: %v", err)
 	}
 	return chainDb
-}
-
-// MakeStateDataBase open a separate state database using the flags passed to the client and will hard crash if it fails.
-func MakeStateDataBase(ctx *cli.Context, stack *node.Node, readonly bool) ethdb.Database {
-	cache := ctx.Int(CacheFlag.Name) * ctx.Int(CacheDatabaseFlag.Name) / 100
-	handles := MakeDatabaseHandles(ctx.Int(FDLimitFlag.Name)) * 90 / 100
-	statediskdb, err := stack.OpenDatabaseWithFreezer("chaindata/state", cache, handles, "", "", readonly)
-	if err != nil {
-		Fatalf("Failed to open separate trie database: %v", err)
-	}
-	return statediskdb
-}
-
-func PathDBConfigAddJournalFilePath(stack *node.Node, config *pathdb.Config) *pathdb.Config {
-	path := fmt.Sprintf("%s/%s", stack.ResolvePath("chaindata"), eth.JournalFileName)
-	config.JournalFilePath = path
-	return config
 }
 
 // tryMakeReadOnlyDatabase try to open the chain database in read-only mode,
@@ -2949,7 +2874,6 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 	options := &core.BlockChainConfig{
 		TrieCleanLimit: ethconfig.Defaults.TrieCleanCache,
 		NoPrefetch:     ctx.Bool(CacheNoPrefetchFlag.Name),
-		EnableBAL:      ctx.Bool(EnableBALFlag.Name),
 		TrieDirtyLimit: ethconfig.Defaults.TrieDirtyCache,
 		ArchiveMode:    ctx.String(GCModeFlag.Name) == "archive",
 		TrieTimeLimit:  ethconfig.Defaults.TrieTimeout,
@@ -2995,8 +2919,6 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 	}
 	vmcfg := vm.Config{
 		EnablePreimageRecording:   ctx.Bool(VMEnableDebugFlag.Name),
-		EnableWitnessStats:        ctx.Bool(VMWitnessStatsFlag.Name),
-		StatelessSelfValidation:   ctx.Bool(VMStatelessSelfValidationFlag.Name) || ctx.Bool(VMWitnessStatsFlag.Name),
 		EnableOpcodeOptimizations: ctx.Bool(VMOpcodeOptimizeFlag.Name),
 	}
 
@@ -3014,6 +2936,9 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 		}
 	}
 	options.VmConfig = vmcfg
+
+	options.StatelessSelfValidation = ctx.Bool(VMStatelessSelfValidationFlag.Name) || ctx.Bool(VMWitnessStatsFlag.Name)
+	options.EnableWitnessStats = ctx.Bool(VMWitnessStatsFlag.Name)
 
 	chain, err := core.NewBlockChain(chainDb, gspec, engine, options)
 	if err != nil {
@@ -3041,6 +2966,9 @@ func MakeConsolePreloads(ctx *cli.Context) []string {
 
 // MakeTrieDatabase constructs a trie database based on the configured scheme.
 func MakeTrieDatabase(ctx *cli.Context, stack *node.Node, disk ethdb.Database, preimage bool, readOnly bool, isVerkle bool, mergeIncr bool) *triedb.Database {
+	if ctx.IsSet(JournalFileFlag.Name) {
+		log.Warn("--journalfile is deprecated and has no effect, please remove it")
+	}
 	config := &triedb.Config{
 		Preimages: preimage,
 		IsVerkle:  isVerkle,
@@ -3067,7 +2995,6 @@ func MakeTrieDatabase(ctx *cli.Context, stack *node.Node, disk ethdb.Database, p
 	}
 	pathConfig.JournalDirectory = stack.ResolvePath("triedb")
 	config.PathDB = &pathConfig
-	config.PathDB.JournalFilePath = fmt.Sprintf("%s/%s", stack.ResolvePath("chaindata"), eth.JournalFileName)
 	return triedb.NewDatabase(disk, config)
 }
 

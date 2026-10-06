@@ -31,7 +31,7 @@ func (p *Parlia) delayForRamanujanFork(snap *Snapshot, header *types.Header) tim
 func (p *Parlia) blockTimeForRamanujanFork(snap *Snapshot, header, parent *types.Header) uint64 {
 	blockTime := parent.MilliTimestamp() + snap.BlockInterval
 	if p.chainConfig.IsRamanujan(header.Number) {
-		blockTime = blockTime + p.backOffTime(snap, parent, header, p.val)
+		blockTime = blockTime + p.backOffTime(snap, parent, header, header.Coinbase)
 	}
 	if now := uint64(time.Now().UnixMilli()); blockTime < now {
 		// Just to make the millisecond part of the time look more aligned.

@@ -34,7 +34,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go-version }}
-
+    
     - name: Install Nancy
       if: ${{ env.NANCY_ENABLED == 'true' }}
       run: |
@@ -53,5 +53,5 @@ jobs:
         if [[ -z "${OSSINDEX_USERNAME:-}" || -z "${OSSINDEX_TOKEN:-}" ]]; then
           echo "::error::Missing OSS Index credentials"
         fi
-
+        
         go list -json -deps ./... | nancy sleuth --username "${OSSINDEX_USERNAME}" --token "${OSSINDEX_TOKEN}"

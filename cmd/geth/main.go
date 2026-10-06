@@ -26,8 +26,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ethereum/go-ethereum/params"
-
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/cmd/utils"
@@ -79,9 +77,9 @@ var (
 		utils.OverrideFermi,
 		utils.OverrideOsaka,
 		utils.OverrideMendel,
+		utils.OverridePasteur,
 		utils.OverrideBPO1,
 		utils.OverrideBPO2,
-		utils.OverridePasteur,
 		utils.OverrideVerkle,
 		utils.OverrideGenesisFlag,
 		utils.OverrideFullImmutabilityThreshold,
@@ -100,10 +98,11 @@ var (
 		utils.TxPoolGlobalSlotsFlag,
 		utils.TxPoolAccountQueueFlag,
 		utils.TxPoolGlobalQueueFlag,
-		utils.TxPoolOverflowPoolSlotsFlag,
+		utils.TxPoolOverflowPoolSlotsFlag, // deprecated
 		utils.TxPoolLifetimeFlag,
 		utils.TxPoolReannounceTimeFlag,
 		utils.MinerTxGasLimitFlag,
+		utils.EnableBALFlag,
 		utils.BlobPoolDataDirFlag,
 		utils.BlobPoolDataCapFlag,
 		utils.BlobPoolPriceBumpFlag,
@@ -122,7 +121,7 @@ var (
 		utils.LogExportCheckpointsFlag,
 		utils.StateHistoryFlag,
 		utils.PathDBSyncFlag,
-		utils.JournalFileFlag,
+		utils.JournalFileFlag, // deprecated
 		utils.LightKDFFlag,
 		utils.EthRequiredBlocksFlag,
 		utils.LegacyWhitelistFlag, // deprecated
@@ -136,7 +135,6 @@ var (
 		utils.CacheSnapshotFlag,
 		// utils.CacheNoPrefetchFlag,
 		utils.CachePreimagesFlag,
-		// utils.MultiDataBaseFlag,
 		utils.PruneAncientDataFlag, // deprecated
 		utils.CacheLogSizeFlag,
 		utils.FDLimitFlag,
@@ -154,7 +152,6 @@ var (
 		utils.MinerRecommitIntervalFlag,
 		utils.MinerNewPayloadTimeoutFlag, // deprecated
 		utils.MinerDelayLeftoverFlag,
-		utils.EnableBALFlag,
 		// utils.MinerNewPayloadTimeout,
 		utils.NATFlag,
 		utils.NoDiscoverFlag,
@@ -263,12 +260,6 @@ var (
 		utils.MetricsInfluxDBOrganizationFlag,
 		utils.StateSizeTrackingFlag,
 	}
-
-	fakeBeaconFlags = []cli.Flag{
-		utils.FakeBeaconEnabledFlag,
-		utils.FakeBeaconAddrFlag,
-		utils.FakeBeaconPortFlag,
-	}
 )
 
 var app = flags.NewApp("the go-ethereum command line interface")
@@ -325,7 +316,6 @@ func init() {
 		consoleFlags,
 		debug.Flags,
 		metricsFlags,
-		fakeBeaconFlags,
 	)
 	flags.AutoEnvVars(app.Flags, "GETH")
 
@@ -472,20 +462,6 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 
 	// Start auxiliary services if enabled
 	ethBackend, ok := backend.(*eth.EthAPIBackend)
-	gasCeil := ethBackend.Miner().GasCeil()
-	maxTxGas := uint64(0)
-	if gasCeil > params.SystemTxsGasSoftLimit {
-		maxTxGas = gasCeil - params.SystemTxsGasSoftLimit
-	}
-	if txGasLimit := ethBackend.Miner().TxGasLimit(); txGasLimit > 0 {
-		if maxTxGas == 0 || txGasLimit < maxTxGas {
-			maxTxGas = txGasLimit
-		}
-	}
-	if maxTxGas > 0 {
-		ethBackend.TxPool().SetMaxGas(maxTxGas)
-	}
-
 	if ctx.Bool(utils.MiningEnabledFlag.Name) {
 		// Mining only makes sense if a full Ethereum node is running
 		if ctx.String(utils.SyncModeFlag.Name) == "light" {

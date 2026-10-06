@@ -47,6 +47,8 @@ var DeprecatedFlags = []cli.Flag{
 	PruneAncientDataFlag,
 	JournalFileFlag,
 	LogExportCheckpointsFlag,
+	EnableBALFlag,
+	TxPoolOverflowPoolSlotsFlag,
 }
 
 var (
@@ -138,6 +140,27 @@ var (
 		Hidden:   true,
 		Usage:    "Enable using journal file to store the TrieJournal instead of KVDB in pbss (default = true, deprecated)",
 		Value:    true,
+		Category: flags.DeprecatedCategory,
+	}
+	// Deprecated: tx gas limit is now enforced at protocol level by EIP-7825.
+	MinerTxGasLimitFlag = &cli.Uint64Flag{
+		Name:     "miner.txgaslimit",
+		Hidden:   true,
+		Usage:    "Deprecated: per-transaction gas limit is now enforced by EIP-7825; this flag has no effect",
+		Category: flags.DeprecatedCategory,
+	}
+	// Deprecated: BEP-592 non-consensus BAL is superseded by EIP-7928 in upstream go-ethereum.
+	EnableBALFlag = &cli.BoolFlag{
+		Name:     "enable-bal",
+		Hidden:   true,
+		Usage:    "Deprecated: BEP-592 block access list has been removed; this flag has no effect",
+		Category: flags.DeprecatedCategory,
+	}
+	TxPoolOverflowPoolSlotsFlag = &cli.Uint64Flag{
+		Name:     "txpool.overflowpoolslots",
+		Hidden:   true,
+		Usage:    "Deprecated: Maximum number of transaction slots in overflow pool; this flag has no effect",
+		Value:    0,
 		Category: flags.DeprecatedCategory,
 	}
 )

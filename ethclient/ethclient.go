@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/types"
+	buildertypes "github.com/ethereum/go-ethereum/core/types/builder"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
@@ -861,13 +862,43 @@ func (ec *Client) HasBuilder(ctx context.Context, address common.Address) (bool,
 }
 
 // SendBid sends a bid
-func (ec *Client) SendBid(ctx context.Context, args types.BidArgs) (common.Hash, error) {
+func (ec *Client) SendBid(ctx context.Context, args buildertypes.BidArgs) (common.Hash, error) {
 	var hash common.Hash
 	err := ec.c.CallContext(ctx, &hash, "mev_sendBid", args)
 	if err != nil {
 		return common.Hash{}, err
 	}
 	return hash, nil
+}
+
+// SendBidBlock sends a BidBlock (zero-simulate MEV path).
+func (ec *Client) SendBidBlock(ctx context.Context, args buildertypes.BidBlockArgs) (common.Hash, error) {
+	var hash common.Hash
+	err := ec.c.CallContext(ctx, &hash, "mev_sendBidBlock", args)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	return hash, nil
+}
+
+// BidBlockPermission is the result of mev_getBidBlockPermission.
+type BidBlockPermission struct {
+	Allowed     bool            `json:"allowed"`
+	Reason      string          `json:"reason,omitempty"`
+	BlockHash   *common.Hash    `json:"blockHash,omitempty"`
+	BlockNumber *hexutil.Uint64 `json:"blockNumber,omitempty"`
+	RevokedAt   *time.Time      `json:"revokedAt,omitempty"`
+	ResetAt     time.Time       `json:"resetAt"`
+}
+
+// GetBidBlockPermission queries the builder's current BidBlock permission status.
+func (ec *Client) GetBidBlockPermission(ctx context.Context, builder common.Address) (*BidBlockPermission, error) {
+	var result BidBlockPermission
+	err := ec.c.CallContext(ctx, &result, "mev_getBidBlockPermission", builder)
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // BestBidGasFee returns the gas fee of the best bid for the given parent hash.
@@ -881,8 +912,8 @@ func (ec *Client) BestBidGasFee(ctx context.Context, parentHash common.Hash) (*b
 }
 
 // MevParams returns the static params of mev
-func (ec *Client) MevParams(ctx context.Context) (*types.MevParams, error) {
-	var params types.MevParams
+func (ec *Client) MevParams(ctx context.Context) (*buildertypes.MevParams, error) {
+	var params buildertypes.MevParams
 	err := ec.c.CallContext(ctx, &params, "mev_params")
 	if err != nil {
 		return nil, err

@@ -73,11 +73,10 @@ var (
 			utils.OverrideFermi,
 			utils.OverrideOsaka,
 			utils.OverrideMendel,
+			utils.OverridePasteur,
 			utils.OverrideBPO1,
 			utils.OverrideBPO2,
-			utils.OverridePasteur,
 			utils.OverrideVerkle,
-			// utils.MultiDataBaseFlag,
 		}, utils.DatabaseFlags),
 		Description: `
 The init command initializes a new genesis block and definition for the network.
@@ -358,6 +357,10 @@ func initGenesis(ctx *cli.Context) error {
 		v := ctx.Uint64(utils.OverrideMendel.Name)
 		overrides.OverrideMendel = &v
 	}
+	if ctx.IsSet(utils.OverridePasteur.Name) {
+		v := ctx.Uint64(utils.OverridePasteur.Name)
+		overrides.OverridePasteur = &v
+	}
 	if ctx.IsSet(utils.OverrideBPO1.Name) {
 		v := ctx.Uint64(utils.OverrideBPO1.Name)
 		overrides.OverrideBPO1 = &v
@@ -366,10 +369,6 @@ func initGenesis(ctx *cli.Context) error {
 		v := ctx.Uint64(utils.OverrideBPO2.Name)
 		overrides.OverrideBPO2 = &v
 	}
-	if ctx.IsSet(utils.OverridePasteur.Name) {
-		v := ctx.Uint64(utils.OverridePasteur.Name)
-		overrides.OverridePasteur = &v
-	}
 	if ctx.IsSet(utils.OverrideVerkle.Name) {
 		v := ctx.Uint64(utils.OverrideVerkle.Name)
 		overrides.OverrideVerkle = &v
@@ -377,17 +376,6 @@ func initGenesis(ctx *cli.Context) error {
 
 	chaindb := utils.MakeChainDatabase(ctx, stack, false)
 	defer chaindb.Close()
-
-	name := "chaindata"
-	// if the trie data dir has been set, new trie db with a new state database
-	if ctx.IsSet(utils.MultiDataBaseFlag.Name) {
-		statediskdb, dbErr := stack.OpenDatabaseWithFreezer(name+"/state", 0, 0, "", "", false)
-		if dbErr != nil {
-			utils.Fatalf("Failed to open separate trie database: %v", dbErr)
-		}
-		chaindb.SetStateStore(statediskdb)
-		log.Warn("Multi-database is an experimental feature")
-	}
 
 	triedb := utils.MakeTrieDatabase(ctx, stack, chaindb, ctx.Bool(utils.CachePreimagesFlag.Name), false, genesis.IsVerkle(), false)
 	defer triedb.Close()
@@ -399,7 +387,7 @@ func initGenesis(ctx *cli.Context) error {
 	if compatErr != nil {
 		utils.Fatalf("Failed to write chain config: %v", compatErr)
 	}
-	log.Info("Successfully wrote genesis state", "database", name, "hash", hash.String())
+	log.Info("Successfully wrote genesis state", "hash", hash.String())
 	return nil
 }
 
@@ -772,12 +760,6 @@ func dumpGenesis(ctx *cli.Context) error {
 	}
 	defer db.Close()
 
-	// set the separate state & block database
-	if stack.CheckIfMultiDataBase() && err == nil {
-		stateDiskDb := utils.MakeStateDataBase(ctx, stack, true)
-		db.SetStateStore(stateDiskDb)
-	}
-
 	genesis, err = core.ReadGenesis(db)
 	if err != nil {
 		utils.Fatalf("failed to read genesis: %s", err)
@@ -1063,7 +1045,7 @@ func parseDumpConfig(ctx *cli.Context, stack *node.Node, db ethdb.Database) (*st
 	} else {
 		// Use latest
 		if scheme == rawdb.PathScheme {
-			triedb := triedb.NewDatabase(db, &triedb.Config{PathDB: utils.PathDBConfigAddJournalFilePath(stack, pathdb.ReadOnly)})
+			triedb := triedb.NewDatabase(db, &triedb.Config{PathDB: pathdb.ReadOnly})
 			defer triedb.Close()
 			if stateRoot := triedb.Head(); stateRoot != (common.Hash{}) {
 				header.Root = stateRoot
@@ -1136,7 +1118,7 @@ func dumpAllRootHashInPath(ctx *cli.Context) error {
 	defer stack.Close()
 	db := utils.MakeChainDatabase(ctx, stack, true)
 	defer db.Close()
-	triedb := triedb.NewDatabase(db, &triedb.Config{PathDB: utils.PathDBConfigAddJournalFilePath(stack, pathdb.ReadOnly)})
+	triedb := triedb.NewDatabase(db, &triedb.Config{PathDB: pathdb.ReadOnly})
 	defer triedb.Close()
 
 	scheme, err := rawdb.ParseStateScheme(ctx.String(utils.StateSchemeFlag.Name), db)

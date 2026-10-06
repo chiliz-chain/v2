@@ -36,7 +36,6 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/accounts/scwallet"
 	"github.com/ethereum/go-ethereum/accounts/usbwallet"
-	"github.com/ethereum/go-ethereum/beacon/fakebeacon"
 	"github.com/ethereum/go-ethereum/cmd/utils"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/config"
@@ -105,6 +104,7 @@ var deprecatedConfigFields = map[string]bool{
 	"ethconfig.Config.LightPeers":              true,
 	"ethconfig.Config.LightNoPrune":            true,
 	"ethconfig.Config.LightNoSyncServe":        true,
+	"legacypool.Config.OverflowPoolSlots":      true,
 }
 
 type ethstatsConfig struct {
@@ -112,11 +112,10 @@ type ethstatsConfig struct {
 }
 
 type gethConfig struct {
-	Eth        ethconfig.Config
-	Node       node.Config
-	Ethstats   ethstatsConfig
-	Metrics    metrics.Config
-	FakeBeacon fakebeacon.Config
+	Eth      ethconfig.Config
+	Node     node.Config
+	Ethstats ethstatsConfig
+	Metrics  metrics.Config
 }
 
 func loadConfig(file string, cfg *gethConfig) error {
@@ -321,6 +320,10 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		v := ctx.Uint64(utils.OverrideMendel.Name)
 		cfg.Eth.OverrideMendel = &v
 	}
+	if ctx.IsSet(utils.OverridePasteur.Name) {
+		v := ctx.Uint64(utils.OverridePasteur.Name)
+		cfg.Eth.OverridePasteur = &v
+	}
 	if ctx.IsSet(utils.OverrideBPO1.Name) {
 		v := ctx.Uint64(utils.OverrideBPO1.Name)
 		cfg.Eth.OverrideBPO1 = &v
@@ -328,10 +331,6 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 	if ctx.IsSet(utils.OverrideBPO2.Name) {
 		v := ctx.Uint64(utils.OverrideBPO2.Name)
 		cfg.Eth.OverrideBPO2 = &v
-	}
-	if ctx.IsSet(utils.OverridePasteur.Name) {
-		v := ctx.Uint64(utils.OverridePasteur.Name)
-		cfg.Eth.OverridePasteur = &v
 	}
 	if ctx.IsSet(utils.OverrideVerkle.Name) {
 		v := ctx.Uint64(utils.OverrideVerkle.Name)
@@ -396,16 +395,6 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		for _, line := range strings.Split(banner, "\n") {
 			log.Warn(line)
 		}
-	}
-
-	if ctx.IsSet(utils.FakeBeaconAddrFlag.Name) {
-		cfg.FakeBeacon.Addr = ctx.String(utils.FakeBeaconAddrFlag.Name)
-	}
-	if ctx.IsSet(utils.FakeBeaconPortFlag.Name) {
-		cfg.FakeBeacon.Port = ctx.Int(utils.FakeBeaconPortFlag.Name)
-	}
-	if cfg.FakeBeacon.Enable || ctx.IsSet(utils.FakeBeaconEnabledFlag.Name) {
-		go fakebeacon.NewService(&cfg.FakeBeacon, backend).Run()
 	}
 
 	git, _ := version.VCS()
