@@ -2,12 +2,12 @@ name: EVM Test
 
 on:
   push:
-    branches:
+    branches: 
       - master
       - develop
 
   pull_request:
-    branches:
+    branches: 
       - master
       - develop
 
@@ -23,7 +23,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go-version }}
-
+        
     - name: Checkout code
       uses: actions/checkout@v4
 
@@ -51,3 +51,4 @@ jobs:
       run: |
         go mod download
         cd tests && bash -x run-evm-tests.sh
+        

@@ -9,3 +9,8 @@ Dockerfile
 genesis/node_modules/
 genesis/.git/
 .git/
+
+# Claude Code project config and skills — docs/tooling only, never part of the
+# geth build. Without this, editing a skill invalidates `ADD . /go-ethereum` and
+# forces a full recompile (~5 min, amd64 under QEMU dominating) for no code change.
+.claude/

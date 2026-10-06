@@ -17,8 +17,13 @@
 #   unrecoverable -> merge aborted, remaining tags not attempted
 #
 # Outputs (paths overridable via env):
-#   REPORT_MD    human-readable markdown report  (default: bsc-sync-report.md)
-#   OUTPUTS_ENV  key=value summary for the workflow (default: bsc-sync.env)
+#   REPORT_MD         human-readable markdown report  (default: bsc-sync-report.md)
+#   OUTPUTS_ENV       key=value summary for the workflow (default: bsc-sync.env)
+#   AGENT_REPORT_DIR  per-tag agent logs & JSON reports (default: .bsc-sync-agent/)
+#
+# The defaults land in the repo root, where `git add -A` below would sweep them
+# into a merge commit, so they are gitignored; CI points all three outside the
+# checkout entirely (see the workflow's "Prepare scratch paths" step, COR-169).
 #
 # Agent invocation:
 #   SKIP_AGENT=1     never call the agent; treat every conflict as 🔴 and stop
@@ -224,6 +229,83 @@ for tag in "${TAGS[@]}"; do
   log "$tag committed (🟢$t_high 🟡$t_low 🔴$t_unres)."
 done
 
+# --- version bump (COR-195) ---------------------------------------------------
+# The release workflows name releases from the git tag while the binary
+# self-reports from version/version.go — a sync that ships without a bump
+# produces a release that misreports its own version (PR #65 needed a manual
+# last-minute bump commit). If this run committed anything and the compiled-in
+# version is already released (a bare `X.Y.Z` tag exists), bump the patch
+# component in BOTH version files. Never auto-pick a side when the two files
+# disagree (CLAUDE.md §4) — flag it for a human instead.
+
+# Print "MAJOR.MINOR.PATCH" from a version const block, or nothing on failure.
+read_version() { # $1=file $2=const prefix ("Version" or "")
+  local maj min pat
+  maj="$(sed -nE "s/^[[:space:]]*${2}Major[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p" "$1" | head -1)"
+  min="$(sed -nE "s/^[[:space:]]*${2}Minor[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p" "$1" | head -1)"
+  pat="$(sed -nE "s/^[[:space:]]*${2}Patch[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p" "$1" | head -1)"
+  [ -n "$maj" ] && [ -n "$min" ] && [ -n "$pat" ] && printf '%s.%s.%s' "$maj" "$min" "$pat"
+}
+
+# Chiliz release tags are bare X.Y.Z. Local tags may be absent in a shallow CI
+# checkout, so fall back to asking origin; a network failure counts as "not
+# released" and the report says the version was left alone, so a human sees it.
+version_released() { # $1=X.Y.Z
+  git tag -l "$1" | grep -qx "$1" && return 0
+  # `|| return 1` keeps the failure explicit: this helper is currently only
+  # called in a condition context (where set -e is suppressed anyway), but a
+  # future non-conditional caller must not abort the whole run on a missing
+  # tag, absent origin, or transient network error — all mean "not released".
+  git ls-remote --exit-code --tags origin "refs/tags/$1" >/dev/null 2>&1 || return 1
+}
+
+version_note=""
+new_version=""
+if [ "${#synced_tags[@]}" -gt 0 ]; then
+  v_params="$(read_version "$REPO_ROOT/params/version.go" "Version" || true)"
+  v_version="$(read_version "$REPO_ROOT/version/version.go" "" || true)"
+  # Marker check first: the merge loop deliberately commits unresolved conflict
+  # markers for humans, read_version's head -1 would "successfully" parse the
+  # HEAD side of a conflicted const block, and the unanchored seds below would
+  # rewrite the upstream side of the hunk too — never touch a conflicted file.
+  if grep -qE '^(<{7}|={7}|>{7})' "$REPO_ROOT/params/version.go" "$REPO_ROOT/version/version.go" 2>/dev/null; then
+    version_note="⚠️ **Version:** unresolved conflict markers in the version files — resolve them and bump the patch version by hand before release."
+  elif [ -z "$v_params" ] || [ -z "$v_version" ]; then
+    version_note="⚠️ **Version:** could not parse \`params/version.go\` / \`version/version.go\` — bump the patch version by hand before release."
+  elif [ "$v_params" != "$v_version" ]; then
+    version_note="⚠️ **Version:** \`params/version.go\` says \`$v_params\` but \`version/version.go\` says \`$v_version\` — the two files must carry the same Chiliz version (CLAUDE.md §4). Fix and bump by hand before release."
+  elif version_released "$v_params"; then
+    # Target = max(current, latest released 2.*) + 1, then walk past any tag
+    # that already exists: if develop's version lags the newest release tag
+    # (hotfix tagged off a release branch and not merged back), a blind +1
+    # would land on an already-published tag — the exact invariant this step
+    # protects. Local tags are just an accelerator; the version_released loop
+    # also asks origin, so a shallow checkout still converges on a free number.
+    latest_tag="$(git tag -l '2.*' | sort -V | tail -1)"
+    base="$(printf '%s\n%s\n' "$v_params" "${latest_tag:-$v_params}" | sort -V | tail -1)"
+    new_patch=$(( ${base##*.} + 1 ))
+    while version_released "${base%.*}.$new_patch"; do new_patch=$(( new_patch + 1 )); done
+    new_version="${base%.*}.$new_patch"
+    skip_suffix=""
+    [ "$new_version" != "${v_params%.*}.$(( ${v_params##*.} + 1 ))" ] && skip_suffix="; skipped past already-released tag(s)"
+    sed -i.bak -E "s/(VersionPatch[[:space:]]*=[[:space:]]*)[0-9]+/\1$new_patch/" "$REPO_ROOT/params/version.go"
+    sed -i.bak -E "s/(^[[:space:]]*Patch[[:space:]]*=[[:space:]]*)[0-9]+/\1$new_patch/" "$REPO_ROOT/version/version.go"
+    rm -f "$REPO_ROOT/params/version.go.bak" "$REPO_ROOT/version/version.go.bak"
+    # Guarded: a failing gofmt as the tail of an `&&` list would kill the
+    # whole run under set -e — after the merges but before the reports are
+    # written, throwing the sync's work away. Unformatted is recoverable.
+    if command -v gofmt >/dev/null 2>&1; then
+      gofmt -w "$REPO_ROOT/params/version.go" "$REPO_ROOT/version/version.go" || warn "gofmt failed on the version files; committing them unformatted"
+    fi
+    git -C "$REPO_ROOT" add params/version.go version/version.go
+    git -C "$REPO_ROOT" commit -m "chore(bsc-sync): bump version to $new_version" >/dev/null
+    version_note="**Version:** bumped \`$v_params\` → \`$new_version\` in both \`params/version.go\` and \`version/version.go\` (\`$v_params\` is already released$skip_suffix)."
+    log "Version bumped $v_params -> $new_version."
+  else
+    version_note="**Version:** left at \`$v_params\` — no \`$v_params\` release tag found, so the current version is assumed unreleased."
+  fi
+fi
+
 # --- write reports ----------------------------------------------------------
 {
   echo "## Upstream BSC sync report"
@@ -249,6 +331,10 @@ done
   echo
   echo "**Totals:** 🟢 $n_high high-confidence · 🟡 $n_low needs-review · ❔ $n_unverified unverified · 🔴 $n_unresolved unresolved · ✅ $n_clean clean · 🛑 $n_agent_error agent-errored · ❌ $n_failed unrecoverable · ⏭️ $n_skipped not attempted"
   echo
+  if [ -n "$version_note" ]; then
+    echo "$version_note"
+    echo
+  fi
   if [ "$n_low" -gt 0 ] || [ "$n_unresolved" -gt 0 ] || [ "$n_agent_error" -gt 0 ] || [ "$n_failed" -gt 0 ] || [ "$n_unverified" -gt 0 ]; then
     echo "### Items needing human attention"
     echo
@@ -258,7 +344,7 @@ done
     for note in "${NOTES[@]}"; do echo "- $note"; done
     echo
   fi
-  echo "_Per-tag agent logs and JSON reports are attached to the workflow run as artifacts (\`.bsc-sync-agent/\`)._"
+  echo "_Per-tag agent logs and JSON reports are attached to the workflow run as the \`bsc-sync-agent-logs\` artifact._"
 } > "$REPORT_MD"
 
 # --- release-impact report (prepended, so it leads the PR body) -------------
@@ -308,6 +394,7 @@ if [ "$agent_hard_error" = true ]; then review_state="agent-error"; fi
   echo "errored_tags=${errored_tags[*]:-}"
   echo "skipped=$n_skipped"
   echo "review_state=$review_state"
+  echo "new_version=${new_version}"
   echo "has_changes=$([ "${#synced_tags[@]}" -gt 0 ] && echo true || echo false)"
 } > "$OUTPUTS_ENV"
 

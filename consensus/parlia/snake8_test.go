@@ -134,7 +134,13 @@ func TestExtractSnake8ParentTimestampPreLubanEpochBlock(t *testing.T) {
 	ts := make([]byte, 8)
 	binary.LittleEndian.PutUint64(ts, 7777)
 	extra = append(extra, ts...)
-	extra = append(extra, byte(0xc0)) // empty freq RLP list
+	// A real frequency list. Not the empty list 0xc0: calcFrequencyRLP errors
+	// out rather than encoding an empty candidate set, so the pre-Luban parser
+	// deliberately does not recognise 0xc0 as a frequency block (COR-213 — an
+	// empty-list tail is the cheapest decoy an attacker can plant inside the
+	// honest frequency data). The degraded shape the producer really emits is
+	// no tail at all, covered by TestPreLubanValidatorBytesWithVFQBytes.
+	extra = append(extra, cor213FrequencyTail(t, []common.Address{{}, {}})...)
 	extra = append(extra, make([]byte, extraSeal)...)
 
 	h := &types.Header{Number: big.NewInt(snake8TestEpoch), Extra: extra}

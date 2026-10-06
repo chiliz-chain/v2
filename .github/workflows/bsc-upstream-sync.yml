@@ -16,7 +16,14 @@ name: BSC Upstream Sync
 #   secrets.ANTHROPIC_API_KEY   enables the conflict-resolution + release-impact
 #                               agent. When absent, conflicting tags are reported
 #                               for manual merge instead (clean merges still flow).
-#   secrets.SLACK_WEBHOOK_URL   incoming webhook for #bu-chiliz-core-squad.
+#   secrets.SLACK_CI_BOT_TOKEN     bot token for the shared "Chiliz Chain CI" Slack
+#                               app, posted through .github/scripts/slack-notify.sh.
+#                               Needs chat:write, chat:write.customize and
+#                               chat:write.public. customize is what lets this
+#                               workflow keep posting as "Chiliz Client BSC Sync"
+#                               rather than as the shared app; public is what
+#                               lets it post to #bu-chiliz-core-squad without the
+#                               bot being invited to the channel.
 #   vars.BSC_SYNC_CLAUDE_MODEL  optional model override for the agent.
 
 on:
@@ -32,18 +39,130 @@ on:
         description: "Include -alpha/-beta/-rc/-feature tags during auto-detection"
         type: boolean
         default: false
+      force:
+        description: "Run even if a sync PR is already open (bypass the duplicate guard) — e.g. to finish an incomplete/agent-errored sync"
+        type: boolean
+        default: false
 
 # The bot App token (generated per-run) performs checkout, push, and PR
-# creation, so the default GITHUB_TOKEN only needs read access here.
+# creation, so the default GITHUB_TOKEN only needs read access here. The
+# guard job additionally reads open PRs.
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: bsc-upstream-sync
   cancel-in-progress: false
 
 jobs:
+  # Lightweight gate — no checkout, no Go toolchain — so a skipped week costs
+  # almost nothing, and skip-vs-run is decided ONCE (the sync job is gated at
+  # job level, not per-step). Only one open sync PR at a time: if a previous
+  # week's draft PR hasn't been reviewed/merged, a new sync would just create a
+  # duplicate of the same (still-unmerged) releases — because last-synced-tag
+  # only advances once a PR merges to develop. So we skip and send a reminder;
+  # the next run resumes (catching up newer releases) once the open PR merges.
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+      existing_pr_number: ${{ steps.check.outputs.existing_pr_number }}
+      existing_pr_url: ${{ steps.check.outputs.existing_pr_url }}
+    steps:
+      - name: Generate bot app token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.INFRA_GITHUB_CI_BOT_APP_ID }}
+          private-key: ${{ secrets.INFRA_GITHUB_CI_BOT_PRIVATE_KEY }}
+
+      - name: Check for an existing open sync PR
+        id: check
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }} # no checkout here, so tell gh the repo
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          set -euo pipefail
+          # A forced manual dispatch bypasses the guard (urgent sync, or to
+          # finish an incomplete/agent-errored sync — see the reminder below).
+          if [ "${FORCE:-false}" = "true" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "force=true — bypassing the open-PR guard."
+            exit 0
+          fi
+          # --limit is high on purpose: `gh pr list` defaults to 30 and sorts
+          # newest-first, so an OLD unmerged sync PR (exactly what we want) would
+          # be truncated on a busy develop. A transient gh/API failure must NOT
+          # abort the run — default to proceeding rather than a misleading fail.
+          existing="$(gh pr list --state open --base develop --limit 200 \
+            --json number,url,headRefName,createdAt \
+            --jq '[.[] | select(.headRefName|startswith("bsc-sync/"))] | sort_by(.createdAt) | .[0] // empty' 2>/dev/null || true)"
+          if [ -n "$existing" ]; then
+            num="$(printf '%s' "$existing" | jq -r .number)"
+            url="$(printf '%s' "$existing" | jq -r .url)"
+            {
+              echo "skip=true"
+              echo "existing_pr_number=$num"
+              echo "existing_pr_url=$url"
+            } >> "$GITHUB_OUTPUT"
+            echo "::notice::Open BSC sync PR #$num already exists — skipping to avoid a duplicate ($url)."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "No open BSC sync PR — proceeding."
+          fi
+
+      # This job has no checkout of its own — its other steps are pure API calls
+      # — but the notify step below runs .github/scripts/slack-notify.sh. Without
+      # this the step dies on a missing file and continue-on-error swallows it,
+      # losing the reminder silently. Sparse: only the scripts are needed.
+      # continue-on-error, and always() on the step below, are both required and
+      # neither is sufficient. A step `if:` carrying no status function is
+      # implicitly ANDed with success(), so without the always() a flaky checkout
+      # here does not merely leave the script missing — it SKIPS the reminder
+      # outright and reddens the guard job, which is the exact silent loss this
+      # checkout was added to prevent.
+      - name: Checkout notify script
+        if: steps.check.outputs.skip == 'true'
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+
+      - name: Notify Slack — existing PR reminder
+        if: always() && steps.check.outputs.skip == 'true'
+        continue-on-error: true
+        env:
+          SLACK_CI_BOT_TOKEN: ${{ secrets.SLACK_CI_BOT_TOKEN }}
+          PR_URL: ${{ steps.check.outputs.existing_pr_url }}
+          PR_NUMBER: ${{ steps.check.outputs.existing_pr_number }}
+        run: |
+          set -euo pipefail
+          notify=.github/scripts/slack-notify.sh
+          text=$(printf '%s\n' \
+            ":hourglass_flowing_sand: *BSC upstream sync — skipped this week*" \
+            "Last sync's draft PR (<${PR_URL}|#${PR_NUMBER}>) is *still open and not merged*, so I did not start a new sync — that would just duplicate the same releases." \
+            "*Please review & merge it.* The next run resumes automatically once it's merged, and will include any releases published in the meantime." \
+            "_If that PR is an incomplete / agent-errored sync, re-run this workflow with the *force* option to finish it instead of merging it as-is._")
+          # Display name and icon are set per message: under the shared CI bot,
+          # a step that does not set them posts as "Chiliz Chain CI" and the
+          # channel loses the sender it recognises. The missing-token no-op and
+          # the ok-check live in the script.
+          # No >/dev/null and no "sent" line: the helper prints the message ts on
+          # success and the skip notice when the token is unset, and claiming a
+          # send in the one configuration where nothing was delivered is exactly
+          # the false signal this whole change is trying to remove.
+          "$notify" \
+            --channel '#bu-chiliz-core-squad' \
+            --username 'Chiliz Client BSC Sync' \
+            --icon ':bnb-chain:' \
+            -- "$text"
+
   sync:
+    needs: guard
+    if: needs.guard.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       # The default GITHUB_TOKEN is not permitted to create pull requests
@@ -74,6 +193,25 @@ jobs:
           git config user.name "chiliz-sync-bot"
           git config user.email "bot@chiliz.com"
 
+      # run-sync.sh stages the whole tree with `git add -A` after each
+      # resolution, so anything written inside the checkout lands in a merge
+      # commit and ships in the sync PR (COR-169). Keep every scratch file in
+      # the runner temp dir instead. These variable names are the ones the
+      # scripts already honour, so no script-side wiring is needed.
+      - name: Prepare scratch paths (outside the checkout)
+        run: |
+          set -euo pipefail
+          scratch="$RUNNER_TEMP/bsc-sync"
+          mkdir -p "$scratch"
+          {
+            echo "NEW_TAGS_FILE=$scratch/new-tags.txt"
+            echo "MAJOR_TAGS_FILE=$scratch/major-tags.txt"
+            echo "AGENT_REPORT_DIR=$scratch/agent"
+            echo "REPORT_MD=$scratch/bsc-sync-report.md"
+            echo "OUTPUTS_ENV=$scratch/bsc-sync.env"
+          } >> "$GITHUB_ENV"
+          echo "Scratch dir: $scratch"
+
       - name: Determine agent availability
         id: agent
         env:
@@ -102,19 +240,20 @@ jobs:
           INCLUDE_PRERELEASE: ${{ github.event.inputs.include_prerelease == 'true' && '1' || '0' }}
         run: |
           set -euo pipefail
-          : > major-tags.txt
+          : > "$MAJOR_TAGS_FILE"
           if [ -n "${TAGS_INPUT:-}" ]; then
             # Explicit manual list: the human chose these deliberately, so the
             # major-release gate is bypassed (STOP_AT_MAJOR=0 semantics).
-            printf '%s\n' "$TAGS_INPUT" | tr ' ' '\n' | sed '/^$/d' > new-tags.txt
+            printf '%s\n' "$TAGS_INPUT" | tr ' ' '\n' | sed '/^$/d' > "$NEW_TAGS_FILE"
             echo "Using explicit tag list from dispatch input (major gate bypassed)."
           else
-            MAJOR_TAGS_FILE="$PWD/major-tags.txt" \
-              .github/scripts/bsc-sync/detect-new-tags.sh > new-tags.txt
+            # MAJOR_TAGS_FILE is exported in the environment; detect-new-tags.sh
+            # writes the held-back major boundary tags there.
+            .github/scripts/bsc-sync/detect-new-tags.sh > "$NEW_TAGS_FILE"
           fi
-          count=$(grep -c . new-tags.txt || true)
-          major_count=$(grep -c . major-tags.txt || true)
-          major_tags=$(paste -sd' ' major-tags.txt 2>/dev/null || true)
+          count=$(grep -c . "$NEW_TAGS_FILE" || true)
+          major_count=$(grep -c . "$MAJOR_TAGS_FILE" || true)
+          major_tags=$(paste -sd' ' "$MAJOR_TAGS_FILE" 2>/dev/null || true)
           {
             echo "count=$count"
             echo "major_count=$major_count"
@@ -140,11 +279,69 @@ jobs:
           git checkout -b "$branch"
           echo "branch=$branch" >> "$GITHUB_ENV"
 
-          mapfile -t tags < new-tags.txt
+          mapfile -t tags < "$NEW_TAGS_FILE"
           .github/scripts/bsc-sync/run-sync.sh "${tags[@]}"
 
           # Export run-sync summary into the job environment.
-          cat bsc-sync.env >> "$GITHUB_ENV"
+          cat "$OUTPUTS_ENV" >> "$GITHUB_ENV"
+
+      # Build + smoke-test what the merge produced, and put the verdict in the
+      # PR report. Before this the pipeline never built or tested what it
+      # merged (the report had no verification section at all), and a package
+      # that died on a panic was indistinguishable from a known test failure —
+      # both contributed to the COR-37 consensus regression shipping (COR-176).
+      # The script never fails deliberately (a draft PR carrying a red verdict
+      # is more useful than no PR), and continue-on-error covers what isn't its
+      # choice — an OOM-killed build, a lost exec bit, a shell abort. Without
+      # it, a verification hiccup would skip the Linear issue, the state push
+      # and the PR itself, which is the opposite of the intent. An empty
+      # verify_status is treated as red by the Slack step below.
+      - name: Verify merged tree (build + smoke tests)
+        if: steps.detect.outputs.count != '0' && env.has_changes == 'true'
+        continue-on-error: true
+        timeout-minutes: 45
+        run: .github/scripts/bsc-sync/verify-merge.sh
+
+      # Every sync run gets its own Linear issue, and the draft PR references
+      # THAT issue — never COR-37 (the one-time automation build ticket).
+      # Linear links any PR whose title carries an issue identifier and its
+      # team automation re-opens the linked issue on PR open, so tagging the
+      # recurring PRs with COR-37 resurrected it on every run (COR-175).
+      # Degrades like the ANTHROPIC_API_KEY handling: no LINEAR_API_KEY, or
+      # any Linear failure, means the PR simply carries no identifier — a
+      # Linear outage must never block a sync.
+      # The team is addressed by UUID (repo variable, defaulting to Core Team)
+      # rather than resolved from its "COR" key at runtime: the lookup query
+      # needs the API key to carry the broad "Read" permission, while a fixed
+      # UUID lets the key be scoped to "Create issues" + one team only —
+      # least privilege for a long-lived CI secret.
+      - name: Create Linear issue for this sync
+        if: steps.detect.outputs.count != '0' && env.has_changes == 'true'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          LINEAR_TEAM_ID: ${{ vars.BSC_SYNC_LINEAR_TEAM_ID || 'b32d4213-c2ad-4fca-903c-dc6f7ce61d62' }} # default: Core Team
+        run: |
+          set -euo pipefail
+          sync_issue_ref=""
+          if [ -z "${LINEAR_API_KEY:-}" ]; then
+            echo "::notice::LINEAR_API_KEY not set — the sync PR will not reference a Linear issue."
+          else
+            payload=$(jq -n \
+              --arg team "$LINEAR_TEAM_ID" \
+              --arg title "Sync upstream BSC ${synced_tags}" \
+              --arg desc "Auto-created by the weekly BSC upstream sync ([workflow run](${RUN_URL})). The draft PR carries the full release-impact and conflict-resolution report, and closes this issue when it merges." \
+              '{query: "mutation($input: IssueCreateInput!) { issueCreate(input: $input) { issue { identifier url } } }", variables: {input: {teamId: $team, title: $title, description: $desc}}}')
+            sync_issue_ref=$(curl -sSf --max-time 30 -X POST https://api.linear.app/graphql \
+              -H "Authorization: $LINEAR_API_KEY" -H "Content-Type: application/json" \
+              --data "$payload" | jq -r '.data.issueCreate.issue.identifier // empty' || true)
+            if [ -n "$sync_issue_ref" ]; then
+              echo "Created Linear issue $sync_issue_ref for this sync run."
+            else
+              echo "::warning::Could not create a Linear issue (team id: $LINEAR_TEAM_ID) — proceeding without one."
+            fi
+          fi
+          echo "sync_issue_ref=$sync_issue_ref" >> "$GITHUB_ENV"
 
       - name: Bump sync state & push
         if: steps.detect.outputs.count != '0' && env.has_changes == 'true'
@@ -152,7 +349,7 @@ jobs:
           set -euo pipefail
           printf '%s\n' "$last_committed" > .github/bsc-sync/last-synced-tag
           git add .github/bsc-sync/last-synced-tag
-          git commit -m "chore(bsc-sync): advance last-synced tag to $last_committed [COR-37]"
+          git commit -m "chore(bsc-sync): advance last-synced tag to ${last_committed}${sync_issue_ref:+ [$sync_issue_ref]}"
           git push origin "$branch"
 
       - name: Open draft PR
@@ -162,37 +359,103 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
+          # "Closes <id>" makes Linear auto-close the per-run issue on merge.
+          if [ -n "${sync_issue_ref:-}" ]; then
+            printf '\n\nCloses %s\n' "$sync_issue_ref" >> "$REPORT_MD"
+          fi
           url=$(gh pr create --draft --base develop --head "$branch" \
-            --title "chore: sync upstream BSC ($synced_tags) [COR-37]" \
-            --body-file bsc-sync-report.md)
+            --title "chore: sync upstream BSC ($synced_tags)${sync_issue_ref:+ [$sync_issue_ref]}" \
+            --body-file "$REPORT_MD")
           echo "Created draft PR: $url"
           echo "pr_url=$url" >> "$GITHUB_ENV"
 
+      # Mirror the agent's own reasoning into the job summary so a reviewer can
+      # read it in the Actions UI without downloading the artifact. This is the
+      # per-tag log the agent writes explaining each resolution — the thing you
+      # actually want when auditing a 🟡 low-confidence merge (COR-169).
+      - name: Publish agent logs to job summary
+        if: always() && steps.detect.outputs.count != '0'
+        run: |
+          set -euo pipefail
+          dir="${AGENT_REPORT_DIR:-$RUNNER_TEMP/bsc-sync/agent}"
+          if ! compgen -G "$dir/agent-*.log" >/dev/null; then
+            echo "No agent logs in $dir — nothing to summarise."
+            exit 0
+          fi
+          # Cap each log so a pathological run can't blow the 1 MiB summary limit;
+          # the artifact always holds the untruncated copy.
+          max_lines=200
+          {
+            echo "## Conflict-resolution agent logs"
+            echo
+            for log in "$dir"/agent-*.log; do
+              tag="$(basename "$log" .log)"; tag="${tag#agent-}"
+              echo "<details><summary><code>$tag</code></summary>"
+              echo
+              total="$(wc -l < "$log")"
+              head -n "$max_lines" "$log"
+              if [ "$total" -gt "$max_lines" ]; then
+                echo
+                echo "_… truncated at $max_lines of $total lines — full log in the \`bsc-sync-agent-logs\` artifact._"
+              fi
+              echo
+              echo "</details>"
+              echo
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Summarised $(find "$dir" -name 'agent-*.log' | wc -l) agent log(s)."
+
+      # Uploads the whole scratch dir: agent logs & JSON reports, the PR body,
+      # and the detected tag lists. The old path was the hidden `.bsc-sync-agent/`
+      # directory, which upload-artifact@v4 silently skipped (it excludes hidden
+      # files by default since v4.4) — that shipped an artifact containing only
+      # the PR body, with `if-no-files-found: ignore` hiding it. Hence the
+      # non-hidden scratch layout, `include-hidden-files` so a dotted path can
+      # never empty the artifact again, and `warn` so a future empty upload is
+      # visible instead of silent (COR-169).
       - name: Upload agent logs & reports
         if: always() && steps.detect.outputs.count != '0'
         uses: actions/upload-artifact@v4
         with:
           name: bsc-sync-agent-logs
-          path: |
-            .bsc-sync-agent/
-            bsc-sync-report.md
-          if-no-files-found: ignore
+          path: ${{ runner.temp }}/bsc-sync/
+          include-hidden-files: true
+          if-no-files-found: warn
+
+      # The notification below is always(), so it must not depend on the main
+      # checkout having succeeded — extracting the notifier into a repo file
+      # introduced that dependency, which the previous inline curl did not have.
+      # continue-on-error to match the notify step it serves: that one is
+      # deliberately non-fatal so a Slack outage cannot redden a good sync, and
+      # without it here a flaky checkout does precisely that — marking a run
+      # failed after the PR was opened and last-synced-tag pushed, while Slack
+      # says "ready for review".
+      - name: Checkout notifier (independent of the main checkout)
+        if: always()
+        continue-on-error: true
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+          path: .ci-notify
 
       - name: Notify Slack (#bu-chiliz-core-squad)
         if: always()
         continue-on-error: true
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_CI_BOT_TOKEN: ${{ secrets.SLACK_CI_BOT_TOKEN }}
           DETECT_COUNT: ${{ steps.detect.outputs.count }}
           MAJOR_COUNT: ${{ steps.detect.outputs.major_count }}
           MAJOR_TAGS: ${{ steps.detect.outputs.major_tags }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
-            echo "SLACK_WEBHOOK_URL not set — skipping Slack notification."
-            exit 0
-          fi
+          # Prefer the main checkout, fall back to the dedicated one above.
+          notify=.github/scripts/slack-notify.sh
+          [ -x "$notify" ] || notify=.ci-notify/.github/scripts/slack-notify.sh
+          # No token guard here: slack-notify.sh no-ops and exits 0 when
+          # SLACK_CI_BOT_TOKEN is unset, so the message is still built (cheap) and
+          # the guard lives in exactly one place.
 
           # Slack mrkdwn links (fall back to plain text if a URL is missing).
           run_link="<${RUN_URL}|the workflow run>"
@@ -241,7 +504,7 @@ jobs:
               "The AI that resolves merge conflicts stopped partway (usually a Claude API / usage-limit error), so the sync did *not* finish." \
               "• *Synced OK:* ${tags_disp:-none}" \
               "• *NOT synced (need a re-run):* ${errored_disp:-unknown} — and any releases after them" \
-              "*What to do:* re-run ${run_link} once the Claude API is available again.${pr_url:+ A partial ${pr_link} was opened for the releases that did sync.}")
+              "*What to do:* once the Claude API is available again, re-run ${run_link} with the *force* option (needed because the partial PR would otherwise trip the duplicate-PR guard).${pr_url:+ A partial ${pr_link} was opened for the releases that did sync — close it once the forced re-run produces a complete PR.}")
             [ -n "$major_line" ] && text=$(printf '%s\n' "$text" "$major_line")
           elif [ "${DETECT_COUNT}" = "0" ]; then
             if [ -n "$major_line" ]; then
@@ -259,8 +522,27 @@ jobs:
             [ "${unverified:-0}" != "0" ] && add ":large_yellow_circle: ${unverified} tag(s) resolved but unverified — please eyeball"
             [ -z "$cs" ] && cs="all releases merged cleanly — no conflicts :white_check_mark:"
 
-            # Call to action scales with severity.
-            if [ "${unresolved:-0}" != "0" ]; then
+            # Build + smoke-test verdict (COR-176). Surfaced in Slack because a
+            # red verification buried in the PR body is a red flag nobody reads.
+            case "${verify_status:-}" in
+              pass)       add ":white_check_mark: build + smoke tests passed" ;;
+              fail)       add ":red_circle: *build or smoke tests FAILED* — see the Verification section of the PR" ;;
+              unverified) add ":red_circle: *no test signal* — a test binary never completed; those packages are untested (not a known failure)" ;;
+              *)          add ":red_circle: *verification did not run to completion* — no build/test signal at all" ;;
+            esac
+
+            # Call to action scales with severity. A red verification outranks the
+            # resolution-confidence buckets: a clean merge that does not build is
+            # exactly the COR-37 shape, and the CTA must never say "merge" for it.
+            # An empty verify_status counts as red — the step is gated on the same
+            # condition as this branch, so blank means it did not complete.
+            verify_red=false
+            case "${verify_status:-}" in pass) ;; *) verify_red=true ;; esac
+            if [ "${unresolved:-0}" != "0" ] && [ "$verify_red" = "true" ]; then
+              action=":red_circle: *Action required:* unresolved conflicts AND the merged tree did not verify — fix both before merging the ${pr_link}."
+            elif [ "$verify_red" = "true" ]; then
+              action=":red_circle: *Action required:* the merged tree did NOT verify — investigate the Verification section of the ${pr_link}; do not merge until it is green."
+            elif [ "${unresolved:-0}" != "0" ]; then
               action=":red_circle: *Action required:* fix the unresolved conflicts, then review & merge the ${pr_link}."
             elif [ "${low:-0}" != "0" ] || [ "${unverified:-0}" != "0" ]; then
               action=":eyes: *Action:* double-check the flagged/unverified resolutions, then review & merge the ${pr_link}."
@@ -284,6 +566,8 @@ jobs:
               "*What to do:* check ${run_link} and sync manually.")
             [ -n "$major_line" ] && text=$(printf '%s\n' "$text" "$major_line")
           fi
-          payload=$(jq -n --arg t "$text" '{text: $t}')
-          curl -sSf -X POST -H 'Content-type: application/json' --data "$payload" "$SLACK_WEBHOOK_URL"
-          echo "Slack notification sent."
+          "$notify" \
+            --channel '#bu-chiliz-core-squad' \
+            --username 'Chiliz Client BSC Sync' \
+            --icon ':bnb-chain:' \
+            -- "$text"

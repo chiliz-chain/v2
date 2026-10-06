@@ -76,7 +76,6 @@ import (
 
 const (
 	ChainDBNamespace = "eth/db/chaindata/"
-	JournalFileName  = "trie.journal"
 	ChainData        = "chaindata"
 )
 
@@ -177,7 +176,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		config.Miner.GasPrice = new(big.Int).Set(ethconfig.Defaults.Miner.GasPrice)
 	}
 
-	chainDb, err := stack.OpenAndMergeDatabase(ChainData, ChainDBNamespace, false, config)
+	chainDb, err := stack.OpenDatabaseWithFreezer(ChainData, config.DatabaseCache, config.DatabaseHandles, config.DatabaseFreezer, ChainDBNamespace, false)
 	if err != nil {
 		return nil, err
 	}
@@ -261,6 +260,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		chainConfig.MendelTime = config.OverrideMendel
 		overrides.OverrideMendel = config.OverrideMendel
 	}
+	if config.OverridePasteur != nil {
+		chainConfig.PasteurTime = config.OverridePasteur
+		overrides.OverridePasteur = config.OverridePasteur
+	}
 	if config.OverrideBPO1 != nil {
 		chainConfig.BPO1Time = config.OverrideBPO1
 		overrides.OverrideBPO1 = config.OverrideBPO1
@@ -268,10 +271,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if config.OverrideBPO2 != nil {
 		chainConfig.BPO2Time = config.OverrideBPO2
 		overrides.OverrideBPO2 = config.OverrideBPO2
-	}
-	if config.OverridePasteur != nil {
-		chainConfig.PasteurTime = config.OverridePasteur
-		overrides.OverridePasteur = config.OverridePasteur
 	}
 	if config.OverrideVerkle != nil {
 		chainConfig.VerkleTime = config.OverrideVerkle
@@ -336,16 +335,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		}
 	}
 
-	path := ChainData
-	if stack.CheckIfMultiDataBase() {
-		path = ChainData + "/state"
-	}
-	journalFilePath := stack.ResolvePath(path) + "/" + JournalFileName
 	var (
 		options = &core.BlockChainConfig{
 			TrieCleanLimit:        config.TrieCleanCache,
 			NoPrefetch:            config.NoPrefetch,
-			EnableBAL:             config.EnableBAL,
 			TrieDirtyLimit:        config.TrieDirtyCache,
 			ArchiveMode:           config.NoPruning,
 			TrieTimeLimit:         config.TrieTimeout,
@@ -356,7 +349,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			StateHistory:          config.StateHistory,
 			StateScheme:           config.StateScheme,
 			PathSyncFlush:         config.PathSyncFlush,
-			JournalFilePath:       journalFilePath,
 			EnableIncr:            config.EnableIncrSnapshots,
 			IncrHistoryPath:       config.IncrSnapshotPath,
 			IncrHistory:           config.IncrSnapshotBlockInterval,
@@ -368,8 +360,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			TxLookupLimit:         int64(min(config.TransactionHistory, math.MaxInt64)),
 			VmConfig: vm.Config{
 				EnablePreimageRecording:   config.EnablePreimageRecording,
-				EnableWitnessStats:        config.EnableWitnessStats,
-				StatelessSelfValidation:   config.StatelessSelfValidation,
 				EnableOpcodeOptimizations: config.EnableOpcodeOptimizing,
 			},
 			// Enables file journaling for the trie database. The journal files will be stored
@@ -378,6 +368,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			// - DATADIR/triedb/verkle.journal
 			TrieJournalDirectory: stack.ResolvePath("triedb"),
 			StateSizeTracking:    config.EnableStateSizeTracking,
+
+			StatelessSelfValidation: config.StatelessSelfValidation,
+			EnableWitnessStats:      config.EnableWitnessStats,
 		}
 	)
 	if config.DisableTxIndexer {
@@ -471,7 +464,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		RequiredBlocks:            config.RequiredBlocks,
 		DirectBroadcast:           config.DirectBroadcast,
 		EnableEVNFeatures:         stack.Config().EnableEVNFeatures,
-		EnableBAL:                 config.EnableBAL,
 		EVNNodeIdsWhitelist:       stack.Config().P2P.EVNNodeIdsWhitelist,
 		ProxyedValidatorAddresses: stack.Config().P2P.ProxyedValidatorAddresses,
 		ProxyedNodeIds:            stack.Config().P2P.ProxyedNodeIds,

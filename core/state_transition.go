@@ -313,6 +313,40 @@ func (st *stateTransition) buyGas() error {
 	return nil
 }
 
+// IsChilizFeeExemptMessage reports whether a message is exempt from the
+// post-London GasFeeCap >= BaseFee check.
+//
+// Chiliz system transactions (Parlia system txs to the system-contract
+// registry) and the Pepper8/Pipe8 one-time deposits are emitted by the block
+// producer itself with a zero gas price, so they carry no fee cap to compare
+// against the base fee. A message is exempt iff all of:
+//
+//   - to is non-nil (a contract creation is never exempt) and is either a
+//     registered system contract or the Pepper8/Pipe8 recipient address -- the
+//     same destination set consensus/parlia uses in isToSystemContract;
+//   - from is the block coinbase;
+//   - gasPrice is zero. This is the *message* gas price: for a dynamic-fee tx
+//     TransactionToMessage derives it as min(tip+baseFee, feeCap), whereas
+//     parlia's IsSystemTransaction judges tx.EffectiveGasPriceForBSC() =
+//     min(tip, feeCap). The two agree on every legacy tx and differ only for a
+//     dynamic-fee tx with tip == 0, feeCap > 0 and baseFee > 0 (parlia: system
+//     tx; core: not exempt). FuzzSystemTxClassification (consensus/parlia)
+//     pins that relation.
+//
+// The function is pure and total. preCheck always has a gasPrice, but this is
+// exported from core now, and hand-built Message values (the internal/ethapi and
+// simulation style) can carry a nil one; such a message from the coinbase to a
+// system contract must return false, not panic.
+func IsChilizFeeExemptMessage(from common.Address, to *common.Address, gasPrice *big.Int, coinbase common.Address) bool {
+	if to == nil || gasPrice == nil || from != coinbase {
+		return false
+	}
+	if !systemcontract.IsSystemContract(*to) && *to != pepper8.Pepper8RecipientAddress && *to != pipe8.Pipe8RecipientAddress {
+		return false
+	}
+	return gasPrice.Sign() == 0
+}
+
 func (st *stateTransition) preCheck() error {
 	// Only check transactions that are not fake
 	msg := st.msg
@@ -362,10 +396,7 @@ func (st *stateTransition) preCheck() error {
 			}
 			// This will panic if baseFee is nil, but basefee presence is verified
 			// as part of header validation.
-			isSystemTx := msg.To != nil && systemcontract.IsSystemContract(*msg.To) && msg.From == st.evm.Context.Coinbase && msg.GasPrice.Cmp(big.NewInt(0)) == 0
-			isPepper8Deposit := msg.To != nil && *msg.To == pepper8.Pepper8RecipientAddress && msg.From == st.evm.Context.Coinbase && msg.GasPrice.Cmp(big.NewInt(0)) == 0
-			isPipe8Deposit := msg.To != nil && *msg.To == pipe8.Pipe8RecipientAddress && msg.From == st.evm.Context.Coinbase && msg.GasPrice.Cmp(big.NewInt(0)) == 0
-			if !isSystemTx && !isPepper8Deposit && !isPipe8Deposit && msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
+			if !IsChilizFeeExemptMessage(msg.From, msg.To, msg.GasPrice, st.evm.Context.Coinbase) && msg.GasFeeCap.Cmp(st.evm.Context.BaseFee) < 0 {
 				return fmt.Errorf("%w: address %v, maxFeePerGas: %s, baseFee: %s", ErrFeeCapTooLow,
 					msg.From.Hex(), msg.GasFeeCap, st.evm.Context.BaseFee)
 			}
@@ -502,7 +533,7 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 
 	// Check whether the init code size has been exceeded.
 	if rules.IsShanghai && contractCreation && len(msg.Data) > params.MaxInitCodeSize {
-		return nil, fmt.Errorf("%w: code size %v limit %v", ErrMaxInitCodeSizeExceeded, len(msg.Data), params.MaxInitCodeSize)
+		return nil, fmt.Errorf("%w: code size %v limit %v", vm.ErrMaxInitCodeSizeExceeded, len(msg.Data), params.MaxInitCodeSize)
 	}
 
 	// Execute the preparatory steps for state transition which includes:

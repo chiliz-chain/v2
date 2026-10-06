@@ -53,9 +53,11 @@ import (
 )
 
 const (
-	inMemorySnapshots  = 1280  // Number of recent snapshots to keep in memory; a buffer exceeding the EpochLength
-	inMemorySignatures = 4096  // Number of recent block signatures to keep in memory
-	inMemoryHeaders    = 86400 // Number of recent headers to keep in memory for double sign detection,
+	inMemorySnapshots   = 1280 // Number of recent snapshots to keep in memory; a buffer exceeding the EpochLength
+	inMemorySignatures  = 4096 // Number of recent block signatures to keep in memory
+	inMemoryFrequencies = 128  // Number of post-Snake8Fix frequency-data entries to memoize by parent hash
+
+	inMemoryHeaders = 86400 // Number of recent headers to keep in memory for double sign detection,
 
 	checkpointInterval = 1024 // Number of blocks after which to save the snapshot to the database
 
@@ -66,6 +68,7 @@ const (
 	maxwellBlockInterval uint64 = 750  // Block interval starting from the Maxwell hard fork
 	fermiBlockInterval   uint64 = 450  // Block interval starting from the Fermi hard fork
 	defaultTurnLength    uint8  = 1    // Default consecutive number of blocks a validator receives priority for block production
+	snake8TurnLength     uint8  = 50   // Chiliz Snake8 forces this turn length whenever the fork is active
 
 	extraVanity      = 32 // Fixed number of extra-data prefix bytes reserved for signer vanity
 	extraSeal        = 65 // Fixed number of extra-data suffix bytes reserved for signer seal
@@ -103,6 +106,7 @@ var (
 	updateAttestationErrorCounter     = metrics.NewRegisteredCounter("parlia/updateAttestation/error", nil)
 	validVotesfromSelfCounter         = metrics.NewRegisteredCounter("parlia/VerifyVote/self", nil)
 	doubleSignCounter                 = metrics.NewRegisteredCounter("parlia/doublesign", nil)
+	snake8FreqVerifySkippedCounter    = metrics.NewRegisteredCounter("parlia/snake8fix/verifySkipped", nil)
 	intentionalDelayMiningCounter     = metrics.NewRegisteredCounter("parlia/intentionalDelayMining", nil)
 	attestationVoteCountGauge         = metrics.NewRegisteredGauge("parlia/attestation/voteCount", nil)
 )
@@ -145,6 +149,19 @@ var (
 	// in a Snake8 block's extra-data does not match the real parent.Time. This
 	// guards against forged activation timestamps causing a consensus split.
 	errMismatchedSnake8ParentTime = errors.New("snake8 embedded parent timestamp mismatch")
+
+	// errMismatchedSnake8FrequencyData is returned (post-Snake8Fix, COR-173) if the
+	// validator-frequency bytes embedded in a header do not match the recomputation
+	// from the parent block's state. Pre-Snake8Fix the embedded bytes are
+	// producer-controlled and unverified (historical behavior).
+	errMismatchedSnake8FrequencyData = errors.New("snake8 embedded frequency data mismatch")
+
+	// errSnake8StakeLookup marks a NODE-LOCAL failure to read validator stakes for
+	// the Snake8 frequency data (RPC timeout under load, gas cap, missing historical
+	// state during tracing replay, engine built without an RPC backend). It says
+	// nothing about the block's validity: sealing treats it as fatal, verification
+	// fails open on it (verifySnake8FrequencyData).
+	errSnake8StakeLookup = errors.New("snake8fix stake lookup failed")
 
 	// errInvalidMixDigest is returned if a block's mix digest is non-zero.
 	errInvalidMixDigest = errors.New("non-zero mix digest")
@@ -264,8 +281,16 @@ type Parlia struct {
 	tokenomicsABI              abi.ABI
 	stakeHubABI                abi.ABI
 
-	// The fields below are for testing only
-	fakeDiff bool // Skip difficulty verifications
+	// stakeReader fetches a validator's total delegated stake for the Snake8
+	// frequency data. Defaults to getValidatorTotalDelegated (refreshFrequencyRLP
+	// also falls back to it when nil, so struct-literal engines don't trap); tests
+	// substitute a deterministic source since engines built without an RPC backend
+	// cannot perform contract calls.
+	stakeReader func(validator common.Address, blockNumber uint64, state *rpc.BlockNumberOrHash) (*big.Int, error)
+
+	// frequencyCache memoizes post-Snake8Fix frequency bytes by parent hash — see
+	// refreshFrequencyRLP for why this is sound and why pre-fork bytes never enter it.
+	frequencyCache *lru.Cache[common.Hash, []byte]
 }
 
 // New creates a Parlia consensus engine.
@@ -290,6 +315,17 @@ func New(
 	if err != nil {
 		panic(err)
 	}
+	// signableSystemTxSelectors exists only for BEP-675 bid blocks, and covers BSC
+	// validator-set methods that Chiliz's BAS validator set does not implement.
+	// Assert the selectors only on chains that schedule the forks which pack them.
+	if chainConfig.PlatoBlock != nil && chainConfig.FeynmanTime != nil {
+		for methodName, selector := range signableSystemTxSelectors {
+			method, ok := vABI.Methods[methodName]
+			if !ok || !bytes.Equal(method.ID, selector[:]) {
+				panic(fmt.Sprintf("invalid validator set ABI selector for %s", methodName))
+			}
+		}
+	}
 	sABI, err := abi.JSON(strings.NewReader(slashABI))
 	if err != nil {
 		panic(err)
@@ -310,6 +346,7 @@ func New(
 		ethAPI:                     ethAPI,
 		recentSnaps:                lru.NewCache[common.Hash, *Snapshot](inMemorySnapshots),
 		recentHeaders:              lru.NewCache[string, common.Hash](inMemoryHeaders),
+		frequencyCache:             lru.NewCache[common.Hash, []byte](inMemoryFrequencies),
 		signatures:                 lru.NewCache[common.Hash, common.Address](inMemorySignatures),
 		validatorSetABIBeforeLuban: vABIBeforeLuban,
 		validatorSetABI:            vABI,
@@ -318,6 +355,7 @@ func New(
 		stakeHubABI:                stABI,
 		signer:                     types.LatestSigner(chainConfig),
 	}
+	c.stakeReader = c.getValidatorTotalDelegated
 
 	return c
 }
@@ -326,7 +364,7 @@ func (p *Parlia) IsSystemTransaction(tx *types.Transaction, header *types.Header
 	if tx.To() == nil || !isToSystemContract(*tx.To()) {
 		return false, nil
 	}
-	if tx.GasPrice().Sign() != 0 {
+	if tx.EffectiveGasPriceForBSC().Sign() != 0 {
 		return false, nil
 	}
 	sender, err := types.Sender(p.signer, tx)
@@ -336,28 +374,43 @@ func (p *Parlia) IsSystemTransaction(tx *types.Transaction, header *types.Header
 	return sender == header.Coinbase, nil
 }
 
+// tokenomicsDepositSelector is the 4-byte ABI selector of
+// Tokenomics.deposit(address,uint256,uint256) (keccak256 prefix 0x0efe6a8b).
+var tokenomicsDepositSelector = [4]byte{0x0e, 0xfe, 0x6a, 0x8b}
+
 // IsTokenomicsDeposit returns true if to address is the tokenomics contract and tx data
-// starts with Tokenomics.deposit() method signature
+// starts with Tokenomics.deposit() method signature.
+//
+// to must be non-nil: every caller reaches this only for a transaction that
+// IsSystemTransaction / IsSystemContract already accepted, both of which reject
+// a nil destination. The guard enforces that rather than trusting it: CLAUDE.md
+// section 5 anticipates new replay and simulation paths calling in here, and a
+// caller that forgets it would panic the node on a contract-creation tx instead
+// of getting false.
 func (p *Parlia) IsTokenomicsDeposit(to *common.Address, data []byte) bool {
-	isDestinationTokenomics := bytes.Equal(to.Bytes(), systemcontract.TokenomicsContractAddress.Bytes())
-	inputStr := hex.EncodeToString(data)
-	isDeposit := false
-	if len(inputStr) >= 8 {
-		isDeposit = hex.EncodeToString(data)[:8] == "0efe6a8b"
-	}
-	return isDestinationTokenomics && isDeposit
+	return to != nil && *to == systemcontract.TokenomicsContractAddress &&
+		len(data) >= len(tokenomicsDepositSelector) &&
+		bytes.Equal(data[:len(tokenomicsDepositSelector)], tokenomicsDepositSelector[:])
 }
 
-// IsPepper8Deposit returns true if to address is the pepper8 recipient and from address is coinbase
+// IsPepper8Deposit returns true if to address is the pepper8 recipient and from
+// address is coinbase. Nil-total, for the reason on IsTokenomicsDeposit.
 func (p *Parlia) IsPepper8Deposit(from *common.Address, to *common.Address, coinbase *common.Address) bool {
+	if from == nil || to == nil || coinbase == nil {
+		return false
+	}
 	isDestinationPepper8Recipient := bytes.Equal(to.Bytes(), pepper8.Pepper8RecipientAddress.Bytes())
 	isFromCoinbase := bytes.Equal(from.Bytes(), coinbase.Bytes())
 
 	return isDestinationPepper8Recipient && isFromCoinbase
 }
 
-// IsPipe8Deposit returns true if to address is the pipe8 recipient and from address is coinbase
+// IsPipe8Deposit returns true if to address is the pipe8 recipient and from
+// address is coinbase. Nil-total, for the reason on IsTokenomicsDeposit.
 func (p *Parlia) IsPipe8Deposit(from *common.Address, to *common.Address, coinbase common.Address) bool {
+	if from == nil || to == nil {
+		return false
+	}
 	isDestinationPipe8Recipient := bytes.Equal(to.Bytes(), pipe8.Pipe8RecipientAddress.Bytes())
 	isFromCoinbase := bytes.Equal(from.Bytes(), coinbase.Bytes())
 
@@ -422,23 +475,62 @@ func getValidatorBytesFromHeader(header *types.Header, chainConfig *params.Chain
 	if !chainConfig.IsLuban(header.Number) {
 		start := extraVanity
 		end := len(header.Extra) - extraSeal
-		if bytes.HasPrefix(header.Extra[start:end], validatorFrequencyDataPrefix) {
+		body := header.Extra[start:end]
+
+		// Legacy quirks, preserved byte-for-byte on BOTH epoch and non-epoch
+		// headers. The pre-COR-213 parser rejected a header outright when
+		//
+		//   a) the body began with "VFQ", or
+		//   b) the first "VFQ" occurrence in header.Extra began inside the vanity,
+		//      including one straddling the vanity end into the first validator
+		//      address — the scan started at offset 0, so such an occurrence set
+		//      end < start and fell into the `end <= start` return.
+		//
+		// Both are consensus rules on the live networks, not artefacts of the
+		// scan: relaxing either accepts an epoch header that every 2.10.6 node
+		// rejects, which splits the chain across a rolling upgrade instead of
+		// halting it uniformly. They are therefore checked ahead of the
+		// epoch/non-epoch split rather than inside the non-epoch branch.
+		//
+		// The residual cost is narrow and deliberate: an epoch header whose
+		// lowest-sorted validator address itself begins with 0x564651 stays
+		// unparseable. Legacy rejected it too, so this is not a regression — it is
+		// the one corner of COR-213 that cannot be fixed without a hardfork.
+		//
+		// The legacy loop ran i over [0, end-3], i.e. it never read prefix bytes
+		// from the seal; the straddle window is therefore bounded by end.
+		legacyScanEnd := start + len(validatorFrequencyDataPrefix) - 1
+		if legacyScanEnd > end {
+			legacyScanEnd = end
+		}
+		if bytes.HasPrefix(body, validatorFrequencyDataPrefix) ||
+			bytes.Contains(header.Extra[:legacyScanEnd], validatorFrequencyDataPrefix) {
 			return nil
 		}
 
-		// find end of validator bytes
-		for i := 0; i <= end-3; i++ {
-			if bytes.Equal(header.Extra[i:i+3], validatorFrequencyDataPrefix) {
-				end = i
-				break
-			}
+		if header.Number.Uint64()%epochLength != 0 {
+			// Non-epoch headers carry no validator list: the body is either the
+			// frequency block (caught by the HasPrefix guard above) or something
+			// verifyHeader rejects as errExtraValidators.
+			return body
 		}
 
-		if end <= start {
+		// Epoch header: |validators (n*20 bytes)|"VFQ"|parent ts|frequency RLP|
+		// once Snake8 is active, |validators| before. The frequency block is
+		// located structurally (validator-aligned prefix + well-formed tail), never
+		// by a byte-wise scan for "VFQ": an address containing those three bytes
+		// used to truncate the list (COR-213).
+		switch off, found, hostile := preLubanFrequencyBlockOffset(body); {
+		case hostile:
 			return nil
+		case found && off == 0:
+			// The frequency block starts immediately: no validator entries.
+			return nil
+		case found:
+			end = start + off
 		}
 
-		if header.Number.Uint64()%epochLength == 0 && (end-start)%validatorBytesLengthBeforeLuban != 0 {
+		if (end-start)%validatorBytesLengthBeforeLuban != 0 {
 			return nil
 		}
 
@@ -459,6 +551,116 @@ func getValidatorBytesFromHeader(header *types.Header, chainConfig *params.Chain
 		return nil
 	}
 	return header.Extra[start:end]
+}
+
+// frequencyBlockEntry is the wire shape of one Snake8 frequency-data entry:
+// what calcFrequencyRLP encodes and selectValidatorFromFrequencyRLP decodes.
+type frequencyBlockEntry struct {
+	Address   common.Address
+	Frequency *big.Int
+}
+
+// maxFrequencyBlockCandidates bounds the structural decodes attempted while
+// locating the frequency block in one header, so a hostile header cannot make
+// the parser do quadratic work. An honest epoch header has exactly one
+// candidate; one candidate per validator entry is already absurd.
+const maxFrequencyBlockCandidates = 256
+
+// decodesAsFrequencyList reports whether tail is exactly one NON-EMPTY RLP list
+// of (address, frequency) entries, the encoding calcFrequencyRLP produces.
+// Trailing bytes, a different structure, or an empty input all fail.
+//
+// The empty list (0xc0) is rejected on purpose: calcFrequencyRLP returns an
+// error rather than an empty list when there are no eligible candidates, so the
+// producer emits either a list with at least one entry or nothing at all — an
+// empty list is not a shape any honest header carries. Accepting it would make
+// a second decodable candidate cost an attacker a single byte: with "VFQ" at
+// bytes 11..13 of their own (freely ground) address, a frequency whose encoding
+// ends in 0xc0 and a list length ≡ 1 (mod 20), the last twelve bytes of the
+// honest frequency list form a 20-aligned candidate with tail 0xc0. Two
+// decodable candidates are reported hostile, getValidatorBytesFromHeader
+// returns nil, and every node rejects the epoch block — the COR-213 halt the
+// structural search exists to prevent. Requiring an entry raises the bar to 25
+// attacker-controlled bytes at the very end of the body, which the producer's
+// encoding never places there. See TestPreLubanFrequencyEmptyListDecoy.
+func decodesAsFrequencyList(tail []byte) bool {
+	if len(tail) == 0 {
+		return false
+	}
+	var entries []frequencyBlockEntry
+	return rlp.DecodeBytes(tail, &entries) == nil && len(entries) > 0
+}
+
+// preLubanFrequencyBlockOffset locates the Snake8 frequency block inside the
+// body (vanity and seal stripped) of a pre-Luban epoch header, where it follows
+// the fixed-width 20-byte validator entries:
+//
+//	|validator 1|...|validator n|"VFQ"|LE parent timestamp|frequency RLP|
+//
+// The prefix alone is not a delimiter: a validator address may contain, or even
+// start with, the bytes 0x564651, and the previous byte-wise scan for their
+// first occurrence truncated the validator list there (COR-213). The block is
+// therefore located structurally. A candidate is an offset that is a multiple
+// of the validator width (zero included: a first address may itself start with
+// the prefix), starts with "VFQ" and has room for the 8-byte timestamp. Its tail
+// is everything up to the seal, and refreshFrequencyRLP only ever embeds two
+// tail shapes: the RLP list of entries, or nothing at all when calcFrequencyRLP
+// failed. So:
+//
+//   - exactly one candidate whose tail decodesAsFrequencyList: that is the
+//     block. The bytes after a validator address are the remaining raw
+//     20-byte entries, which never form such a list, so an address is told
+//     apart from the block in every realistic layout;
+//   - more than one such candidate: unreachable for an honest producer and
+//     not constructible by an attacker who controls only their own address.
+//     Reported as hostile and rejected;
+//   - none, but a candidate whose tail is empty (necessarily the last offset):
+//     the degraded block with no frequency data. It only counts when no
+//     decodable candidate exists, because an attacker can cheaply forge one:
+//     their address appears inside the honest frequency list, and placing
+//     "VFQ" at the right position in it puts the prefix exactly eleven bytes
+//     before the seal, on an aligned offset. FuzzHeaderExtraRoundTrip found
+//     that shape (see its testdata) against an earlier rule that let it win;
+//   - none at all: a pre-Snake8 header, the whole body is validator entries.
+//
+// Only a bounded number of prefixed offsets is examined, so a hostile header
+// cannot make the parser do quadratic work; exceeding the bound is hostile.
+func preLubanFrequencyBlockOffset(body []byte) (offset int, found bool, hostile bool) {
+	blockHeader := len(validatorFrequencyDataPrefix) + 8 // "VFQ" + parent timestamp
+	attempts, decodable, emptyAtEnd := 0, 0, -1
+	for off := 0; off+blockHeader <= len(body); off += validatorBytesLengthBeforeLuban {
+		if !bytes.HasPrefix(body[off:], validatorFrequencyDataPrefix) {
+			continue
+		}
+		tail := body[off+blockHeader:]
+		if len(tail) == 0 {
+			emptyAtEnd = off
+			continue
+		}
+		attempts++
+		if attempts > maxFrequencyBlockCandidates {
+			return 0, false, true
+		}
+		if decodesAsFrequencyList(tail) {
+			offset = off
+			decodable++
+			if decodable > 1 {
+				// The verdict can no longer change; stop decoding. Identical
+				// result to falling through to the switch below, but it caps
+				// the RLP work a hostile header can provoke at two decodes.
+				return 0, false, true
+			}
+		}
+	}
+	switch {
+	case decodable == 1:
+		return offset, true, false
+	case decodable > 1:
+		return 0, false, true
+	case emptyAtEnd >= 0:
+		return emptyAtEnd, true, false
+	}
+	return 0, false, false
 }
 
 // getVoteAttestationFromHeader returns the vote attestation extracted from the header's extra field if exists.
@@ -564,6 +766,65 @@ func (p *Parlia) verifySnake8Extra(header, parent *types.Header) error {
 	}
 	if ts != parent.Time {
 		return errMismatchedSnake8ParentTime
+	}
+	return nil
+}
+
+// verifySnake8FrequencyData authoritatively validates the validator-frequency
+// bytes embedded in a Snake8 header against their recomputation from the parent
+// block's state (COR-173, Snake8Fix fork). Pre-Snake8Fix the bytes are accepted
+// as-is: historical blocks were produced with unpinned latest-state stake reads
+// (and soft degradation to zero stakes on lookup failure), so a strict
+// recomputation could reject valid history — the check is therefore gated on the
+// parent's timestamp, mirroring Snake8's own activation rule.
+//
+// The check is state-dependent, so it runs from Finalize (like verifyValidators),
+// not from VerifyHeader: a node executing block N necessarily has state N-1.
+// refreshFrequencyRLP is deterministic post-fork (stakes pinned to the parent
+// block, candidates from the parent snapshot's Recents), so every honest node
+// recomputes exactly the bytes an honest producer embedded.
+//
+// Error classification: only a byte MISMATCH condemns the block. A node-local
+// inability to read stakes (errSnake8StakeLookup: RPC timeout under load, gas cap,
+// no historical state during tracing replay, nil-ethAPI engines like `geth import`)
+// fails OPEN — logged loudly and counted — because an error out of Finalize is
+// treated as a bad block by insertChain: failing closed would let a local condition
+// (or RPC-load DoS) make a node reject the honest head and stall. Fail-open only
+// relaxes the check on nodes that could not have evaluated it; sealing keeps the
+// hard failure, so an honest producer never emits unverifiable blocks.
+func (p *Parlia) verifySnake8FrequencyData(chain consensus.ChainHeaderReader, header, parent *types.Header) error {
+	if !p.chainConfig.IsSnake8Fix(parent.Time) {
+		return nil
+	}
+
+	embedded, err := parseValidatorFrequencies(header, p.chainConfig)
+	if err != nil {
+		return err
+	}
+
+	number := header.Number.Uint64()
+	// isSnake8Fork=true so snapshot() returns a caller-owned copy (COR-174) that
+	// refreshFrequencyRLP may write to; extraHeader=nil because the embedded
+	// bytes under judgment must not pre-stamp the snapshot we recompute into.
+	snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, true, nil)
+	if err != nil {
+		return err
+	}
+	if err := p.refreshFrequencyRLP(snap, number, parent); err != nil {
+		if errors.Is(err, errSnake8StakeLookup) {
+			snake8FreqVerifySkippedCounter.Inc(1)
+			log.Error("Skipping Snake8 frequency verification: cannot read stakes locally",
+				"number", number, "hash", header.Hash(), "err", err)
+			return nil
+		}
+		return err
+	}
+
+	if !bytes.Equal(embedded, snap.FrequencyRLP) {
+		log.Warn("Snake8 embedded frequency data does not match state recomputation",
+			"number", number, "hash", header.Hash(), "coinbase", header.Coinbase,
+			"embedded", hex.EncodeToString(embedded), "recomputed", hex.EncodeToString(snap.FrequencyRLP))
+		return errMismatchedSnake8FrequencyData
 	}
 	return nil
 }
@@ -689,23 +950,35 @@ func (p *Parlia) verifyVoteAttestation(chain consensus.ChainHeaderReader, header
 // looking those up from the database. This is useful for concurrently verifying
 // a batch of new headers.
 func (p *Parlia) verifyHeader(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header) error {
-	if header.Number == nil {
-		return errUnknownBlock
-	}
-
 	// Don't waste time checking blocks from the future
 	if header.Time > uint64(time.Now().Unix()+time.Second.Milliseconds()/1000) {
 		return consensus.ErrFutureBlock
 	}
-	// Check that the extra-data contains the vanity, validators and signature.
+
+	if err := p.VerifyUnsealedHeader(chain, header, parents); err != nil {
+		return err
+	}
+
+	// All basic checks passed, verify the seal and return
+	return p.verifySeal(chain, header, parents)
+}
+
+// VerifyUnsealedHeader performs all header validity checks that do not require
+// a valid seal signature. It is used to validate a locally proposed block before
+// sealing: it runs the same structural, fork-rule, and cascading-field checks as
+// VerifyHeader but skips verifySeal (no signature yet) and verifyVoteAttestation
+// (vote attestation is embedded by the sealer and not present before sealing).
+func (p *Parlia) VerifyUnsealedHeader(chain consensus.ChainHeaderReader, header *types.Header, parents []*types.Header) error {
+	// check extra data
 	if len(header.Extra) < extraVanity {
 		return errMissingVanity
 	}
 	if len(header.Extra) < extraVanity+extraSeal {
 		return errMissingSignature
 	}
-
-	// check extra data
+	if header.Number == nil {
+		return errUnknownBlock
+	}
 	number := header.Number.Uint64()
 	epochLength, err := p.epochLength(chain, header, parents)
 	if err != nil {
@@ -731,51 +1004,10 @@ func (p *Parlia) verifyHeader(chain consensus.ChainHeaderReader, header *types.H
 			return fmt.Errorf("invalid MixDigest, have %#x, expected the last two bytes to represent milliseconds", header.MixDigest)
 		}
 	}
+
 	// Ensure that the block doesn't contain any uncles which are meaningless in PoA
 	if header.UncleHash != types.EmptyUncleHash {
 		return errInvalidUncleHash
-	}
-	// Ensure that the block's difficulty is meaningful (may not be correct at this point)
-	if number > 0 {
-		if header.Difficulty == nil {
-			return errInvalidDifficulty
-		}
-	}
-
-	parent, err := p.getParent(chain, header, parents)
-	if err != nil {
-		return err
-	}
-
-	// Verify the block's gas usage and (if applicable) verify the base fee.
-	if !chain.Config().IsLondon(header.Number) {
-		// Verify BaseFee not present before EIP-1559 fork.
-		if header.BaseFee != nil {
-			return fmt.Errorf("invalid baseFee before fork: have %d, expected 'nil'", header.BaseFee)
-		}
-	} else if err := eip1559.VerifyEIP1559Header(chain.Config(), parent, header); err != nil {
-		// Verify the header's EIP-1559 attributes.
-		return err
-	}
-
-	cancun := chain.Config().IsCancun(header.Number, header.Time)
-	if !cancun {
-		switch {
-		case header.ExcessBlobGas != nil:
-			return fmt.Errorf("invalid excessBlobGas: have %d, expected nil", header.ExcessBlobGas)
-		case header.BlobGasUsed != nil:
-			return fmt.Errorf("invalid blobGasUsed: have %d, expected nil", header.BlobGasUsed)
-		case header.WithdrawalsHash != nil:
-			return fmt.Errorf("invalid WithdrawalsHash, have %#x, expected nil", header.WithdrawalsHash)
-		}
-	} else {
-		switch {
-		case !header.EmptyWithdrawalsHash():
-			return errors.New("header has wrong WithdrawalsHash")
-		}
-		if err := eip4844.VerifyEIP4844Header(chain.Config(), parent, header); err != nil {
-			return err
-		}
 	}
 
 	prague := chain.Config().IsPrague(header.Number, header.Time)
@@ -828,9 +1060,61 @@ func (p *Parlia) verifyCascadingFields(chain consensus.ChainHeaderReader, header
 		return err
 	}
 
+	if _, ok := snap.Validators[header.Coinbase]; !ok {
+		return errUnauthorizedValidator(header.Coinbase.String())
+	}
+	if snap.SignRecently(header.Coinbase) {
+		return errRecentlySigned
+	}
+
+	if header.Difficulty == nil {
+		return errInvalidDifficulty
+	}
+	inturn := snap.inturn(header.Coinbase)
+	if inturn && header.Difficulty.Cmp(diffInTurn) != 0 {
+		return errWrongDifficulty
+	}
+	if !inturn && header.Difficulty.Cmp(diffNoTurn) != 0 {
+		return errWrongDifficulty
+	}
+
+	if diff := new(big.Int).Sub(header.Number, parent.Number); diff.Cmp(big.NewInt(1)) != 0 {
+		return consensus.ErrInvalidNumber
+	}
+
 	err = p.blockTimeVerifyForRamanujanFork(snap, header, parent)
 	if err != nil {
 		return err
+	}
+
+	// Verify the block's gas usage and (if applicable) verify the base fee.
+	if !chain.Config().IsLondon(header.Number) {
+		// Verify BaseFee not present before EIP-1559 fork.
+		if header.BaseFee != nil {
+			return fmt.Errorf("invalid baseFee before fork: have %d, expected 'nil'", header.BaseFee)
+		}
+	} else if err := eip1559.VerifyEIP1559Header(chain.Config(), parent, header); err != nil {
+		// Verify the header's EIP-1559 attributes.
+		return err
+	}
+
+	cancun := chain.Config().IsCancun(header.Number, header.Time)
+	if !cancun {
+		switch {
+		case header.ExcessBlobGas != nil:
+			return fmt.Errorf("invalid excessBlobGas: have %d, expected nil", header.ExcessBlobGas)
+		case header.BlobGasUsed != nil:
+			return fmt.Errorf("invalid blobGasUsed: have %d, expected nil", header.BlobGasUsed)
+		case header.WithdrawalsHash != nil:
+			return fmt.Errorf("invalid WithdrawalsHash, have %#x, expected nil", header.WithdrawalsHash)
+		}
+	} else {
+		if !header.EmptyWithdrawalsHash() {
+			return errors.New("header has wrong WithdrawalsHash")
+		}
+		if err := eip4844.VerifyEIP4844Header(chain.Config(), parent, header); err != nil {
+			return err
+		}
 	}
 
 	// Verify that the gas limit is <= 2^63-1
@@ -858,18 +1142,7 @@ func (p *Parlia) verifyCascadingFields(chain consensus.ChainHeaderReader, header
 		return fmt.Errorf("invalid gas limit: have %d, want %d += %d", header.GasLimit, parent.GasLimit, limit-1)
 	}
 
-	// Verify vote attestation for fast finality.
-	if err := p.verifyVoteAttestation(chain, header, parents); err != nil {
-		log.Warn("Verify vote attestation failed", "error", err, "hash", header.Hash(), "number", header.Number,
-			"parent", header.ParentHash, "coinbase", header.Coinbase, "extra", common.Bytes2Hex(header.Extra))
-		verifyVoteAttestationErrorCounter.Inc(1)
-		if chain.Config().IsPlato(header.Number) {
-			return err
-		}
-	}
-
-	// All basic checks passed, verify the seal and return
-	return p.verifySeal(chain, header, parents)
+	return nil
 }
 
 // snapshot retrieves the authorization snapshot at a given point in time.
@@ -1017,23 +1290,43 @@ func (p *Parlia) snapshot(chain consensus.ChainHeaderReader, number uint64, hash
 	}
 	p.recentSnaps.Add(snap.Hash, snap)
 
-	// if Snake8 is enabled, populate FrequencyRLP or totalDelegated amounts
-	if isSnake8Fork {
-		if extraHeader != nil {
-			freq, err := parseValidatorFrequencies(extraHeader, p.chainConfig)
-			if err == nil {
-				snap.FrequencyRLP = freq
-			}
-		}
-		snap.TurnLength = 50
-	}
-
-	// If we've generated a new checkpoint snapshot, save to disk
+	// If we've generated a new checkpoint snapshot, save to disk. Deliberately before
+	// the Snake8 stamping below (COR-174) so nothing caller-dependent reaches disk.
 	if snap.Number%checkpointInterval == 0 && len(headers) > 0 {
 		if err = snap.store(p.db); err != nil {
 			return nil, err
 		}
 		log.Trace("Stored snapshot to disk", "number", snap.Number, "hash", snap.Hash)
+	}
+
+	// FrequencyRLP is a per-caller view, so it goes on a copy the caller owns and never
+	// on the shared cache entry (COR-174). Three reasons this matters:
+	//   - the verify path passes a not-yet-validated candidate header, which must not
+	//     be able to write into consensus state other code paths read;
+	//   - in-turn selection is derived from FrequencyRLP, so a cached value stamped by
+	//     an unrelated caller made the selected validator depend on call order;
+	//   - snapshot() is reached concurrently from header verification, the miner and
+	//     RPC handlers, so writing to the cached pointer was also a data race.
+	// parlia_getSnapshot and friends (api.go) become read-only diagnostics by
+	// construction: they receive a copy like everyone else.
+	//
+	// IsSnake8Fork and TurnLength are re-asserted here for the caller's view, but note
+	// they are NOT caller-local — apply() and loadSnapshot() already installed them on
+	// the cached entry, because the header loop depends on both. Do not "fix" that by
+	// moving them here only; see the note in Snapshot.apply.
+	//
+	// Non-Snake8 callers have nothing to stamp and still get the shared entry, so the
+	// standing rule for every caller is unchanged: treat the returned snapshot as
+	// read-only unless you know it is a copy.
+	if isSnake8Fork {
+		snap = snap.copy()
+		snap.IsSnake8Fork = true
+		snap.TurnLength = snake8TurnLength
+		if extraHeader != nil {
+			if freq, err := parseValidatorFrequencies(extraHeader, p.chainConfig); err == nil {
+				snap.FrequencyRLP = freq
+			}
+		}
 	}
 
 	var validators []string
@@ -1042,7 +1335,7 @@ func (p *Parlia) snapshot(chain consensus.ChainHeaderReader, number uint64, hash
 	}
 	log.Trace("loaded snapshot", "number", snap.Number, "hash", snap.Hash, "validators", strings.Join(validators, ","), "len", len(snap.Validators))
 
-	return snap, err
+	return snap, nil
 }
 
 // VerifyUncles implements consensus.Engine, always returning an error for any
@@ -1058,12 +1351,6 @@ func (p *Parlia) VerifyRequests(header *types.Header, Requests [][]byte) error {
 	return nil
 }
 
-// VerifySeal implements consensus.Engine, checking whether the signature contained
-// in the header satisfies the consensus protocol requirements.
-func (p *Parlia) VerifySeal(chain consensus.ChainReader, header *types.Header) error {
-	return p.verifySeal(chain, header, nil)
-}
-
 // verifySeal checks whether the signature contained in the header satisfies the
 // consensus protocol requirements. The method accepts an optional list of parent
 // headers that aren't yet part of the local blockchain to generate the snapshots
@@ -1074,10 +1361,15 @@ func (p *Parlia) verifySeal(chain consensus.ChainHeaderReader, header *types.Hea
 	if number == 0 {
 		return errUnknownBlock
 	}
-	// Retrieve the snapshot needed to verify this header and cache it
-	snap, err := p.snapshot(chain, number-1, header.ParentHash, parents, p.isSnake8Enabled(chain, header), header)
-	if err != nil {
-		return err
+
+	// Verify vote attestation for fast finality.
+	if err := p.verifyVoteAttestation(chain, header, parents); err != nil {
+		log.Warn("Verify vote attestation failed", "error", err, "hash", header.Hash(), "number", header.Number,
+			"parent", header.ParentHash, "coinbase", header.Coinbase, "extra", common.Bytes2Hex(header.Extra))
+		verifyVoteAttestationErrorCounter.Inc(1)
+		if chain.Config().IsPlato(header.Number) {
+			return err
+		}
 	}
 
 	// Resolve the authorization key and check against validators
@@ -1099,25 +1391,6 @@ func (p *Parlia) verifySeal(chain consensus.ChainHeaderReader, header *types.Hea
 			"hash1", preHash, "hash2", header.Hash())
 	} else {
 		p.recentHeaders.Add(key, header.Hash())
-	}
-
-	if _, ok := snap.Validators[signer]; !ok {
-		return errUnauthorizedValidator(signer.String())
-	}
-
-	if snap.SignRecently(signer) {
-		return errRecentlySigned
-	}
-
-	// Ensure that the difficulty corresponds to the turn-ness of the signer
-	if !p.fakeDiff {
-		inturn := snap.inturn(signer)
-		if inturn && header.Difficulty.Cmp(diffInTurn) != 0 {
-			return errWrongDifficulty
-		}
-		if !inturn && header.Difficulty.Cmp(diffNoTurn) != 0 {
-			return errWrongDifficulty
-		}
 	}
 
 	return nil
@@ -1292,6 +1565,11 @@ func (p *Parlia) NextInTurnValidator(chain consensus.ChainHeaderReader, header *
 // header for running the transactions on top.
 func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
 	header.Coinbase = p.val
+	return p.prepare(chain, header)
+}
+
+// prepare is shared by Prepare and PrepareForBidBlock; caller sets Coinbase/Number/ParentHash.
+func (p *Parlia) prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
 	header.Nonce = types.BlockNonce{}
 
 	number := header.Number.Uint64()
@@ -1303,27 +1581,29 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 	if err != nil {
 		return err
 	}
-	// calculate freq rlp
+
+	// CONSENSUS-CRITICAL ORDERING (Chiliz Snake8): the difficulty stamped below
+	// must be derived from the SAME frequency data that SetExtraData embeds in
+	// this header — verifiers (and our own Seal) judge in-turn-ness from the
+	// embedded data, so install the fresh FrequencyRLP on the snapshot BEFORE
+	// computing difficulty and the Ramanujan backoff. Stamping difficulty from
+	// the stale cached FrequencyRLP produces blocks that are invalid by
+	// construction (diff=1 while the embedded data says in-turn) and forks the
+	// chain — this regressed in the v1.7.6 prepare/SetExtraData split (COR-37).
 	if p.isSnake8Enabled(chain, header) {
-		stakes := make(map[common.Address]*big.Int)
-		for addr := range snap.Validators {
-			totalDelegated, err := p.getValidatorTotalDelegated(addr, number-1)
-			if err != nil {
-				log.Error("error when fetching total delegated amount ", err)
-			}
-			stakes[addr] = totalDelegated
+		if err := p.refreshFrequencyRLP(snap, number, parent); err != nil {
+			// Post-Snake8Fix only: refuse to seal rather than emit a header
+			// whose embedded bytes a verifier's recomputation would reject.
+			return err
 		}
-		freqRlp, err := snap.calcFrequencyRLP(stakes)
-		if err != nil {
-			log.Error("error when calculating frequency rlp", "error", err, "block", number-1)
-		}
-		snap.FrequencyRLP = freqRlp
 	}
 	// TODO: delete this log
 	log.Trace("Prepare_start", "number", header.Number, "time", header.Time, "isSnake8", p.isSnake8Enabled(chain, header), "isSnake8Snap", snap.IsSnake8Fork, "inturnVal", snap.inturnValidator())
 
-	// Set the correct difficulty
-	header.Difficulty = CalcDifficulty(snap, p.val)
+	// Set the correct difficulty. header.Coinbase, not p.val: Prepare sets
+	// Coinbase = p.val, but PrepareForBidBlock prepares for the in-turn
+	// validator — the difficulty must describe the block's actual signer.
+	header.Difficulty = calcDifficulty(snap, header.Coinbase)
 	if header.Difficulty.Cmp(diffInTurn) != 0 && header.Number.Uint64() == 1 {
 		return fmt.Errorf("not your turn for block producing")
 	}
@@ -1335,15 +1615,107 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 
 	// Ensure the timestamp has the correct delay
 	blockTime := p.blockTimeForRamanujanFork(snap, header, parent)
+
 	header.Time = blockTime / 1000 // get seconds
 	if p.chainConfig.IsLorentz(header.Number, header.Time) {
 		header.SetMilliseconds(blockTime % 1000)
 	} else {
 		header.MixDigest = common.Hash{}
 	}
+	return p.SetExtraData(chain, header)
+}
 
+// refreshFrequencyRLP computes the fresh Snake8 validator-frequency data for
+// the child of snap (block `number`, whose parent header is `parent`) and installs
+// it on the snapshot. `snap` must be a caller-owned snapshot — Parlia.snapshot()
+// returns a copy under Snake8, so this write stays local and never reaches the
+// shared LRU entry (COR-174).
+//
+// Pre-Snake8Fix (historical behavior): stakes are read at the node's latest state
+// and every failure is soft — on a lookup error the stake degrades to zero, on a
+// calcFrequencyRLP error FrequencyRLP ends up nil and validator selection degrades
+// to round-robin. Because both prepare() (difficulty) and SetExtraData (embedded
+// data) go through this same helper, they degrade together and the produced header
+// stays self-consistent. Never returns an error on this path.
+//
+// Post-Snake8Fix (COR-173): the embedded bytes are consensus-verified, so they must
+// be reproducible by every node. Stake reads are pinned to the parent block's state
+// (by hash, so side chains resolve correctly) and a failed lookup is reported as
+// errSnake8StakeLookup — a NODE-LOCAL failure, not a statement about the block.
+// Sealing treats it as fatal (refuse to produce rather than embed bytes a verifier
+// would reject); verification fails open on it (see verifySnake8FrequencyData). The
+// one remaining soft failure is calcFrequencyRLP's "no eligible validators": it is a
+// deterministic function of the pinned stakes and snap.Recents, so producer and
+// verifier degrade to the same nil bytes (round-robin selection) and the header
+// still verifies.
+//
+// Pinned bytes are a pure function of the parent (stakes at the parent's state,
+// candidates from the parent's snapshot), so they are memoized in frequencyCache by
+// parent hash: prepare + SetExtraData + the Finalize verification all share one
+// stake sweep per parent. The unpinned pre-fork path must never be cached.
+func (p *Parlia) refreshFrequencyRLP(snap *Snapshot, number uint64, parent *types.Header) error {
+	pinned := p.chainConfig.IsSnake8Fix(parent.Time)
+	var state *rpc.BlockNumberOrHash
+	if pinned {
+		// Nil-guarded like stakeReader below: struct-literal engines have no cache.
+		if p.frequencyCache != nil {
+			if cached, ok := p.frequencyCache.Get(parent.Hash()); ok {
+				snap.FrequencyRLP = bytes.Clone(cached)
+				return nil
+			}
+		}
+		parentState := rpc.BlockNumberOrHashWithHash(parent.Hash(), false)
+		state = &parentState
+	}
+
+	// Fall back for engines assembled as struct literals (tests, tooling), which
+	// bypass New() and leave the stakeReader seam nil.
+	stakeReader := p.stakeReader
+	if stakeReader == nil {
+		stakeReader = p.getValidatorTotalDelegated
+	}
+
+	stakes := make(map[common.Address]*big.Int)
+	for addr := range snap.Validators {
+		totalDelegated, err := stakeReader(addr, number-1, state)
+		if err != nil || totalDelegated == nil {
+			if pinned {
+				if err == nil {
+					return fmt.Errorf("%w: validator %s at block %d: contract returned no stake", errSnake8StakeLookup, addr, number-1)
+				}
+				return fmt.Errorf("%w: validator %s at block %d: %v", errSnake8StakeLookup, addr, number-1, err)
+			}
+			log.Error("error when fetching total delegated amount", "validator", addr, "err", err)
+			// Zero, not nil: calcFrequencyRLP dereferences every stake, so a
+			// nil entry would crash the sealer on a transient RPC failure.
+			// A zero stake excludes the validator from the frequency set,
+			// which is the intended degradation.
+			totalDelegated = big.NewInt(0)
+		}
+		stakes[addr] = totalDelegated
+	}
+	freqRlp, err := snap.calcFrequencyRLP(stakes)
+	if err != nil {
+		log.Error("error when calculating frequency rlp", "error", err, "block", number-1)
+	}
+	snap.FrequencyRLP = freqRlp
+	if pinned && p.frequencyCache != nil {
+		p.frequencyCache.Add(parent.Hash(), bytes.Clone(freqRlp))
+	}
+	return nil
+}
+
+// SetExtraData rebuilds the validator-controlled extra-data section:
+// 28-byte vanity (caller-supplied, zero-padded) + 4-byte nextForkHash +
+// validators bytes (epoch only) + turnLength (epoch only, post-Bohr) + 65 reserved seal bytes.
+// Caller supplies the desired vanity in header.Extra; this function pads/truncates it.
+func (p *Parlia) SetExtraData(chain consensus.ChainHeaderReader, header *types.Header) error {
+	// 32-byte vanity prefix: pad/truncate caller's vanity bytes, then append nextForkHash.
+	if len(header.Extra) < extraVanity-nextForkHashSize {
+		header.Extra = append(header.Extra, bytes.Repeat([]byte{0x00}, extraVanity-nextForkHashSize-len(header.Extra))...)
+	}
 	header.Extra = header.Extra[:extraVanity-nextForkHashSize]
-	nextForkHash := forkid.NextForkHash(p.chainConfig, p.genesisHash, chain.GenesisHeader().Time, number, header.Time)
+	nextForkHash := forkid.NextForkHash(p.chainConfig, p.genesisHash, chain.GenesisHeader().Time, header.Number.Uint64(), header.Time)
 	header.Extra = append(header.Extra, nextForkHash[:]...)
 
 	if err := p.prepareValidators(chain, header); err != nil {
@@ -1354,8 +1726,26 @@ func (p *Parlia) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 		return err
 	}
 
-	// Add RLP-encoded validator+frequency data
+	// Add RLP-encoded validator+frequency data (Chiliz Snake8). SetExtraData is
+	// also called standalone (e.g. from the miner MEV path), so recompute the
+	// parent and the frequency snapshot here rather than relying on prepare's
+	// locals. refreshFrequencyRLP is deterministic for a given parent, so this
+	// recomputation yields exactly the bytes prepare() derived the difficulty
+	// from — the header stays coherent (see the ordering note in prepare).
 	if p.isSnake8Enabled(chain, header) {
+		number := header.Number.Uint64()
+		parent := chain.GetHeader(header.ParentHash, number-1)
+		if parent == nil {
+			return consensus.ErrUnknownAncestor
+		}
+		snap, err := p.snapshot(chain, number-1, header.ParentHash, nil, true, nil)
+		if err != nil {
+			return err
+		}
+		if err := p.refreshFrequencyRLP(snap, number, parent); err != nil {
+			return err
+		}
+
 		ts := make([]byte, 8)
 		binary.LittleEndian.PutUint64(ts, parent.Time)
 		log.Trace("Prepare", "append snake8 data", parent.Time, "number", header.Number.Uint64(), "len(validatorFrequencyDataPrefix)", len(validatorFrequencyDataPrefix), "len(ts)", len(ts), "len(snap.FrequencyRLP)", len(snap.FrequencyRLP))
@@ -1445,7 +1835,7 @@ func (p *Parlia) verifyTurnLength(chain consensus.ChainHeaderReader, header *typ
 
 func (p *Parlia) distributeFinalityReward(chain consensus.ChainHeaderReader, state vm.StateDB, header *types.Header,
 	cx core.ChainContext, txs *[]*types.Transaction, receipts *[]*types.Receipt, systemTxs *[]*types.Transaction,
-	usedGas *uint64, mining bool, tracer *tracing.Hooks) error {
+	usedGas *uint64, mode systemTxMode, tracer *tracing.Hooks) error {
 	currentHeight := header.Number.Uint64()
 	if currentHeight%finalityRewardInterval != 0 {
 		return nil
@@ -1519,7 +1909,7 @@ func (p *Parlia) distributeFinalityReward(chain consensus.ChainHeaderReader, sta
 		return err
 	}
 	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(systemcontracts.ValidatorContract), data, common.Big0)
-	return p.applyTransaction(msg, state, header, cx, txs, receipts, systemTxs, usedGas, mining, tracer)
+	return p.applyTransaction(msg, state, header, cx, txs, receipts, systemTxs, usedGas, mode, tracer)
 }
 
 func (p *Parlia) EstimateGasReservedForSystemTxs(chain consensus.ChainHeaderReader, header *types.Header) uint64 {
@@ -1584,10 +1974,18 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 		return consensus.ErrUnknownAncestor
 	}
 
+	// Snake8Fix (COR-173): with state now available, verify the embedded
+	// validator-frequency data against its recomputation from the parent
+	// block's state. Like verifyValidators above, this cannot run in
+	// VerifyHeader because it needs a contract call against parent state.
+	if err := p.verifySnake8FrequencyData(chain, header, parent); err != nil {
+		return err
+	}
+
 	systemcontracts.TryUpdateBuildInSystemContract(p.chainConfig, header.Number, parent.Time, header.Time, state, false)
 
 	if p.chainConfig.IsOnFeynman(header.Number, parent.Time, header.Time) {
-		err := p.initializeFeynmanContract(state, header, cx, txs, receipts, systemTxs, usedGas, false, tracer)
+		err := p.initializeFeynmanContract(state, header, cx, txs, receipts, systemTxs, usedGas, systemTxImporting, tracer)
 		if err != nil {
 			return fmt.Errorf("init feynman contract failed: %v", err)
 		}
@@ -1595,7 +1993,7 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 
 	// No block rewards in PoA, so the state remains as is and uncles are dropped
 	if header.Number.Cmp(common.Big1) == 0 {
-		err := p.initContract(state, header, cx, txs, receipts, systemTxs, usedGas, false, tracer)
+		err := p.initContract(state, header, cx, txs, receipts, systemTxs, usedGas, systemTxImporting, tracer)
 		if err != nil {
 			log.Error("init contract failed", "error", err)
 			return err
@@ -1621,7 +2019,7 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 
 		if !signedRecently {
 			log.Trace("slash validator", "block hash", header.Hash(), "address", spoiledVal)
-			err = p.slash(spoiledVal, state, header, cx, txs, receipts, systemTxs, usedGas, false, tracer)
+			err = p.slash(spoiledVal, state, header, cx, txs, receipts, systemTxs, usedGas, systemTxImporting, tracer)
 			if err != nil {
 				log.Error("slash validator failed", "block hash", header.Hash(), "address", spoiledVal, "err", err)
 			}
@@ -1637,13 +2035,13 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 		intentionalDelayMiningCounter.Inc(1)
 		log.Warn("intentional delay mining detected", "validator", val, "number", header.Number, "hash", header.Hash())
 	}
-	err = p.distributeIncoming(val, state, header, cx, txs, receipts, systemTxs, usedGas, false, tracer)
+	err = p.distributeIncoming(val, state, header, cx, txs, receipts, systemTxs, usedGas, systemTxImporting, tracer)
 	if err != nil {
 		return err
 	}
 
 	if p.chainConfig.IsPlato(header.Number) {
-		if err := p.distributeFinalityReward(chain, state, header, cx, txs, receipts, systemTxs, usedGas, false, tracer); err != nil {
+		if err := p.distributeFinalityReward(chain, state, header, cx, txs, receipts, systemTxs, usedGas, systemTxImporting, tracer); err != nil {
 			return err
 		}
 	}
@@ -1652,7 +2050,7 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 	if p.chainConfig.IsFeynman(header.Number, header.Time) && isBreatheBlock(parent.Time, header.Time) {
 		// we should avoid update validators in the Feynman upgrade block
 		if !p.chainConfig.IsOnFeynman(header.Number, parent.Time, header.Time) {
-			if err := p.updateValidatorSetV2(state, header, cx, txs, receipts, systemTxs, usedGas, false, tracer); err != nil {
+			if err := p.updateValidatorSetV2(state, header, cx, txs, receipts, systemTxs, usedGas, systemTxImporting, tracer); err != nil {
 				return err
 			}
 		}
@@ -1664,10 +2062,21 @@ func (p *Parlia) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 	return nil
 }
 
-// FinalizeAndAssemble implements consensus.Engine, ensuring no uncles are set,
-// nor block rewards given, and returns the final block.
+type systemTxMode uint8
+
+const (
+	systemTxImporting systemTxMode = iota
+	systemTxMining
+	systemTxPacking
+)
+
 func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB,
 	body *types.Body, receipts []*types.Receipt, tracer *tracing.Hooks) (*types.Block, []*types.Receipt, error) {
+	return p.finalizeAndAssemble(chain, header, state, body, receipts, tracer, systemTxMining)
+}
+
+func (p *Parlia) finalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB,
+	body *types.Body, receipts []*types.Receipt, tracer *tracing.Hooks, mode systemTxMode) (*types.Block, []*types.Receipt, error) {
 	// No block rewards in PoA, so the state remains as is and uncles are dropped
 	cx := chainContext{ChainHeaderReader: chain, parlia: p}
 
@@ -1686,14 +2095,14 @@ func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 	systemcontracts.TryUpdateBuildInSystemContract(p.chainConfig, header.Number, parent.Time, header.Time, state, false)
 
 	if p.chainConfig.IsOnFeynman(header.Number, parent.Time, header.Time) {
-		err := p.initializeFeynmanContract(state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, true, tracer)
+		err := p.initializeFeynmanContract(state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, mode, tracer)
 		if err != nil {
 			return nil, nil, fmt.Errorf("init feynman contract failed: %v", err)
 		}
 	}
 
 	if header.Number.Cmp(common.Big1) == 0 {
-		err := p.initContract(state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, true, tracer)
+		err := p.initContract(state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, mode, tracer)
 		if err != nil {
 			log.Error("init contract failed", "error", err)
 			return nil, nil, err
@@ -1718,20 +2127,20 @@ func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 			}
 		}
 		if !signedRecently {
-			err = p.slash(spoiledVal, state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, true, tracer)
+			err = p.slash(spoiledVal, state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, mode, tracer)
 			if err != nil {
 				log.Error("slash validator failed", "block hash", header.Hash(), "address", spoiledVal)
 			}
 		}
 	}
 
-	err := p.distributeIncoming(p.val, state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, true, tracer)
+	err := p.distributeIncoming(header.Coinbase, state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, mode, tracer)
 	if err != nil {
 		return nil, nil, err
 	}
 
 	if p.chainConfig.IsPlato(header.Number) {
-		if err := p.distributeFinalityReward(chain, state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, true, tracer); err != nil {
+		if err := p.distributeFinalityReward(chain, state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, mode, tracer); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1740,7 +2149,7 @@ func (p *Parlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 	if p.chainConfig.IsFeynman(header.Number, header.Time) && isBreatheBlock(parent.Time, header.Time) {
 		// we should avoid update validators in the Feynman upgrade block
 		if !p.chainConfig.IsOnFeynman(header.Number, parent.Time, header.Time) {
-			if err := p.updateValidatorSetV2(state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, true, tracer); err != nil {
+			if err := p.updateValidatorSetV2(state, header, cx, &body.Transactions, &receipts, nil, &header.GasUsed, mode, tracer); err != nil {
 				return nil, nil, err
 			}
 		}
@@ -1838,6 +2247,15 @@ func (p *Parlia) Authorize(val common.Address, signFn SignerFn, signTxFn SignerT
 	p.signTxFn = signTxFn
 }
 
+// IsLastBlockInTurn reports whether header is the last block in the current validator's turn.
+func (p *Parlia) IsLastBlockInTurn(chain consensus.ChainReader, header *types.Header) bool {
+	snap, err := p.snapshot(chain, header.Number.Uint64()-1, header.ParentHash, nil, p.isSnake8Enabled(chain, header), header)
+	if err != nil {
+		return false
+	}
+	return snap.lastBlockInOneTurn(header.Number.Uint64())
+}
+
 // Argument leftOver is the time reserved for block finalize(calculate root, distribute income...)
 func (p *Parlia) Delay(chain consensus.ChainReader, header *types.Header, leftOver *time.Duration) *time.Duration {
 	snap, err := p.snapshot(chain, header.Number.Uint64()-1, header.ParentHash, nil, p.isSnake8Enabled(chain, header), header)
@@ -1846,11 +2264,7 @@ func (p *Parlia) Delay(chain consensus.ChainReader, header *types.Header, leftOv
 	}
 
 	delay := p.delayForRamanujanFork(snap, header)
-	// The blocking time should be no more than half of period when snap.TurnLength == 1
-	timeForMining := time.Duration(snap.BlockInterval) * time.Millisecond / 2
-	if !snap.lastBlockInOneTurn(header.Number.Uint64()) {
-		timeForMining = time.Duration(snap.BlockInterval) * time.Millisecond
-	}
+	timeForMining := time.Duration(snap.BlockInterval) * time.Millisecond
 	if delay > timeForMining {
 		delay = timeForMining
 	}
@@ -1957,71 +2371,6 @@ func (p *Parlia) Seal(chain consensus.ChainHeaderReader, block *types.Block, res
 	return nil
 }
 
-func (p *Parlia) SignBAL(blockAccessList *types.BlockAccessListEncode) error {
-	p.lock.RLock()
-	val, signFn := p.val, p.signFn
-	p.lock.RUnlock()
-
-	data, err := rlp.EncodeToBytes([]interface{}{blockAccessList.Version, blockAccessList.Number, blockAccessList.Hash, blockAccessList.Accounts})
-	if err != nil {
-		log.Error("Encode to bytes failed when sealing", "err", err)
-		return errors.New("encode to bytes failed")
-	}
-
-	if len(data) > int(params.MaxBALSize) {
-		log.Error("data is too large", "dataSize", len(data), "maxSize", params.MaxBALSize)
-		return errors.New("data is too large")
-	}
-
-	sig, err := signFn(accounts.Account{Address: val}, accounts.MimetypeParlia, data)
-	if err != nil {
-		log.Error("Sign for the block header failed when sealing", "err", err)
-		return errors.New("sign for the block header failed")
-	}
-
-	copy(blockAccessList.SignData, sig)
-	return nil
-}
-
-func (p *Parlia) VerifyBAL(block *types.Block, bal *types.BlockAccessListEncode) error {
-	if bal.Version != 0 {
-		log.Error("invalid BAL version", "version", bal.Version)
-		return errors.New("invalid BAL version")
-	}
-
-	if len(bal.SignData) != 65 {
-		log.Error("invalid BAL signature", "signatureSize", len(bal.SignData))
-		return errors.New("invalid BAL signature")
-	}
-
-	// Recover the public key and the Ethereum address
-	data, err := rlp.EncodeToBytes([]interface{}{bal.Version, block.Number(), block.Hash(), bal.Accounts})
-	if err != nil {
-		log.Error("encode to bytes failed", "err", err)
-		return errors.New("encode to bytes failed")
-	}
-
-	if len(data) > int(params.MaxBALSize) {
-		log.Error("data is too large", "dataSize", len(data), "maxSize", params.MaxBALSize)
-		return errors.New("data is too large")
-	}
-
-	pubkey, err := crypto.Ecrecover(crypto.Keccak256(data), bal.SignData)
-	if err != nil {
-		return err
-	}
-	var pubkeyAddr common.Address
-	copy(pubkeyAddr[:], crypto.Keccak256(pubkey[1:])[12:])
-
-	signer := block.Header().Coinbase
-	if signer != pubkeyAddr {
-		log.Error("BAL signer mismatch", "signer", signer, "pubkeyAddr", pubkeyAddr, "bal.Number", bal.Number, "bal.Hash", bal.Hash)
-		return errors.New("signer mismatch")
-	}
-
-	return nil
-}
-
 func (p *Parlia) shouldWaitForCurrentBlockProcess(chain consensus.ChainHeaderReader, header *types.Header, snap *Snapshot) bool {
 	if header.Difficulty.Cmp(diffInTurn) == 0 {
 		return false
@@ -2068,18 +2417,29 @@ func (p *Parlia) SignRecently(chain consensus.ChainReader, parent *types.Header)
 // CalcDifficulty is the difficulty adjustment algorithm. It returns the difficulty
 // that a new block should have based on the previous blocks in the chain and the
 // current signer.
+//
+// Snake8 in-turn rule (COR-173): block N's in-turn-ness — and therefore its
+// consensus-verified difficulty — is judged from the frequency bytes embedded in
+// header N itself (verifyCascadingFields stamps the candidate header's bytes onto
+// the snapshot). Post-Snake8Fix those bytes are in turn forced to equal the
+// recomputation from state at N-1 (verifySnake8FrequencyData), which is what the
+// producer embeds via prepare()/SetExtraData. This function is only a scheduling
+// hint for the miner: it approximates block N+1's difficulty using the bytes
+// embedded in parent header N (state N-1 derived) rather than the state-N-derived
+// bytes the actual block will carry. That approximation is not consensus-relevant
+// — Prepare recomputes the authoritative difficulty before sealing.
 func (p *Parlia) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
 	snap, err := p.snapshot(chain, parent.Number.Uint64(), parent.Hash(), nil, p.isSnake8Enabled(chain, parent), parent)
 	if err != nil {
 		return nil
 	}
-	return CalcDifficulty(snap, p.val)
+	return calcDifficulty(snap, p.val)
 }
 
 // CalcDifficulty is the difficulty adjustment algorithm. It returns the difficulty
 // that a new block should have based on the previous blocks in the chain and the
 // current signer.
-func CalcDifficulty(snap *Snapshot, signer common.Address) *big.Int {
+func calcDifficulty(snap *Snapshot, signer common.Address) *big.Int {
 	if snap.inturn(signer) {
 		return new(big.Int).Set(diffInTurn)
 	}
@@ -2235,8 +2595,11 @@ func (p *Parlia) getLastSupplyFromTokenomics(header *types.Header) (*big.Int, er
 		Gas:  &gas,
 		Data: &msgData,
 	}
-	blockNum := (rpc.BlockNumber)(big.NewInt(0).Sub(header.Number, big.NewInt(1)).Int64())
-	blockNr := rpc.BlockNumberOrHashWithNumber(blockNum)
+	// Pin to the parent by hash, never by number (COR-184): by-number resolution goes
+	// through the canonical number->hash index, so a node-local gap in that index
+	// becomes a hard error out of Finalize. RequireCanonical must stay false, so
+	// re-execution off the canonical chain still resolves.
+	blockNr := rpc.BlockNumberOrHashWithHash(header.ParentHash, false)
 	res, err := p.ethAPI.Call(context.Background(), args, &blockNr, nil, nil)
 	if err != nil {
 		return nil, err
@@ -2251,7 +2614,7 @@ func (p *Parlia) getLastSupplyFromTokenomics(header *types.Header) (*big.Int, er
 
 func (p *Parlia) distributeToTokenomics(amount *big.Int, inflationPct *big.Int, validator common.Address, newTotalSupply *big.Int,
 	state vm.StateDB, header *types.Header, chain core.ChainContext,
-	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool, tracer *tracing.Hooks) error {
+	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mode systemTxMode, tracer *tracing.Hooks) error {
 	// method
 	method := "deposit"
 
@@ -2264,23 +2627,21 @@ func (p *Parlia) distributeToTokenomics(amount *big.Int, inflationPct *big.Int, 
 	// get system message
 	msg := p.getSystemMessage(header.Coinbase, systemcontract.TokenomicsContractAddress, data, amount)
 	// apply message
-	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer)
+	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mode, tracer)
 }
 
-func (p *Parlia) distributePepper8(state vm.StateDB, header *types.Header, chain core.ChainContext,
-	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool, tracer *tracing.Hooks) error {
-
-	amount := p.GetPepper8MintAmount()
-	recipient := pepper8.Pepper8RecipientAddress
-
-	// get system message
-	msg := p.getSystemMessage(header.Coinbase, recipient, nil, amount)
-	// apply message
-	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer)
-}
-
-// get total delegated amount at epoch for validator
-func (p *Parlia) getValidatorTotalDelegated(validatorAddress common.Address, blockNumber uint64) (*big.Int, error) {
+// getValidatorTotalDelegated returns the total delegated amount for a validator at
+// the epoch containing blockNumber. `state` selects the state the contract call runs
+// against: nil means latest (pre-Snake8Fix historical behavior — nondeterministic
+// across nodes); post-Snake8Fix callers pin it to the parent block so producers and
+// verifiers read identical values (COR-173).
+func (p *Parlia) getValidatorTotalDelegated(validatorAddress common.Address, blockNumber uint64, state *rpc.BlockNumberOrHash) (*big.Int, error) {
+	if p.ethAPI == nil {
+		// Engines constructed without an RPC backend (tests, tooling) cannot
+		// read stakes; report it as the same soft failure as an RPC error so
+		// frequency selection degrades to round-robin instead of panicking.
+		return nil, errors.New("ethAPI unavailable for stake lookup")
+	}
 	method := "getValidatorStatusAtEpoch"
 	epoch := blockNumber / p.chainConfig.Parlia.Epoch
 	data, err := p.validatorSetABI.Pack(method, validatorAddress, epoch)
@@ -2299,7 +2660,7 @@ func (p *Parlia) getValidatorTotalDelegated(validatorAddress common.Address, blo
 		Gas:  &gas,
 		To:   &toAddress,
 		Data: &msgData,
-	}, nil, nil, nil)
+	}, state, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -2323,14 +2684,26 @@ func (p *Parlia) getValidatorTotalDelegated(validatorAddress common.Address, blo
 	return status.TotalDelegated, nil
 }
 
+func (p *Parlia) distributePRB(state vm.StateDB, header *types.Header, chain core.ChainContext,
+	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mode systemTxMode, tracer *tracing.Hooks) error {
+	amount := p.GetPepper8MintAmount()
+	recipient := pepper8.Pepper8RecipientAddress
+
+	log.Info("distributePRB", "amount", amount, "recipient", recipient)
+	// get system message
+	msg := p.getSystemMessage(header.Coinbase, recipient, nil, amount)
+	// apply message
+	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mode, tracer)
+}
+
 func (p *Parlia) distributePipe8Mint(state vm.StateDB, header *types.Header, chain core.ChainContext,
-	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool, tracer *tracing.Hooks) error {
+	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mode systemTxMode, tracer *tracing.Hooks) error {
 	amount := p.GetPipe8MintAmount()
 	recipient := pipe8.Pipe8RecipientAddress
 
 	log.Info("distributePipe8Mint", "amount", amount, "recipient", recipient)
 	msg := p.getSystemMessage(header.Coinbase, recipient, nil, amount)
-	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer)
+	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mode, tracer)
 }
 
 // getCurrentValidators get current validators
@@ -2397,7 +2770,7 @@ func (p *Parlia) isIntentionalDelayMining(chain consensus.ChainHeaderReader, hea
 
 // distributeIncoming distributes system incoming of the block
 func (p *Parlia) distributeIncoming(val common.Address, state vm.StateDB, header *types.Header, chain core.ChainContext,
-	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool, tracer *tracing.Hooks) error {
+	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mode systemTxMode, tracer *tracing.Hooks) error {
 	var (
 		coinbase  = header.Coinbase
 		isDragon8 = p.chainConfig.IsDragon8(header.Time) || p.chainConfig.IsDragon8Fix(header.Time)
@@ -2419,7 +2792,7 @@ func (p *Parlia) distributeIncoming(val common.Address, state vm.StateDB, header
 		// distribute Pepper8
 		log.Trace("distributePRB", "block hash", header.Number.Uint64())
 		state.AddBalance(coinbase, uint256.MustFromBig(p.GetPepper8MintAmount()), tracing.BalanceChangeUnspecified)
-		if err := p.distributePepper8(state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer); err != nil {
+		if err := p.distributePRB(state, header, chain, txs, receipts, receivedTxs, usedGas, mode, tracer); err != nil {
 			return err
 		}
 	}
@@ -2427,7 +2800,7 @@ func (p *Parlia) distributeIncoming(val common.Address, state vm.StateDB, header
 	if p.IsPipe8Block(header.Time, parent.Time) {
 		log.Trace("distributePipe8Mint", "block hash", header.Number.Uint64())
 		state.AddBalance(coinbase, uint256.MustFromBig(p.GetPipe8MintAmount()), tracing.BalanceChangeUnspecified)
-		if err := p.distributePipe8Mint(state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer); err != nil {
+		if err := p.distributePipe8Mint(state, header, chain, txs, receipts, receivedTxs, usedGas, mode, tracer); err != nil {
 			return err
 		}
 	}
@@ -2440,22 +2813,25 @@ func (p *Parlia) distributeIncoming(val common.Address, state vm.StateDB, header
 			newTotalSupply *big.Int
 		)
 
-		lastSupply, err := p.getLastSupplyFromTokenomics(header)
-		if err != nil {
-			return err
-		}
-
 		if p.chainConfig.IsDragon8Fix(header.Time) {
 			inflationPct, newTotalSupply, blockAmount = getNewSupplyForBlockDragon8Fix(*p.chainConfig.Dragon8FixTime, header.Time)
 		} else if p.chainConfig.IsDragon8(header.Time) {
+			// Only this schedule consumes lastSupply, so the Tokenomics read stays
+			// confined to this branch (COR-184) — do not hoist it out.
+			var err error
+			lastSupply, err = p.getLastSupplyFromTokenomics(header)
+			if err != nil {
+				return err
+			}
 			blockAmount, inflationPct = getNewSupplyForBlock(*p.chainConfig.Dragon8Time, header.Time, lastSupply)
 			newTotalSupply = big.NewInt(0).Add(lastSupply, blockAmount)
 		}
 		state.AddBalance(coinbase, uint256.MustFromBig(blockAmount), tracing.BalanceChangeUnspecified)
 
 		// DEPOSIT to tokenomics
-		log.Trace("distribute to tokenomics", "block hash", header.Hash(), "amount", blockAmount, "inflation", inflationPct, "lastSupply", lastSupply, "newTotalSupply", newTotalSupply)
-		if err := p.distributeToTokenomics(blockAmount, inflationPct, val, newTotalSupply, state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer); err != nil {
+		// lastSupply is read only on the legacy branch, so it is not logged here.
+		log.Trace("distribute to tokenomics", "block hash", header.Hash(), "amount", blockAmount, "inflation", inflationPct, "newTotalSupply", newTotalSupply)
+		if err := p.distributeToTokenomics(blockAmount, inflationPct, val, newTotalSupply, state, header, chain, txs, receipts, receivedTxs, usedGas, mode, tracer); err != nil {
 			return err
 		}
 	}
@@ -2472,7 +2848,7 @@ func (p *Parlia) distributeIncoming(val common.Address, state vm.StateDB, header
 		rewards := new(big.Int)
 		rewards = rewards.Div(balance.ToBig(), big.NewInt(systemRewardPercent))
 		if rewards.Cmp(common.Big0) > 0 {
-			err := p.distributeToSystem(rewards, state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer)
+			err := p.distributeToSystem(rewards, state, header, chain, txs, receipts, receivedTxs, usedGas, mode, tracer)
 			if err != nil {
 				return err
 			}
@@ -2481,12 +2857,12 @@ func (p *Parlia) distributeIncoming(val common.Address, state vm.StateDB, header
 		}
 	}
 	log.Trace("distribute to validator contract", "block hash", header.Hash(), "amount", balance)
-	return p.distributeToValidator(balance.ToBig(), val, state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer)
+	return p.distributeToValidator(balance.ToBig(), val, state, header, chain, txs, receipts, receivedTxs, usedGas, mode, tracer)
 }
 
 // slash spoiled validators
 func (p *Parlia) slash(spoiledVal common.Address, state vm.StateDB, header *types.Header, chain core.ChainContext,
-	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool, tracer *tracing.Hooks) error {
+	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mode systemTxMode, tracer *tracing.Hooks) error {
 	// method
 	method := "slash"
 
@@ -2501,12 +2877,12 @@ func (p *Parlia) slash(spoiledVal common.Address, state vm.StateDB, header *type
 	// get system message
 	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(systemcontract.SlashContract), data, common.Big0)
 	// apply message
-	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer)
+	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mode, tracer)
 }
 
 // init contract
 func (p *Parlia) initContract(state vm.StateDB, header *types.Header, chain core.ChainContext,
-	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool, tracer *tracing.Hooks) error {
+	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mode systemTxMode, tracer *tracing.Hooks) error {
 	// method
 	method := "init"
 	// get packed data
@@ -2534,7 +2910,7 @@ func (p *Parlia) initContract(state vm.StateDB, header *types.Header, chain core
 		msg := p.getSystemMessage(header.Coinbase, c, data, common.Big0)
 		// apply message
 		log.Trace("init contract", "block hash", header.Hash(), "contract", c)
-		err = p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer)
+		err = p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mode, tracer)
 		if err != nil {
 			return err
 		}
@@ -2543,17 +2919,17 @@ func (p *Parlia) initContract(state vm.StateDB, header *types.Header, chain core
 }
 
 func (p *Parlia) distributeToSystem(amount *big.Int, state vm.StateDB, header *types.Header, chain core.ChainContext,
-	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool, tracer *tracing.Hooks) error {
+	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mode systemTxMode, tracer *tracing.Hooks) error {
 	// get system message
 	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(systemcontract.SystemRewardContract), nil, amount)
 	// apply message
-	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer)
+	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mode, tracer)
 }
 
 // distributeToValidator deposits validator reward to validator contract
 func (p *Parlia) distributeToValidator(amount *big.Int, validator common.Address,
 	state vm.StateDB, header *types.Header, chain core.ChainContext,
-	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool, tracer *tracing.Hooks) error {
+	txs *[]*types.Transaction, receipts *[]*types.Receipt, receivedTxs *[]*types.Transaction, usedGas *uint64, mode systemTxMode, tracer *tracing.Hooks) error {
 	// method
 	method := "deposit"
 
@@ -2568,7 +2944,7 @@ func (p *Parlia) distributeToValidator(amount *big.Int, validator common.Address
 	// get system message
 	msg := p.getSystemMessage(header.Coinbase, common.HexToAddress(systemcontract.ValidatorContract), data, amount)
 	// apply message
-	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mining, tracer)
+	return p.applyTransaction(msg, state, header, chain, txs, receipts, receivedTxs, usedGas, mode, tracer)
 }
 
 // get system message
@@ -2589,20 +2965,25 @@ func (p *Parlia) applyTransaction(
 	header *types.Header,
 	chainContext core.ChainContext,
 	txs *[]*types.Transaction, receipts *[]*types.Receipt,
-	receivedTxs *[]*types.Transaction, usedGas *uint64, mining bool,
+	receivedTxs *[]*types.Transaction, usedGas *uint64, mode systemTxMode,
 	tracer *tracing.Hooks,
 ) (applyErr error) {
 	nonce := state.GetNonce(msg.From)
 	expectedTx := types.NewTransaction(nonce, *msg.To, msg.Value, msg.GasLimit, msg.GasPrice, msg.Data)
 	expectedHash := p.signer.Hash(expectedTx)
 
-	if msg.From == p.val && mining {
+	switch mode {
+	case systemTxMining:
 		var err error
+		if msg.From != p.val {
+			return fmt.Errorf("cannot sign system tx from %s with validator %s", msg.From, p.val)
+		}
 		expectedTx, err = p.signTxFn(accounts.Account{Address: msg.From}, expectedTx, p.chainConfig.ChainID)
 		if err != nil {
 			return err
 		}
-	} else {
+	case systemTxPacking:
+	case systemTxImporting:
 		if receivedTxs == nil || len(*receivedTxs) == 0 || (*receivedTxs)[0] == nil {
 			return errors.New("supposed to get a actual transaction, but get none")
 		}
@@ -2628,6 +3009,8 @@ func (p *Parlia) applyTransaction(
 		expectedTx = actualTx
 		// move to next
 		*receivedTxs = (*receivedTxs)[1:]
+	default:
+		return fmt.Errorf("unknown system tx mode %d", mode)
 	}
 	state.SetTxContext(expectedTx.Hash(), len(*txs))
 
@@ -2884,8 +3267,8 @@ func (p *Parlia) epochLength(chain consensus.ChainHeaderReader, header *types.He
 	if header.Number.Uint64() == 0 {
 		return defaultEpochLength, nil
 	}
-	// extraHeader should be nil because otherwise snapshot() will try to populate FrequencyRLP from it in Prepare(), resulting
-	// in corrupt data.
+	// extraHeader is nil: this caller only reads EpochLength and has no candidate
+	// header whose frequency data it would want stamped onto its snapshot view.
 	snap, err := p.snapshot(chain, header.Number.Uint64()-1, header.ParentHash, parents, p.isSnake8Enabled(chain, header), nil)
 	if err != nil {
 		return defaultEpochLength, err

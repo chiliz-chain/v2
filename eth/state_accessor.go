@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/big"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -295,9 +294,13 @@ func (eth *Ethereum) stateAtTransaction(ctx context.Context, block *types.Block,
 			msg.SkipTransactionChecks = true
 		}
 
-		// Not yet the searched for transaction, execute on top of the current state
-		if posa, ok := eth.Engine().(consensus.PoSA); ok && msg.From == context.Coinbase &&
-			posa.IsSystemContract(msg.To) && msg.GasPrice.Cmp(big.NewInt(0)) == 0 {
+		// Not yet the searched for transaction, execute on top of the current state.
+		// The exemption test is core.IsChilizFeeExemptMessage, the same predicate
+		// core and parlia use, so a change to the exempt destination set (a future
+		// mint recipient, say) cannot reach consensus while leaving this replay
+		// path behind — CLAUDE.md section 5.
+		if posa, ok := eth.Engine().(consensus.PoSA); ok &&
+			core.IsChilizFeeExemptMessage(msg.From, msg.To, msg.GasPrice, context.Coinbase) {
 			if posa.IsTokenomicsDeposit(tx.To(), tx.Data()) || posa.IsPepper8Deposit(&msg.From, tx.To(), &context.Coinbase) || posa.IsPipe8Deposit(&msg.From, tx.To(), context.Coinbase) {
 				statedb.AddBalance(context.Coinbase, uint256.MustFromBig(tx.Value()), tracing.BalanceChangeUnspecified)
 			}

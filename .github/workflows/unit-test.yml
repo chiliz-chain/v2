@@ -2,7 +2,7 @@ name: Unit Test
 
 on:
   push:
-    branches:
+    branches: 
       - master
       - develop
 
@@ -10,6 +10,13 @@ on:
     branches:
       - master
       - develop
+
+# Both jobs below only check out the repo and run tests, so the default token is
+# wider than either needs. Set at workflow level rather than on the race job
+# alone: CodeQL flagged only the new job (it reviews the diff), but unit-test has
+# the same shape and the same needs.
+permissions:
+  contents: read
 
 jobs:
   unit-test:
@@ -23,7 +30,7 @@ jobs:
       uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go-version }}
-
+        
     - name: Checkout code
       uses: actions/checkout@v4
 
@@ -51,3 +58,106 @@ jobs:
       run: |
         go mod download
         make test
+
+  # COR-252. CI ran `go test -race` nowhere until now: build/ci.go supports a
+  # -race flag but `make test` above does not pass it, so the whole class was
+  # invisible. COR-250 was a genuine data race reachable through ordinary
+  # Call/Create under --vm.opcode.optimize, found only because a reviewer ran
+  # -race by hand on an unrelated PR.
+  #
+  # Scoped to the Chiliz delta rather than added to `make test`, for two reasons
+  # measured on develop: `make test` already takes ~32 minutes over the whole
+  # go-ethereum tree and race instrumentation costs 2-10x on top, and it would
+  # surface races in upstream code we do not own, with no clear owner. Over the
+  # delta packages it is ~37 seconds, so this runs in parallel and does not
+  # extend the critical path.
+  #
+  # A FAILURE HERE IS A REAL FINDING, not flake. The race detector reports only
+  # races it actually observed; it does not guess. Do not rerun until green.
+  race:
+    name: Race Detector (Chiliz delta)
+    strategy:
+      matrix:
+        go-version: [1.25.x]
+        os: [ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: Install Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - uses: actions/cache@v4
+      with:
+        path: |
+          ~/go/pkg/mod
+          ~/.cache/go-build
+        key: ${{ runner.os }}-go-race-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-race-
+          ${{ runner.os }}-go-
+
+    - name: Race Detector
+      env:
+        CGO_CFLAGS: "-O -D__BLST_PORTABLE__"
+        CGO_CFLAGS_ALLOW: "-O -D__BLST_PORTABLE__"
+      run: |
+        set -euo pipefail
+        go mod download
+
+        # Derived, not duplicated. expected-targets.txt is the fuzz campaign's
+        # list of Chiliz-delta packages; a second hardcoded copy here would drift
+        # from it silently, which is the exact hazard flagged on the ratchet
+        # itself. Adding a package there enrols it here too.
+        pkgs=$(awk '$1 ~ /^\.\// { print $1 }' .github/scripts/fuzz/expected-targets.txt)
+
+        # awk NF | wc -l, not grep -c: grep exits 1 when nothing matches, and
+        # under `set -e` that kills the step at this assignment -- before the
+        # floor check below can print its diagnostic. The worst case (derivation
+        # yields nothing) would then fail with no message at all, which is the
+        # one case the message matters most for.
+        count=$(printf '%s\n' "$pkgs" | awk 'NF' | wc -l | tr -d '[:space:]')
+
+        # expected-targets.txt is a per-package MINIMUM-COUNT ratchet, not the
+        # campaign's package list -- DEFAULT_PACKAGES in fuzz.yml is that.
+        # run-fuzz.sh --require-complete asserts baseline subset-of campaign, but
+        # nothing asserted the reverse, so a package added to fuzz.yml alone is
+        # fuzzed happily (unlisted means expected 0) and silently gets no race
+        # coverage here. Assert set equality in both directions rather than
+        # trusting the two files to be edited together.
+        awk '
+          /^  DEFAULT_PACKAGES: >-/ { inblk = 1; next }
+          inblk && /^    \.\// { print $1; next }
+          inblk { exit }
+        ' .github/workflows/fuzz.yml | sort > /tmp/race-campaign.txt
+        printf '%s\n' "$pkgs" | awk 'NF' | sort > /tmp/race-baseline.txt
+        if [ ! -s /tmp/race-campaign.txt ]; then
+          echo "::error::Could not parse DEFAULT_PACKAGES out of .github/workflows/fuzz.yml -- that block's format changed. Fix this parse; do not delete the cross-check."
+          exit 1
+        fi
+        if ! diff -u /tmp/race-campaign.txt /tmp/race-baseline.txt; then
+          echo "::error::fuzz.yml DEFAULT_PACKAGES and expected-targets.txt disagree (-campaign +baseline above). A delta package needs a line in BOTH: missing from the baseline it loses race coverage here, missing from the campaign it is never fuzzed."
+          exit 1
+        fi
+
+        # Floor, so the derivation shrinking silently cannot quietly narrow this
+        # job to nothing. Raise it deliberately when the delta grows.
+        if [ "$count" -lt 8 ]; then
+          echo "::error::Only $count Chiliz delta package(s) derived from expected-targets.txt, expected at least 8. Either the file lost lines or the derivation broke — this job would otherwise pass while covering almost nothing."
+          exit 1
+        fi
+        echo "::notice::Race detector over $count Chiliz delta package(s)."
+
+        # TestValidatorSelectionAlgorithm is skipped ON PURPOSE, and only here.
+        # It simulates 28800*365 = 10.5M blocks in a single-goroutine loop as a
+        # statistical check on validator selection: 94s normally, but over 590s
+        # under race instrumentation, which alone blows Go's default 10-minute
+        # per-package timeout and was why `-race` on consensus/parlia failed
+        # before this job existed. It contains no concurrency, so the detector
+        # has nothing to observe in it. It still runs, unskipped, in the
+        # unit-test job above.
+        # shellcheck disable=SC2086
+        go test -race -timeout 25m -skip '^TestValidatorSelectionAlgorithm$' $pkgs

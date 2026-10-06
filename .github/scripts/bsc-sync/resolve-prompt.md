@@ -33,6 +33,33 @@ For each conflicted file:
 3. Edit the file to its final, conflict-free state. Remove ALL conflict
    markers (`<<<<<<<`, `=======`, `>>>>>>>`) for anything you resolve.
 
+## When upstream splits, moves, or reorders code — check the dataflow
+
+Preserving every line of Chiliz code is NOT sufficient. A past sync broke
+consensus with a resolution in which every Chiliz line survived intact, but
+upstream had split one function into two and the Chiliz computation ended up
+running **after** the code that consumed its result. Both halves looked
+correct in isolation; the ordering between them was the bug.
+
+So whenever upstream splits a function, extracts part of it, moves code into a
+new extension point, or reorders steps, and Chiliz code is anywhere in that
+function:
+
+1. List every value the Chiliz code **writes** (fields it assigns, state it
+   mutates) and every value it **reads**.
+2. For each of those, find who else reads or writes it in the same flow —
+   including callers, and including code upstream *added*.
+3. Confirm every write still happens **before** the reads that depend on it,
+   in the new arrangement. Pay special attention to values written onto shared
+   or cached objects, where the read may be in a different function.
+4. If a Chiliz computation moves into a function upstream introduced, ask what
+   *else* now runs between the computation and its consumer.
+
+If you cannot fully verify the ordering, mark the file 🟡 and put the
+`TODO: Claude flagged, please review — <one-line reason>` comment **on the ordering itself** — the line where the
+value is computed or consumed — not only on the content you moved. Say
+"ordering" explicitly in the reason so a reviewer knows what to check.
+
 ## Confidence annotation — this is critical
 
 Classify every file you touch:

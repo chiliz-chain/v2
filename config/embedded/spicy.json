@@ -38,6 +38,8 @@
     "cancunTime": 1779114600,
     "PragueTime": 1779116400,
     "PascalTime": 1779116400,
+    "deployerProxySunsetTime": 1791446400,
+    "snake8FixTime": 1791453600,
     "parlia": {
       "period": 3,
       "epoch": 7200

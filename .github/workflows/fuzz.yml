@@ -1,0 +1,362 @@
+name: Fuzz
+
+# Weekly campaign over the native Go fuzz targets that cover the Chiliz fork
+# delta (COR-207): header Extra parsers, frequency data, system-tx
+# classification, upstream-divergence oracles, inflation arithmetic, fork rules,
+# EVM hooks. Targets are discovered with `go test -list`, so adding a Fuzz*
+# function to one of the packages below is enough to enrol it. Every target also
+# runs its seed corpus as a plain unit test in unit-test.yml on each PR; this
+# workflow is the long-running search. A crasher fails the run and its input is
+# uploaded as an artifact.
+#
+# Optional secret (the workflow degrades gracefully without it):
+#   secrets.SLACK_CI_BOT_TOKEN  bot token for the shared "Chiliz Chain CI" Slack
+#                               app. When unset the notify step no-ops and says
+#                               so; the campaign itself is unaffected. NOT
+#                               SLACK_BOT_TOKEN — an org secret of that name
+#                               exists and shadowing it hides which credential is
+#                               in play. See docs/bsc-upstream-sync.md.
+#
+# Chiliz-owned workflow: keep it on every upstream sync (see CLAUDE.md).
+
+on:
+  schedule:
+    # Wednesdays 06:00 UTC (COR-248). Was Sundays 04:00: a crasher found then sat
+    # unread until Monday, alongside that morning's upstream sync. Midweek puts
+    # the result in front of someone on a working day. Clear of the only other
+    # schedule, bsc-upstream-sync.yml on Mondays 06:00 UTC.
+    #
+    # GitHub cron is UTC only and cannot follow a timezone: this is 08:00 in
+    # Paris under CEST, 07:00 under CET. Scheduled starts are also best-effort —
+    # a busy hour can delay or, rarely, drop a run.
+    - cron: "0 6 * * 3"
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: "Time per target (Go duration, e.g. 30s, 2m, 10m)"
+        default: "2m"
+      packages:
+        description: "Space-separated packages to fuzz (default: the Chiliz delta)"
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz
+  cancel-in-progress: false
+
+env:
+  # Defined once: the Fuzz step writes it and the notify step reads it, and a
+  # change to one alone would degrade the notification to "No FAIL rows in the
+  # step summary" — a false green of exactly the class this workflow exists to
+  # remove.
+  FUZZ_SUMMARY: /tmp/fuzz-summary.md
+  DEFAULT_PACKAGES: >-
+    ./consensus/parlia
+    ./consensus/misc/eip1559
+    ./consensus/misc/eip4844
+    ./core/vm
+    ./core/vm/runtime
+    ./core/vm/systemcontract
+    ./params
+    ./config
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.25.x
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Go writes the corpus it generates under $GOCACHE/fuzz, inside the cached
+      # path, so this is what makes the weekly campaign compound instead of
+      # restarting cold. It needs a ROTATING key: actions/cache only saves on a
+      # key miss, so a key that is stable week to week saves once and from then
+      # on is an exact hit whose post step skips the save — throwing away
+      # everything each run discovered. github.run_id rotates it; the prefixes
+      # below restore the newest previous corpus.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ runner.os }}-go-fuzz-${{ hashFiles('**/go.sum') }}-${{ github.run_id }}
+          restore-keys: |
+            ${{ runner.os }}-go-fuzz-${{ hashFiles('**/go.sum') }}-
+            ${{ runner.os }}-go-fuzz-
+            ${{ runner.os }}-go-
+
+      - name: Fuzz
+        id: fuzz
+        env:
+          CGO_CFLAGS: "-O -D__BLST_PORTABLE__"
+          CGO_CFLAGS_ALLOW: "-O -D__BLST_PORTABLE__"
+          FUZZTIME: ${{ github.event.inputs.fuzztime || '2m' }}
+          # The dispatch input goes through the environment, never into the
+          # script body: interpolated there, a value carrying a quote breaks the
+          # step and a value carrying `;` runs as shell.
+          PACKAGES: ${{ github.event.inputs.packages }}
+        run: |
+          set -euo pipefail
+          go mod download
+          # There is no `github.step_summary` context property — it dereferences
+          # to the empty string, which would silently send the whole run summary
+          # to the script's /dev/null default. The step summary is only reachable
+          # as this default env var.
+          # GITHUB_STEP_SUMMARY is a distinct file per STEP, so the notify step
+          # below cannot read this one directly. Hard-link instead of buffering:
+          # one inode under two names means run-fuzz.sh's appends land in the
+          # step summary AS THEY HAPPEN, exactly as they did before this file
+          # grew a notify step. Buffering and flushing at exit would lose the
+          # whole table when the 180-minute cap SIGKILLs the job — the one run
+          # where the partial table is most worth having.
+          export SUMMARY="$FUZZ_SUMMARY"
+          if ln -f "$GITHUB_STEP_SUMMARY" "$SUMMARY" 2>/dev/null; then
+            echo "summary: hard-linked to the step summary (incremental)"
+          else
+            # Different filesystems: fall back to buffering, and flush on exit.
+            echo "::warning::could not hard-link the step summary; buffering instead (a hard timeout will lose it)"
+            : > "$SUMMARY"
+            trap 'cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"' EXIT
+          fi
+          pkgs="${PACKAGES:-}"
+          # Whitespace-only input word-splits to zero packages, so treat it as unset.
+          #
+          # --require-complete only on the default set. It asserts that every
+          # package the baseline records targets for is actually in the list, which
+          # is the check that catches an upstream sync quietly dropping one from
+          # DEFAULT_PACKAGES — but it is only a meaningful question when the list is
+          # supposed to be the whole set. A dispatch naming a subset is deliberate
+          # and must not fail for being a subset.
+          complete=""
+          if [[ ! "$pkgs" =~ [^[:space:]] ]]; then
+            pkgs="$DEFAULT_PACKAGES"
+            complete="--require-complete"
+          fi
+          # shellcheck disable=SC2086
+          .github/scripts/fuzz/run-fuzz.sh $complete $pkgs
+
+      # always(), not failure(): exceeding timeout-minutes cancels the job rather
+      # than failing it, and a cancelled job skips failure() steps — losing the
+      # crashers of the very run that took long enough to find them. On a green
+      # run there is nothing to collect and if-no-files-found: ignore covers it.
+      - name: Collect failing inputs
+        id: collect
+        if: always()
+        run: |
+          mkdir -p /tmp/fuzz-crashers
+          # A default git pathspec `*` also matches `/`, so this covers nested
+          # packages (core/vm/runtime/testdata/fuzz/...), not only one level.
+          git ls-files --others --exclude-standard -- '*/testdata/fuzz/*' \
+            | while read -r f; do
+                mkdir -p "/tmp/fuzz-crashers/$(dirname "$f")"
+                cp "$f" "/tmp/fuzz-crashers/$f"
+              done
+          find /tmp/fuzz-crashers -type f | sed 's|^/tmp/fuzz-crashers/||' || true
+          # run-fuzz.sh writes a per-target **FAIL** row whenever `go test -fuzz`
+          # exits non-zero, which is NOT the same as a new input being written: a
+          # seed-corpus regression (the input is already in testdata), a binary
+          # that will not build, a panic before the input is saved, or a fuzztime
+          # too short to finish gathering baseline coverage all produce a FAIL row
+          # and an empty /tmp/fuzz-crashers. The notification must not then send
+          # whoever is on call after an artifact that was never uploaded.
+          if [ -n "$(find /tmp/fuzz-crashers -type f -print -quit)" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload failing inputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers-${{ github.run_id }}
+          path: /tmp/fuzz-crashers
+          if-no-files-found: ignore
+          retention-days: 30
+
+      # Last, so the message below cannot promise an artifact that has not been
+      # uploaded yet — on a cancelled run the grace period can close during the
+      # upload, and the notification would already have pointed at it.
+      #
+      # Extracting the notifier into a repo file made notification depend on the
+      # main checkout, which the previous inline curl did not. Gated the same way
+      # as the notify step it serves, and so still present when setup-go or the
+      # main checkout is what failed.
+      - name: Checkout notifier (independent of the main checkout)
+        if: failure() || cancelled()
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            .github/scripts
+          path: .ci-notify
+
+      # A scheduled run has no actor, so GitHub emails nobody: without this the
+      # only trace of a crasher is the Actions tab. Not failure() alone —
+      # exceeding timeout-minutes CANCELS the job rather than failing it, which
+      # is the same reason the artifact step below uses always(); an unattended
+      # weekly timeout would otherwise be silent. A green run is handled by the
+      # separate success step below (COR-248) — this one stays failure-only so
+      # the two can differ in how they treat a broken notifier.
+      # Deliberately NOT continue-on-error, unlike the bsc-upstream-sync steps.
+      # This one only runs when the job has already failed or been cancelled, so
+      # suppressing its failure cannot improve the job's conclusion — it only
+      # turns "the notifier is broken" into a green step. A revoked token would
+      # then post nothing, every week, with nothing to show for it. (In
+      # bsc-upstream-sync the end-of-run step is always(), so there it genuinely
+      # protects a successful sync from a Slack outage and stays.)
+      - name: Notify Slack
+        if: failure() || cancelled()
+        env:
+          SLACK_CI_BOT_TOKEN: ${{ secrets.SLACK_CI_BOT_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          JOB_STATUS: ${{ job.status }}
+          CRASHERS_UPLOADED: ${{ steps.collect.outputs.found }}
+        run: |
+          set -uo pipefail
+          # Prefer the main checkout, fall back to the dedicated one.
+          notify=.github/scripts/slack-notify.sh
+          [ -x "$notify" ] || notify=.ci-notify/.github/scripts/slack-notify.sh
+          summary="$FUZZ_SUMMARY"
+          [ -f "$summary" ] || summary=/dev/null
+
+          # run-fuzz.sh writes one FAIL row per problem. The marker column tells
+          # the two kinds apart, and they need different responses: a crasher is a
+          # bug in the chain, while (discovery)/(not fuzzed)/(listing) mean the
+          # campaign stopped covering something — usually an upstream sync editing
+          # DEFAULT_PACKAGES.
+          # Trim per field: stripping every space would turn "(not fuzzed)" into
+          # "(notfuzzed)" and "9 of 99" into "9of99".
+          clean='function c(x){gsub(/`/,"",x); gsub(/^[ \t]+|[ \t]+$/,"",x); return x}'
+          # `|| true` is load-bearing: Actions runs this as `bash -e`, and grep
+          # exits 1 when nothing matches. A run with only discovery failures has
+          # no crasher rows, so without it the assignment below kills the step
+          # BEFORE the Slack call — and continue-on-error then reports the step
+          # as successful. The notification is lost with nothing to show for it.
+          crashers=$( { grep -F '**FAIL**' "$summary" | grep -vE '\((discovery|not fuzzed|listing)\)' \
+            | awk -F'|' "$clean"'{print "• " c($2) " — " c($3)}'; } || true)
+          # (listing) means `go test -list` failed — the package does not compile or
+          # does not exist — so its count column is not a target count. Rendering it
+          # as "0 target(s)" reads as "this package simply has no targets", a much
+          # milder and quite different problem.
+          discovery=$( { grep -F '**FAIL**' "$summary" | grep -E '\((discovery|not fuzzed|listing)\)' \
+            | awk -F'|' "$clean"'{ m = c($3);
+                 if (m == "(listing)") print "• " c($2) " " m " — go test -list failed (does not compile, or no such package)";
+                 else print "• " c($2) " " m " — " c($4) " target(s)" }'; } || true)
+
+          if [ "${JOB_STATUS:-failure}" = "cancelled" ]; then
+            lines=(":double_vertical_bar: *Fuzz campaign cancelled* — <${RUN_URL}|view run>"
+                   "Most likely the 180-minute cap. Anything found before the cut is below and in the artifact.")
+          else
+            lines=(":rotating_light: *Fuzz campaign failed* — <${RUN_URL}|view run>")
+          fi
+          if [ -n "$crashers" ]; then
+            lines+=("*Crasher(s) found:*" "$crashers")
+            # Only promise the artifact when one was actually uploaded. A FAIL row
+            # does not imply a new input file (see Collect failing inputs), and
+            # sending someone after a download that does not exist is worse than
+            # saying nothing.
+            if [ "${CRASHERS_UPLOADED:-false}" = "true" ]; then
+              lines+=("Inputs are in the \`fuzz-crashers-${GITHUB_RUN_ID}\` artifact. Download one into \`<pkg>/testdata/fuzz/<Target>/\` and reproduce with \`go test <pkg> -run '^<Target>\$'\`, then commit it as a seed with the fix.")
+            else
+              lines+=("_No new input was written_ — the target failed without producing one (seed-corpus regression, a build failure, or a panic before the input was saved). Reproduce from the run log.")
+            fi
+          fi
+          if [ -n "$discovery" ]; then
+            lines+=("*Discovery broke* — these are not chain bugs, the campaign stopped covering something:" "$discovery" \
+              "Check DEFAULT_PACKAGES in fuzz.yml and .github/scripts/fuzz/expected-targets.txt.")
+          fi
+          if [ -z "$crashers" ] && [ -z "$discovery" ]; then
+            lines+=("No FAIL rows in the step summary — the job ended before or outside the fuzz run (setup, checkout, or the timeout).")
+          fi
+
+          text=$(printf '%s\n' "${lines[@]}")
+          "$notify" \
+            --channel '#bu-chiliz-core-squad' \
+            --username 'Chiliz Client Fuzz' \
+            --icon ':game_die:' \
+            -- "$text"
+
+      # Weekly heartbeat (COR-248). The failure step above used to be the only
+      # notification, on the reasoning that a green run posting nothing keeps the
+      # channel worth reading. The cost of that is ambiguity: a healthy campaign
+      # and a workflow that quietly stopped firing look identical from Slack, and
+      # at one run a week a schedule that silently broke could go unnoticed for
+      # months. One line a week buys the ability to notice absence.
+      #
+      # continue-on-error here, and deliberately NOT on the failure step. The
+      # asymmetry is the point: that step only runs when the job has already
+      # failed, so surfacing a broken notifier costs nothing and hides nothing.
+      # This one runs on a SUCCESSFUL campaign, where a Slack outage failing the
+      # job would report a chain problem that does not exist. Same trade
+      # bsc-upstream-sync.yml makes for its always() step.
+      #
+      # No .ci-notify fallback: this step cannot run unless the main checkout
+      # succeeded, so the script is always at its normal path.
+      # Scheduled runs only. A workflow_dispatch can narrow `packages` and drop
+      # `fuzztime` to 30s, and that path also skips --require-complete — so a
+      # green dispatch would post a message textually indistinguishable from the
+      # weekly one ("Fuzzed 3 target(s), 0 failed, 30s each"). Worse, a manual
+      # dispatch during a week when the schedule had silently stopped firing
+      # would still produce a heartbeat, hiding the very absence this exists to
+      # reveal. Reviewer's catch.
+      #
+      # This step's continue-on-error covers a transient Slack outage. It cannot
+      # cover a PERMANENT credential problem, because both shapes look exactly
+      # like a healthy silent run: a revoked token exits 1 into an ignored
+      # failure, and an unset secret makes slack-notify.sh exit 0 as a deliberate
+      # no-op. The preceding step is what makes that case loud, and it carries no
+      # continue-on-error precisely so it can.
+      - name: Check the notifier can speak (scheduled runs)
+        if: success() && github.event_name == 'schedule'
+        env:
+          SLACK_CI_BOT_TOKEN: ${{ secrets.SLACK_CI_BOT_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SLACK_CI_BOT_TOKEN:-}" ]; then
+            echo "::error::SLACK_CI_BOT_TOKEN is unset, so the weekly clean-run heartbeat would be silent — and a silent heartbeat is indistinguishable from a campaign that never ran. Set the secret or delete this step and the one below."
+            exit 1
+          fi
+          echo "::notice::Notifier credential present; a clean run will post to #bu-chiliz-core-squad."
+
+      - name: Notify Slack (clean run)
+        if: success() && github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          SLACK_CI_BOT_TOKEN: ${{ secrets.SLACK_CI_BOT_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          summary="$FUZZ_SUMMARY"
+
+          # run-fuzz.sh ends the summary with "N target(s), M failed, T each".
+          # That line is the whole point of the message: it is what makes a
+          # dropped package or a shrinking corpus visible on a green run.
+          # `|| true` because Actions runs this as `bash -e` and grep exits 1 on
+          # no match, which would kill the step before the Slack call — and
+          # continue-on-error would then report it as successful, losing the
+          # notification with nothing to show for it (the same trap the failure
+          # step documents).
+          tally=$( { [ -f "$summary" ] && grep -oE '^[0-9]+ target\(s\), [0-9]+ failed, .+ each$' "$summary" | tail -1; } || true)
+          if [ -n "$tally" ]; then
+            body="Fuzzed ${tally}."
+          else
+            # Green but no tally: the campaign did not reach run-fuzz.sh's
+            # summary. Say so rather than implying a clean sweep.
+            body="_No tally line in the step summary_ — the run went green without reaching the end of the campaign. Worth a look at the run."
+          fi
+
+          lines=(":white_check_mark: *Fuzz campaign clean* — <${RUN_URL}|view run>" "$body")
+          text=$(printf '%s\n' "${lines[@]}")
+          .github/scripts/slack-notify.sh \
+            --channel '#bu-chiliz-core-squad' \
+            --username 'Chiliz Client Fuzz' \
+            --icon ':game_die:' \
+            -- "$text"
