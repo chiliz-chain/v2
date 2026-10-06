@@ -148,9 +148,9 @@ func TestEmbeddedRolloutForkTimes(t *testing.T) {
 		deployerProxySunsetTime *uint64
 	}{
 		{"chiliz", ChilizMainnetGenesisConfig.Config, nil, nil},
-		// COR-227 sunset: Wed 2026-10-07 08:00 UTC; COR-200 Snake8Fix two
+		// COR-227 sunset: Thu 2026-10-08 08:00 UTC; COR-200 Snake8Fix two
 		// hours later, 10:00 UTC.
-		{"spicy", SpicyGenesisConfig.Config, u64(1791367200), u64(1791360000)},
+		{"spicy", SpicyGenesisConfig.Config, u64(1791453600), u64(1791446400)},
 		{"scoville", ScovilleGenesisConfig.Config, nil, nil},
 	}
 	for _, n := range networks {
