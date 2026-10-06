@@ -2,11 +2,14 @@ package miner
 
 import (
 	"crypto/rand"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	gokzg4844 "github.com/crate-crypto/go-eth-kzg"
 	"github.com/ethereum/go-ethereum/core/types"
+	buildertypes "github.com/ethereum/go-ethereum/core/types/builder"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/params"
@@ -72,7 +75,7 @@ func TestStartAsyncBlobValidation_InvalidProof(t *testing.T) {
 	sidecar.Proofs[0][0] ^= 0xff
 
 	tx := makeSignedBlobTx(0, sidecar)
-	bid := &types.Bid{
+	bid := &buildertypes.Bid{
 		Txs: types.Transactions{tx},
 	}
 	startAsyncBlobValidation(bid)
@@ -83,5 +86,24 @@ func TestStartAsyncBlobValidation_InvalidProof(t *testing.T) {
 	}
 	if err := <-ch; err == nil {
 		t.Fatal("expected error for invalid KZG proof")
+	}
+}
+
+func TestValidateBidBlockBlobTxs_InvalidProof(t *testing.T) {
+	sidecar := validBlobSidecar(1)
+	sidecar.Proofs[0][0] ^= 0xff
+
+	tx := makeSignedBlobTx(0, sidecar).WithoutBlobTxSidecar()
+	blockSidecar := &types.BlobSidecar{
+		BlobTxSidecar: *sidecar,
+		TxHash:        tx.Hash(),
+		TxIndex:       0,
+	}
+	if err := validateBidBlockBlobTxs(&types.Header{}, []*types.Transaction{tx}, types.BlobSidecars{blockSidecar}, 1); err == nil {
+		t.Fatal("expected error for invalid BidBlock blob proof")
+	} else if !errors.Is(err, errInvalidBidBlockBlobTx) {
+		t.Fatalf("expected invalid BidBlock blob tx error, got %v", err)
+	} else if !strings.Contains(err.Error(), "BidBlock blob validation failed") {
+		t.Fatalf("unexpected error message: %v", err)
 	}
 }

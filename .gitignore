@@ -68,3 +68,23 @@ cmd/geth/geth
 cmd/rlpdump/rlpdump
 cmd/workload/workload
 cmd/keeper/keeper
+
+# BSC upstream-sync scratch output (.github/scripts/bsc-sync/). CI keeps these
+# in the runner temp dir; these entries cover local/manual runs, which fall back
+# to the in-repo defaults, so `git add -A` can never commit them (COR-169).
+/.bsc-sync-agent/
+/bsc-sync-report.md
+/bsc-sync.env
+/new-tags.txt
+/major-tags.txt
+
+# Per-machine config for Claude Code skills (e.g. where a sibling repo is checked
+# out). Machine-specific by definition — see the matching local.env.example.
+.claude/skills/*/local.env
+
+# actions/checkout requires its `path` to be inside the workspace, so the CI
+# Slack notifier is checked out into the work tree (.github/workflows/*.yml).
+# Ignored so it can never be staged: bsc-upstream-sync's run-sync.sh does a
+# `git add -A` and pushes, and the obvious future edit — moving that checkout
+# earlier to harden it — would otherwise commit a nested checkout to the branch.
+/.ci-notify/

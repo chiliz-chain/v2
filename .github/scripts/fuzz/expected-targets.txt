@@ -1,0 +1,43 @@
+# Per-package minimum fuzz-target count: a ratchet, so discovery failing is
+# never mistaken for a clean campaign.
+#
+# There are two distinct ways for discovery to break, and run-fuzz.sh checks
+# both, because the first check is blind to the second:
+#
+#   1. targets renamed away from Fuzz*, package still in the list
+#      -> the package lists FEWER targets than its number here, and the
+#         per-package ratchet inside the fuzzing loop fails the run.
+#
+#   2. the package dropped from the list entirely (an upstream sync editing
+#      DEFAULT_PACKAGES in fuzz.yml, say)
+#      -> the loop never reaches it, so the ratchet above says nothing: every
+#         remaining package meets its minimum and the run goes green with all of
+#         that package's targets unfuzzed. --require-complete catches this by
+#         asserting, after the loop, that every package with a non-zero minimum
+#         here was in the list. The weekly run over DEFAULT_PACKAGES passes the
+#         flag; a workflow_dispatch naming a subset deliberately does not.
+#
+# The global "no targets at all" check cannot do either job: two targets are
+# inherited from go-ethereum and are not going anywhere
+# (core/vm FuzzPrecompiledContracts, core/vm/runtime FuzzVmRuntime), so the
+# total is >= 2 unconditionally under both failure modes.
+#
+# Counts may only go UP. After landing new targets, refresh with:
+#
+#   .github/scripts/fuzz/run-fuzz.sh --write-baseline ./pkg...
+#
+# and commit the result in the same PR. A package listing MORE targets than
+# recorded is a notice asking for that refresh, not a failure, so a fuzz PR is
+# never blocked on it. Removing a package from fuzz.yml on purpose means dropping
+# its line here in the same PR — that is what makes check 2 above a decision
+# rather than an accident.
+#
+# <package> <minimum targets>
+./config 1
+./consensus/misc/eip1559 1
+./consensus/misc/eip4844 1
+./consensus/parlia 16
+./core/vm 3
+./core/vm/runtime 3
+./core/vm/systemcontract 2
+./params 2

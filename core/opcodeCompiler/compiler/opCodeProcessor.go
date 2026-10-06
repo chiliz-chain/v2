@@ -3,12 +3,25 @@ package compiler
 import (
 	"errors"
 	"runtime"
+	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common"
 )
 
 var (
-	enabled     bool
+	// enabled is written by EVM.initNewContract — which turns optimization off
+	// before every init-code run and back on only on the success path, so an
+	// erroring create returns with it still off and leaves it off globally
+	// (evm.go returns on the interpreter error before re-enabling) — and read
+	// by the taskProcessor goroutines below, which pick work off taskChannel
+	// asynchronously. A write is therefore concurrent with any task still in
+	// flight from an earlier call, with no happens-before edge between them:
+	// as a plain bool this is a data race that `go test -race` reports against
+	// initNewContract itself (evm.go) under --vm.opcode.optimize.
+	//
+	// atomic.Bool fixes the race only. The success-only re-enable is a separate
+	// pre-existing bug and is deliberately left alone here.
+	enabled     atomic.Bool
 	codeCache   *OpCodeCache
 	taskChannel chan optimizeTask
 )
@@ -56,22 +69,19 @@ func init() {
 }
 
 func EnableOptimization() {
-	if enabled {
-		return
-	}
-	enabled = true
+	enabled.Store(true)
 }
 
 func DisableOptimization() {
-	enabled = false
+	enabled.Store(false)
 }
 
 func IsEnabled() bool {
-	return enabled
+	return enabled.Load()
 }
 
 func LoadOptimizedCode(hash common.Hash) []byte {
-	if !enabled {
+	if !enabled.Load() {
 		return nil
 	}
 	processedCode := codeCache.GetCachedCode(hash)
@@ -79,7 +89,7 @@ func LoadOptimizedCode(hash common.Hash) []byte {
 }
 
 func LoadBitvec(codeHash common.Hash) []byte {
-	if !enabled {
+	if !enabled.Load() {
 		return nil
 	}
 	bitvec := codeCache.GetCachedBitvec(codeHash)
@@ -87,14 +97,14 @@ func LoadBitvec(codeHash common.Hash) []byte {
 }
 
 func StoreBitvec(codeHash common.Hash, bitvec []byte) {
-	if !enabled {
+	if !enabled.Load() {
 		return
 	}
 	codeCache.AddBitvecCache(codeHash, bitvec)
 }
 
 func GenOrLoadOptimizedCode(hash common.Hash, code []byte) {
-	if !enabled {
+	if !enabled.Load() {
 		return
 	}
 	task := optimizeTask{generate, hash, code}
@@ -120,7 +130,7 @@ func handleOptimizationTask(task optimizeTask) {
 
 // GenOrRewriteOptimizedCode generate the optimized code and refresh the code cache.
 func GenOrRewriteOptimizedCode(hash common.Hash, code []byte) ([]byte, error) {
-	if !enabled {
+	if !enabled.Load() {
 		return nil, ErrOptimizedDisabled
 	}
 	processedCode, err := processByteCodes(code)
@@ -141,7 +151,7 @@ func TryGenerateOptimizedCode(hash common.Hash, code []byte) ([]byte, error) {
 }
 
 func DeleteCodeCache(hash common.Hash) {
-	if !enabled {
+	if !enabled.Load() {
 		return
 	}
 	// flush in case there are invalid cached code

@@ -48,17 +48,23 @@ type Snapshot struct {
 	ethAPI   *ethapi.BlockChainAPI
 	sigCache *lru.Cache[common.Hash, common.Address] // Cache of recent block signatures to speed up ecrecover
 
-	Number           uint64                            `json:"number"`                  // Block number where the snapshot was created
-	Hash             common.Hash                       `json:"hash"`                    // Block hash where the snapshot was created
-	EpochLength      uint64                            `json:"epoch_length"`            // Number of Blocks in one epoch
-	BlockInterval    uint64                            `json:"block_interval"`          // Block Interval in milliseconds
-	TurnLength       uint8                             `json:"turn_length"`             // Length of `turn`, meaning the consecutive number of blocks a validator receives priority for block production
-	Validators       map[common.Address]*ValidatorInfo `json:"validators"`              // Set of authorized validators at this moment
-	Recents          map[uint64]common.Address         `json:"recents"`                 // Set of recent validators for spam protections
-	RecentForkHashes map[uint64]string                 `json:"recent_fork_hashes"`      // Set of recent forkHash
-	Attestation      *types.VoteData                   `json:"attestation:omitempty"`   // Attestation for fast finality, but `Source` used as `Finalized`
-	IsSnake8Fork     bool                              `json:"is_snake8_fork"`          // Flag indicating whether Snake8 fork activated
-	FrequencyRLP     []byte                            `json:"frequency_rlp,omitempty"` // RLP encoded frequency data for validator selection
+	Number           uint64                            `json:"number"`                // Block number where the snapshot was created
+	Hash             common.Hash                       `json:"hash"`                  // Block hash where the snapshot was created
+	EpochLength      uint64                            `json:"epoch_length"`          // Number of Blocks in one epoch
+	BlockInterval    uint64                            `json:"block_interval"`        // Block Interval in milliseconds
+	TurnLength       uint8                             `json:"turn_length"`           // Length of `turn`, meaning the consecutive number of blocks a validator receives priority for block production
+	Validators       map[common.Address]*ValidatorInfo `json:"validators"`            // Set of authorized validators at this moment
+	Recents          map[uint64]common.Address         `json:"recents"`               // Set of recent validators for spam protections
+	RecentForkHashes map[uint64]string                 `json:"recent_fork_hashes"`    // Set of recent forkHash
+	Attestation      *types.VoteData                   `json:"attestation:omitempty"` // Attestation for fast finality, but `Source` used as `Finalized`
+	IsSnake8Fork     bool                              `json:"is_snake8_fork"`        // Flag indicating whether Snake8 fork activated
+	// FrequencyRLP holds the RLP-encoded frequency data used for validator selection.
+	// The value is per-block and caller-supplied — either the data embedded in the
+	// header being verified or a fresh computation from stakes — so Parlia.snapshot()
+	// stamps it onto a caller-owned copy and store() strips it before writing to disk
+	// (COR-174). The json tag is kept so parlia_getSnapshot still reports it, which is
+	// the debugging surface for Snake8 validator selection.
+	FrequencyRLP []byte `json:"frequency_rlp,omitempty"`
 }
 
 type ValidatorInfo struct {
@@ -122,6 +128,10 @@ func (s validatorsAscending) Less(i, j int) bool { return bytes.Compare(s[i][:],
 func (s validatorsAscending) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
 // loadSnapshot loads an existing snapshot from the database.
+//
+// IsSnake8Fork/TurnLength are applied here rather than left to the caller-owned copy
+// in Parlia.snapshot(): a loaded snapshot is the starting point for the next apply(),
+// which depends on both (see the note in apply). Only FrequencyRLP is caller-local.
 func loadSnapshot(config *params.ParliaConfig, sigCache *lru.Cache[common.Hash, common.Address], db ethdb.Database, hash common.Hash, ethAPI *ethapi.BlockChainAPI, isSnake8Fork bool) (*Snapshot, error) {
 	blob, err := db.Get(append([]byte("parlia-"), hash[:]...))
 	if err != nil {
@@ -142,8 +152,13 @@ func loadSnapshot(config *params.ParliaConfig, sigCache *lru.Cache[common.Hash, 
 	}
 
 	if isSnake8Fork {
-		snap.TurnLength = 50
+		snap.TurnLength = snake8TurnLength
 	}
+
+	// Records written before COR-174 persisted FrequencyRLP, and copy() now carries the
+	// field — so a legacy blob's caller-dependent bytes would otherwise propagate from
+	// this cache entry into every snapshot derived from it. Loaded entries are pristine.
+	snap.FrequencyRLP = nil
 
 	snap.config = config
 	snap.sigCache = sigCache
@@ -154,8 +169,15 @@ func loadSnapshot(config *params.ParliaConfig, sigCache *lru.Cache[common.Hash, 
 }
 
 // store inserts the snapshot into the database.
+//
+// FrequencyRLP is stripped first (COR-174): it is per-block, caller-supplied data, so
+// persisting it would make an on-disk record depend on whichever caller happened to
+// build it. Everything that needs the value either embeds it in a header or recomputes
+// it from stakes, so nothing depends on it surviving a restart.
 func (s *Snapshot) store(db ethdb.Database) error {
-	blob, err := json.Marshal(s)
+	persisted := *s
+	persisted.FrequencyRLP = nil
+	blob, err := json.Marshal(&persisted)
 	if err != nil {
 		return err
 	}
@@ -177,6 +199,10 @@ func (s *Snapshot) copy() *Snapshot {
 		Recents:          make(map[uint64]common.Address),
 		RecentForkHashes: make(map[uint64]string),
 		IsSnake8Fork:     s.IsSnake8Fork,
+		// Carried, not dropped (COR-174): a copy must be a faithful view of the
+		// original, otherwise FrequencyRLP survives only as whatever the last
+		// caller stamped onto the shared cache entry.
+		FrequencyRLP: bytes.Clone(s.FrequencyRLP),
 	}
 
 	for v := range s.Validators {
@@ -299,8 +325,10 @@ func (s *Snapshot) getFinalizedNumber() uint64 {
 }
 
 func (s *Snapshot) apply(headers []*types.Header, chain consensus.ChainHeaderReader, parents []*types.Header, chainConfig *params.ChainConfig, isSnake8Fork bool) (*Snapshot, error) {
-	s.IsSnake8Fork = isSnake8Fork
-	// Allow passing in no headers for cleaner code
+	// Allow passing in no headers for cleaner code.
+	// NOTE (COR-174): the receiver is usually the shared, LRU-cached snapshot, and
+	// this path returns it unchanged — so nothing here may mutate `s`. The caller's
+	// isSnake8Fork view is stamped on a copy in Parlia.snapshot() instead.
 	if len(headers) == 0 {
 		return s, nil
 	}
@@ -321,6 +349,17 @@ func (s *Snapshot) apply(headers []*types.Header, chain consensus.ChainHeaderRea
 	}
 	// Iterate through the headers and create a new snapshot
 	snap := s.copy()
+	// Set on the copy, never on the receiver (COR-174) — but before the loop, because
+	// the loop depends on both. IsSnake8Fork gates the recently-signed check directly,
+	// and TurnLength sizes minerHistoryCheckLen()/versionHistoryCheckLen(), which
+	// control the Recents and RecentForkHashes prune windows and the block offset at
+	// which the validator set switches. These are inputs to the computation, not a
+	// per-caller view like FrequencyRLP, so they must also flow into the snapshot that
+	// gets cached and persisted: the next apply() starts from it.
+	snap.IsSnake8Fork = isSnake8Fork
+	if isSnake8Fork {
+		snap.TurnLength = snake8TurnLength
+	}
 
 	for _, header := range headers {
 		number := header.Number.Uint64()
@@ -459,6 +498,12 @@ func (s *Snapshot) apply(headers []*types.Header, chain consensus.ChainHeaderRea
 	}
 	snap.Number += uint64(len(headers))
 	snap.Hash = headers[len(headers)-1].Hash()
+	// Re-assert after the loop: an epoch switch above may have taken a turnLength from
+	// the checkpoint header (post-Bohr only, so never on Chiliz today). Snake8's 50
+	// wins regardless, which is what the pre-COR-174 post-apply stamp also did.
+	if isSnake8Fork {
+		snap.TurnLength = snake8TurnLength
+	}
 	return snap, nil
 }
 

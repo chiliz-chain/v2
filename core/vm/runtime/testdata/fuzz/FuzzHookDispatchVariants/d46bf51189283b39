@@ -1,0 +1,13 @@
+go test fuzz v1
+[]byte("0")
+[]byte("`0`0`\x00\xf0")
+byte('\x00')
+bool(false)
+bool(true)
+bool(true)
+bool(false)
+uint64(0)
+byte('\x00')
+byte('\x04')
+uint64(7)
+bool(false)

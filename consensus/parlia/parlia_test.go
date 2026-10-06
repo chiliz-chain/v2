@@ -1,6 +1,7 @@
 package parlia
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/systemcontracts"
@@ -621,16 +623,15 @@ func TestSimulateP2P(t *testing.T) {
 		if err != nil {
 			t.Fatalf("[Testcase %d] simulate P2P error: %v", index, err)
 		}
-		/*
-			for _, val := range c.validators {
-				t.Logf("[Testcase %d] validator(%d) head block: %d",
-					index, val.index, val.head.blockNumber)
-				t.Logf("[Testcase %d] validator(%d) highest justified block: %d",
-					index, val.index, val.head.GetJustifiedNumber())
-				t.Logf("[Testcase %d] validator(%d) highest finalized block: %d",
-					index, val.index, val.head.GetFinalizedBlock().blockNumber)
-			}
-		*/
+		for _, val := range c.validators {
+			t.Logf("[Testcase %d] validator(%d) head block: %d",
+				index, val.index, val.head.blockNumber)
+			t.Logf("[Testcase %d] validator(%d) highest justified block: %d",
+				index, val.index, val.head.GetJustifiedNumber())
+			t.Logf("[Testcase %d] validator(%d) highest finalized block: %d",
+				index, val.index, val.head.GetFinalizedBlock().blockNumber)
+		}
+
 		if c.CheckChain() == false {
 			t.Fatalf("[Testcase %d] chain not works as expected", index)
 		}
@@ -639,22 +640,25 @@ func TestSimulateP2P(t *testing.T) {
 
 func TestGetNewSupplyForBlock(t *testing.T) {
 	// These numbers are rounded. This test verifies that we are aligned with general vision.
+	// The test truncates the returned percentage to two decimals, so each lower bound must be
+	// the *floor* (not the nearest rounding) of the year's true minimum, e.g. year 9's minimum
+	// 2.35847 is seen as 2.35.
 	expectedPctLt13 := [][]float64{
 		[]float64{7.20, 8.80},
 		[]float64{5.96, 7.20},
-		[]float64{5.00, 5.96},
-		[]float64{4.25, 5.00},
-		[]float64{3.66, 4.25},
-		[]float64{3.21, 3.66},
-		[]float64{2.85, 3.21},
+		[]float64{4.99, 5.96},
+		[]float64{4.24, 4.99},
+		[]float64{3.66, 4.24},
+		[]float64{3.20, 3.66},
+		[]float64{2.85, 3.20},
 		[]float64{2.57, 2.85},
-		[]float64{2.36, 2.57},
-		[]float64{2.19, 2.36},
+		[]float64{2.35, 2.57},
+		[]float64{2.19, 2.35},
 		[]float64{2.06, 2.19},
-		[]float64{1.96, 2.06},
-		[]float64{0.0, 1.96},
+		[]float64{1.95, 2.06},
+		[]float64{0.0, 1.95},
 	}
-	tries := mrand.Intn(10)
+	tries := 1 + mrand.Intn(10)
 	blocksPerYear := 10512000
 	yearInSeconds := int64(365 * 24 * 60 * 60)
 	forkTs := time.Now().Unix()
@@ -794,7 +798,7 @@ func TestParlia_applyTransactionTracing(t *testing.T) {
 	hooks := recording.hooks()
 
 	cx := chainContext{ChainHeaderReader: chain, parlia: engine}
-	applyErr := engine.applyTransaction(msg, state.NewHookedState(stateDB, hooks), bs[0].Header(), cx, &txs, &receipts, &receivedTxs, &usedGas, false, hooks)
+	applyErr := engine.applyTransaction(msg, state.NewHookedState(stateDB, hooks), bs[0].Header(), cx, &txs, &receipts, &receivedTxs, &usedGas, systemTxImporting, hooks)
 	if applyErr != nil {
 		t.Fatalf("failed to apply system contract transaction: %v", applyErr)
 	}
@@ -811,6 +815,450 @@ func TestParlia_applyTransactionTracing(t *testing.T) {
 
 	if !slices.Equal(recording.records, expectedRecords) {
 		t.Errorf("expected \n%s\n\ngot\n\n%s", formatRecords(expectedRecords), formatRecords(recording.records))
+	}
+}
+
+func TestParlia_applyTransactionModes(t *testing.T) {
+	// Skipped intentionally: like TestParlia_applyTransactionTracing, this test
+	// packs the Feynman-only system method distributeFinalityReward, but Chiliz
+	// does not (and will not) enable the Feynman fork, so that method is absent
+	// from the validator-set ABI. See COR-39.
+	t.Skip("Chiliz does not enable the Feynman fork; distributeFinalityReward is not available (COR-39)")
+	frdir := t.TempDir()
+	db, err := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), frdir, "", false)
+	if err != nil {
+		t.Fatalf("failed to create database with ancient backend: %v", err)
+	}
+
+	trieDB := triedb.NewDatabase(db, nil)
+	defer trieDB.Close()
+
+	config := params.ParliaTestChainConfig
+	gspec := &core.Genesis{
+		Config: config,
+		Alloc:  types.GenesisAlloc{testAddr: {Balance: new(big.Int).SetUint64(10 * params.Ether)}},
+	}
+	mockEngine := &mockParlia{}
+	genesisBlock := gspec.MustCommit(db, trieDB)
+	chain, _ := core.NewBlockChain(db, gspec, mockEngine, nil)
+	defer chain.Stop()
+	parents, _ := core.GenerateChain(config, genesisBlock, mockEngine, db, 1, nil)
+	header := parents[0].Header()
+
+	engine := New(config, db, nil, genesisBlock.Hash())
+	validatorKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate validator key: %v", err)
+	}
+	validator := crypto.PubkeyToAddress(validatorKey.PublicKey)
+	engine.Authorize(validator, nil, func(account accounts.Account, tx *types.Transaction, chainID *big.Int) (*types.Transaction, error) {
+		if account.Address != validator {
+			return nil, fmt.Errorf("unexpected signing account %s", account.Address)
+		}
+		return types.SignTx(tx, types.LatestSigner(config), validatorKey)
+	})
+
+	data, err := engine.validatorSetABI.Pack("distributeFinalityReward", make([]common.Address, 0), make([]*big.Int, 0))
+	if err != nil {
+		t.Fatalf("failed to pack system contract method: %v", err)
+	}
+	msg := engine.getSystemMessage(validator, common.HexToAddress(systemcontracts.ValidatorContract), data, common.Big0)
+	cx := chainContext{ChainHeaderReader: chain, parlia: engine}
+
+	newState := func(t *testing.T) *state.StateDB {
+		t.Helper()
+		stateDB, err := state.New(genesisBlock.Root(), state.NewDatabase(trieDB, nil))
+		if err != nil {
+			t.Fatalf("failed to create stateDB: %v", err)
+		}
+		return stateDB
+	}
+	expectedTx := func(stateDB *state.StateDB) *types.Transaction {
+		nonce := stateDB.GetNonce(msg.From)
+		return types.NewTransaction(nonce, *msg.To, msg.Value, msg.GasLimit, msg.GasPrice, msg.Data)
+	}
+	apply := func(t *testing.T, stateDB *state.StateDB, receivedTxs *[]*types.Transaction, mode systemTxMode) ([]*types.Transaction, error) {
+		t.Helper()
+		txs := make([]*types.Transaction, 0, 1)
+		receipts := make([]*types.Receipt, 0, 1)
+		usedGas := uint64(0)
+		err := engine.applyTransaction(msg, stateDB, header, cx, &txs, &receipts, receivedTxs, &usedGas, mode, nil)
+		return txs, err
+	}
+
+	t.Run("mining signs system tx from validator", func(t *testing.T) {
+		txs, err := apply(t, newState(t), nil, systemTxMining)
+		if err != nil {
+			t.Fatalf("applyTransaction mining failed: %v", err)
+		}
+		if len(txs) != 1 {
+			t.Fatalf("expected one tx, got %d", len(txs))
+		}
+		if isUnsignedTx(txs[0]) {
+			t.Fatalf("mining mode must sign system tx")
+		}
+	})
+
+	t.Run("mining rejects non-validator sender", func(t *testing.T) {
+		original := msg.From
+		msg.From = common.HexToAddress("0x3000000000000000000000000000000000000003")
+		defer func() { msg.From = original }()
+
+		_, err := apply(t, newState(t), nil, systemTxMining)
+		if err == nil || !strings.Contains(err.Error(), "cannot sign system tx") {
+			t.Fatalf("expected cannot sign error, got %v", err)
+		}
+	})
+
+	t.Run("packing keeps system tx unsigned", func(t *testing.T) {
+		txs, err := apply(t, newState(t), nil, systemTxPacking)
+		if err != nil {
+			t.Fatalf("applyTransaction packing failed: %v", err)
+		}
+		if len(txs) != 1 {
+			t.Fatalf("expected one tx, got %d", len(txs))
+		}
+		if !isUnsignedTx(txs[0]) {
+			t.Fatalf("packing mode must keep system tx unsigned")
+		}
+	})
+
+	t.Run("importing consumes matching received tx", func(t *testing.T) {
+		stateDB := newState(t)
+		receivedTxs := []*types.Transaction{expectedTx(stateDB)}
+		txs, err := apply(t, stateDB, &receivedTxs, systemTxImporting)
+		if err != nil {
+			t.Fatalf("applyTransaction importing failed: %v", err)
+		}
+		if len(receivedTxs) != 0 {
+			t.Fatalf("expected received tx to be consumed, got %d left", len(receivedTxs))
+		}
+		if len(txs) != 1 || txs[0] == nil {
+			t.Fatalf("expected imported tx to be appended")
+		}
+	})
+
+	t.Run("importing rejects missing received tx", func(t *testing.T) {
+		receivedTxs := []*types.Transaction{}
+		_, err := apply(t, newState(t), &receivedTxs, systemTxImporting)
+		if err == nil || !strings.Contains(err.Error(), "supposed to get a actual transaction") {
+			t.Fatalf("expected missing received tx error, got %v", err)
+		}
+	})
+
+	t.Run("importing rejects mismatched received tx", func(t *testing.T) {
+		stateDB := newState(t)
+		expected := expectedTx(stateDB)
+		wrongTx := types.NewTransaction(expected.Nonce()+1, *expected.To(), expected.Value(), expected.Gas(), expected.GasPrice(), expected.Data())
+		receivedTxs := []*types.Transaction{wrongTx}
+		_, err := apply(t, stateDB, &receivedTxs, systemTxImporting)
+		if err == nil || !strings.Contains(err.Error(), "expected tx hash") {
+			t.Fatalf("expected tx hash mismatch error, got %v", err)
+		}
+	})
+}
+
+func isUnsignedTx(tx *types.Transaction) bool {
+	v, r, s := tx.RawSignatureValues()
+	return v.Sign() == 0 && r.Sign() == 0 && s.Sign() == 0
+}
+
+// TestParliaFinalizeAndAssembleBidBlock verifies BidBlock assembly emits unsigned system txs.
+func TestParliaFinalizeAndAssembleBidBlock(t *testing.T) {
+	// Skipped intentionally: BidBlock (BEP-675) exercises BSC validator-set
+	// selectors (distributeFinalityReward/updateValidatorSetV2) that Chiliz's
+	// BAS validator set does not implement; the feature is inert on Chiliz and
+	// its selector assertion in New() is fork-gated off. See COR-39.
+	t.Skip("BidBlock requires BSC validator-set ABI selectors absent from the Chiliz BAS ABI (COR-39)")
+	frdir := t.TempDir()
+	db, err := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), frdir, "", false)
+	if err != nil {
+		t.Fatalf("failed to create database with ancient backend: %v", err)
+	}
+
+	trieDB := triedb.NewDatabase(db, nil)
+	defer trieDB.Close()
+
+	config := params.ParliaTestChainConfig
+	gspec := &core.Genesis{
+		Config: config,
+		Alloc:  types.GenesisAlloc{testAddr: {Balance: new(big.Int).SetUint64(10 * params.Ether)}},
+	}
+	mockEngine := &mockParlia{}
+	genesisBlock := gspec.MustCommit(db, trieDB)
+	chain, _ := core.NewBlockChain(db, gspec, mockEngine, nil)
+	defer chain.Stop()
+	parents, _ := core.GenerateChain(config, genesisBlock, mockEngine, db, 1, nil)
+	parent := parents[0]
+	rawdb.WriteBlock(db, parent)
+
+	engine := New(config, db, nil, genesisBlock.Hash())
+	validatorKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	validator := crypto.PubkeyToAddress(validatorKey.PublicKey)
+	engine.Authorize(validator, nil, func(account accounts.Account, tx *types.Transaction, chainID *big.Int) (*types.Transaction, error) {
+		if account.Address != validator {
+			return nil, fmt.Errorf("unexpected signing account %s", account.Address)
+		}
+		return types.SignTx(tx, types.LatestSigner(config), validatorKey)
+	})
+
+	gasFee := uint256.NewInt(12345)
+	newHeader := func() *types.Header {
+		return &types.Header{
+			ParentHash: parent.Hash(),
+			Number:     new(big.Int).Add(parent.Number(), common.Big1),
+			Coinbase:   validator,
+			Difficulty: new(big.Int).Set(diffInTurn),
+			GasLimit:   params.SystemTxsGasHardLimit,
+			Time:       parent.Time() + 1,
+		}
+	}
+	newState := func() *state.StateDB {
+		stateDB, err := state.New(parent.Root(), state.NewDatabase(trieDB, nil))
+		if err != nil {
+			t.Fatalf("failed to create stateDB: %v", err)
+		}
+		stateDB.SetBalance(consensus.SystemAddress, new(uint256.Int).Set(gasFee), tracing.BalanceChangeUnspecified)
+		return stateDB
+	}
+
+	signedBlock, signedReceipts, err := engine.FinalizeAndAssemble(chain, newHeader(), newState(), &types.Body{}, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to finalize signed block: %v", err)
+	}
+	unsignedBlock, unsignedReceipts, err := engine.FinalizeAndAssembleBidBlock(chain, newHeader(), newState(), &types.Body{}, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to finalize BidBlock: %v", err)
+	}
+
+	if signedBlock.Root() != unsignedBlock.Root() {
+		t.Fatalf("state root mismatch: signed=%s unsigned=%s", signedBlock.Root(), unsignedBlock.Root())
+	}
+	if signedBlock.ReceiptHash() != unsignedBlock.ReceiptHash() {
+		t.Fatalf("receipt hash mismatch: signed=%s unsigned=%s", signedBlock.ReceiptHash(), unsignedBlock.ReceiptHash())
+	}
+	if signedBlock.Bloom() != unsignedBlock.Bloom() {
+		t.Fatalf("receipt bloom mismatch")
+	}
+	if signedBlock.GasUsed() != unsignedBlock.GasUsed() {
+		t.Fatalf("gas used mismatch: signed=%d unsigned=%d", signedBlock.GasUsed(), unsignedBlock.GasUsed())
+	}
+	if len(signedBlock.Transactions()) == 0 || len(unsignedBlock.Transactions()) == 0 {
+		t.Fatalf("expected system transactions in both finalized blocks")
+	}
+	if isUnsignedTx(signedBlock.Transactions()[0]) {
+		t.Fatalf("expected default finalize path to sign system txs")
+	}
+	if !isUnsignedTx(unsignedBlock.Transactions()[0]) {
+		t.Fatalf("expected BidBlock assembly to keep system txs unsigned")
+	}
+	if len(signedReceipts) != len(unsignedReceipts) {
+		t.Fatalf("receipt count mismatch: signed=%d unsigned=%d", len(signedReceipts), len(unsignedReceipts))
+	}
+}
+
+func TestParliaFinalizeAndAssembleBidBlockRewardsHeaderCoinbase(t *testing.T) {
+	// Skipped intentionally: BidBlock (BEP-675) exercises BSC validator-set
+	// selectors (distributeFinalityReward/updateValidatorSetV2) that Chiliz's
+	// BAS validator set does not implement; the feature is inert on Chiliz and
+	// its selector assertion in New() is fork-gated off. See COR-39.
+	t.Skip("BidBlock requires BSC validator-set ABI selectors absent from the Chiliz BAS ABI (COR-39)")
+	frdir := t.TempDir()
+	db, err := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), frdir, "", false)
+	if err != nil {
+		t.Fatalf("failed to create database with ancient backend: %v", err)
+	}
+
+	trieDB := triedb.NewDatabase(db, nil)
+	defer trieDB.Close()
+
+	config := params.ParliaTestChainConfig
+	gspec := &core.Genesis{
+		Config: config,
+		Alloc:  types.GenesisAlloc{testAddr: {Balance: new(big.Int).SetUint64(10 * params.Ether)}},
+	}
+	mockEngine := &mockParlia{}
+	genesisBlock := gspec.MustCommit(db, trieDB)
+	chain, _ := core.NewBlockChain(db, gspec, mockEngine, nil)
+	defer chain.Stop()
+	parents, _ := core.GenerateChain(config, genesisBlock, mockEngine, db, 1, nil)
+	parent := parents[0]
+	rawdb.WriteBlock(db, parent)
+
+	engine := New(config, db, nil, genesisBlock.Hash())
+	localValidator := common.HexToAddress("0x1000000000000000000000000000000000000001")
+	blockCoinbase := common.HexToAddress("0x2000000000000000000000000000000000000002")
+	engine.Authorize(localValidator, nil, nil)
+
+	header := &types.Header{
+		ParentHash: parent.Hash(),
+		Number:     new(big.Int).Add(parent.Number(), common.Big1),
+		Coinbase:   blockCoinbase,
+		Difficulty: new(big.Int).Set(diffInTurn),
+		GasLimit:   params.SystemTxsGasHardLimit,
+		Time:       parent.Time() + 1,
+	}
+	stateDB, err := state.New(parent.Root(), state.NewDatabase(trieDB, nil))
+	if err != nil {
+		t.Fatalf("failed to create stateDB: %v", err)
+	}
+	stateDB.SetBalance(consensus.SystemAddress, uint256.NewInt(12345), tracing.BalanceChangeUnspecified)
+
+	block, _, err := engine.FinalizeAndAssembleBidBlock(chain, header, stateDB, &types.Body{}, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to finalize BidBlock: %v", err)
+	}
+
+	wantDeposit, err := engine.validatorSetABI.Pack("deposit", blockCoinbase)
+	if err != nil {
+		t.Fatalf("failed to pack expected deposit: %v", err)
+	}
+	wrongDeposit, err := engine.validatorSetABI.Pack("deposit", localValidator)
+	if err != nil {
+		t.Fatalf("failed to pack wrong deposit: %v", err)
+	}
+	var found bool
+	for _, tx := range block.Transactions() {
+		if tx.To() == nil || *tx.To() != common.HexToAddress(systemcontracts.ValidatorContract) {
+			continue
+		}
+		if bytes.Equal(tx.Data(), wrongDeposit) {
+			t.Fatalf("deposit reward routed to local p.val %s, want header coinbase %s", localValidator, blockCoinbase)
+		}
+		if bytes.Equal(tx.Data(), wantDeposit) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing deposit reward for header coinbase %s", blockCoinbase)
+	}
+}
+
+func TestParliaPrepareForBidBlock(t *testing.T) {
+	// Skipped intentionally: BidBlock (BEP-675) exercises BSC validator-set
+	// selectors (distributeFinalityReward/updateValidatorSetV2) that Chiliz's
+	// BAS validator set does not implement; the feature is inert on Chiliz and
+	// its selector assertion in New() is fork-gated off. See COR-39.
+	t.Skip("BidBlock requires BSC validator-set ABI selectors absent from the Chiliz BAS ABI (COR-39)")
+	frdir := t.TempDir()
+	db, err := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), frdir, "", false)
+	if err != nil {
+		t.Fatalf("failed to create database with ancient backend: %v", err)
+	}
+
+	trieDB := triedb.NewDatabase(db, nil)
+	defer trieDB.Close()
+
+	config := params.ParliaTestChainConfig
+	otherValidator := common.HexToAddress("0x2000000000000000000000000000000000000000")
+	extra := make([]byte, extraVanity+validatorNumberSize+2*validatorBytesLength+extraSeal)
+	extra[extraVanity] = 2
+	copy(extra[extraVanity+validatorNumberSize:], testAddr[:])
+	copy(extra[extraVanity+validatorNumberSize+validatorBytesLength:], otherValidator[:])
+	gspec := &core.Genesis{
+		Config:    config,
+		ExtraData: extra,
+		Timestamp: uint64(time.Now().Add(-10 * time.Second).Unix()),
+		Alloc:     types.GenesisAlloc{testAddr: {Balance: new(big.Int).SetUint64(10 * params.Ether)}},
+	}
+	mockEngine := &mockParlia{}
+	genesisBlock := gspec.MustCommit(db, trieDB)
+	chain, _ := core.NewBlockChain(db, gspec, mockEngine, nil)
+	defer chain.Stop()
+
+	validatorEngine := New(config, db, nil, genesisBlock.Hash())
+	inturnValidator, err := validatorEngine.NextInTurnValidator(chain, genesisBlock.Header())
+	if err != nil {
+		t.Fatalf("failed to get in-turn validator: %v", err)
+	}
+	validatorEngine.Authorize(inturnValidator, nil, nil)
+	builderEngine := New(config, db, nil, genesisBlock.Hash())
+	if inturnValidator == testAddr {
+		builderEngine.Authorize(otherValidator, nil, nil)
+	} else {
+		builderEngine.Authorize(testAddr, nil, nil)
+	}
+
+	newHeader := func() *types.Header {
+		return &types.Header{
+			ParentHash: genesisBlock.Hash(),
+			Number:     common.Big1,
+			GasLimit:   params.SystemTxsGasHardLimit,
+		}
+	}
+	validatorHeader := newHeader()
+	builderHeader := newHeader()
+
+	if err := validatorEngine.Prepare(chain, validatorHeader); err != nil {
+		t.Fatalf("failed to prepare validator header: %v", err)
+	}
+	if err := builderEngine.PrepareForBidBlock(chain, builderHeader); err != nil {
+		t.Fatalf("failed to prepare BidBlock header: %v", err)
+	}
+
+	if builderHeader.Coinbase != validatorHeader.Coinbase {
+		t.Fatalf("coinbase mismatch: builder=%s validator=%s", builderHeader.Coinbase, validatorHeader.Coinbase)
+	}
+	if builderHeader.Coinbase != inturnValidator {
+		t.Fatalf("builder coinbase mismatch: have %s want %s", builderHeader.Coinbase, inturnValidator)
+	}
+	// Prepare and PrepareForBidBlock share the prepare() core, so headers
+	// prepared back-to-back land on the same blockTimeForRamanujanFork output.
+	// Allow one 50ms quantum of tolerance for the rare case where the two
+	// calls straddle a wall-clock alignment tick.
+	diff := int64(builderHeader.MilliTimestamp()) - int64(validatorHeader.MilliTimestamp())
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff > 50 {
+		t.Fatalf("builder/validator time diverge by %dms: builder=%d validator=%d",
+			diff, builderHeader.MilliTimestamp(), validatorHeader.MilliTimestamp())
+	}
+	if builderHeader.Difficulty.Cmp(validatorHeader.Difficulty) != 0 {
+		t.Fatalf("difficulty mismatch: builder=%s validator=%s", builderHeader.Difficulty, validatorHeader.Difficulty)
+	}
+	// BidBlock prepare must produce a byte-identical Extra to the normal validator
+	// prepare (length-equal is too weak: a wrong forkhash/vanity byte would slip through).
+	if !bytes.Equal(builderHeader.Extra, validatorHeader.Extra) {
+		t.Fatalf("extra mismatch:\n builder   =%x\n validator =%x", builderHeader.Extra, validatorHeader.Extra)
+	}
+
+	// SetExtraData branch checks on a non-epoch header (no validator-set contract call):
+	// forkhash bytes, zeroed seal space, and vanity truncation/padding. The epoch
+	// validators / turnLength branches require a populated validator contract and are
+	// covered by e2e.
+	const vanityLen = extraVanity - nextForkHashSize // 28
+	genesisTime := chain.GenesisHeader().Time
+	wantForkHash := forkid.NextForkHash(config, genesisBlock.Hash(), genesisTime, validatorHeader.Number.Uint64(), validatorHeader.Time)
+	if got := validatorHeader.Extra[vanityLen:extraVanity]; !bytes.Equal(got, wantForkHash[:]) {
+		t.Fatalf("forkhash mismatch: got %x want %x", got, wantForkHash[:])
+	}
+	if seal := validatorHeader.Extra[len(validatorHeader.Extra)-extraSeal:]; !bytes.Equal(seal, make([]byte, extraSeal)) {
+		t.Fatalf("seal space not zeroed: %x", seal)
+	}
+
+	setExtra := func(vanity []byte) []byte {
+		h := newHeader()
+		h.Time = validatorHeader.Time
+		h.Extra = append([]byte(nil), vanity...)
+		if err := validatorEngine.SetExtraData(chain, h); err != nil {
+			t.Fatalf("SetExtraData: %v", err)
+		}
+		return h.Extra
+	}
+	// over-long vanity is truncated to vanityLen bytes.
+	long := bytes.Repeat([]byte{0xAB}, extraVanity*2)
+	if got := setExtra(long)[:vanityLen]; !bytes.Equal(got, long[:vanityLen]) {
+		t.Fatalf("vanity not truncated: got %x", got)
+	}
+	// short vanity is zero-padded to vanityLen bytes.
+	short := []byte{0x01, 0x02}
+	ext := setExtra(short)
+	if !bytes.Equal(ext[:len(short)], short) || !bytes.Equal(ext[len(short):vanityLen], make([]byte, vanityLen-len(short))) {
+		t.Fatalf("vanity not zero-padded: got %x", ext[:vanityLen])
 	}
 }
 
@@ -948,491 +1396,4 @@ func (c *mockParlia) FinalizeAndAssemble(chain consensus.ChainHeaderReader, head
 
 func (c *mockParlia) CalcDifficulty(chain consensus.ChainHeaderReader, time uint64, parent *types.Header) *big.Int {
 	return big.NewInt(1)
-}
-
-func TestSignBAL(t *testing.T) {
-	// Setup test environment
-	key, _ := crypto.GenerateKey()
-	addr := crypto.PubkeyToAddress(key.PublicKey)
-
-	// Create mock signing function that succeeds
-	mockSignFn := func(account accounts.Account, mimeType string, data []byte) ([]byte, error) {
-		if account.Address != addr {
-			return nil, fmt.Errorf("wrong address")
-		}
-		if mimeType != accounts.MimetypeParlia {
-			return nil, fmt.Errorf("wrong mime type")
-		}
-		// Return a dummy 65-byte signature
-		sig := make([]byte, 65)
-		copy(sig, []byte("test_signature_data_for_testing_purposes_123456789012345678901234"))
-		return sig, nil
-	}
-
-	// Create Parlia instance
-	parlia := &Parlia{
-		val:    addr,
-		signFn: mockSignFn,
-	}
-
-	tests := []struct {
-		name          string
-		bal           *types.BlockAccessListEncode
-		expectedError bool
-		signFn        SignerFn
-		description   string
-	}{
-		{
-			name: "successful signing",
-			bal: &types.BlockAccessListEncode{
-				Version:  0,
-				SignData: make([]byte, 65),
-				Accounts: []types.AccountAccessListEncode{
-					{
-						Address: common.HexToAddress("0x1234567890123456789012345678901234567890"),
-						StorageItems: []types.StorageAccessItem{
-							{Key: common.HexToHash("0x01"), TxIndex: 0, Dirty: false},
-						},
-					},
-				},
-			},
-			expectedError: false,
-			signFn:        mockSignFn,
-			description:   "Should successfully sign a valid BlockAccessListEncode",
-		},
-		{
-			name: "signing function error",
-			bal: &types.BlockAccessListEncode{
-				Version:  0,
-				SignData: make([]byte, 65),
-				Accounts: []types.AccountAccessListEncode{},
-			},
-			expectedError: true,
-			signFn: func(account accounts.Account, mimeType string, data []byte) ([]byte, error) {
-				return nil, fmt.Errorf("signing failed")
-			},
-			description: "Should return error when signing function fails",
-		},
-		{
-			name: "empty accounts list",
-			bal: &types.BlockAccessListEncode{
-				Version:  0,
-				SignData: make([]byte, 65),
-				Accounts: []types.AccountAccessListEncode{},
-			},
-			expectedError: false,
-			signFn:        mockSignFn,
-			description:   "Should successfully sign even with empty accounts list",
-		},
-		{
-			name: "multiple accounts",
-			bal: &types.BlockAccessListEncode{
-				Version:  2,
-				SignData: make([]byte, 65),
-				Accounts: []types.AccountAccessListEncode{
-					{
-						Address: common.HexToAddress("0x1111111111111111111111111111111111111111"),
-						StorageItems: []types.StorageAccessItem{
-							{Key: common.HexToHash("0x01"), TxIndex: 0, Dirty: false},
-							{Key: common.HexToHash("0x02"), TxIndex: 1, Dirty: true},
-						},
-					},
-					{
-						Address: common.HexToAddress("0x2222222222222222222222222222222222222222"),
-						StorageItems: []types.StorageAccessItem{
-							{Key: common.HexToHash("0x03"), TxIndex: 2, Dirty: false},
-						},
-					},
-				},
-			},
-			expectedError: false,
-			signFn:        mockSignFn,
-			description:   "Should successfully sign with multiple accounts",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Set up Parlia with the test signing function
-			parlia.signFn = tt.signFn
-
-			// Call SignBAL
-			err := parlia.SignBAL(tt.bal)
-
-			// Check results
-			if tt.expectedError {
-				if err == nil {
-					t.Errorf("Expected error but got none. %s", tt.description)
-				}
-			} else {
-				if err != nil {
-					t.Errorf("Expected no error but got: %v. %s", err, tt.description)
-				}
-				// Verify signature was copied to SignData
-				if tt.bal != nil && len(tt.bal.SignData) != 65 {
-					t.Errorf("Expected SignData to be 65 bytes, got %d", len(tt.bal.SignData))
-				}
-				// Verify signature content (for successful cases)
-				if tt.bal != nil && !tt.expectedError {
-					expectedSig := "test_signature_data_for_testing_purposes_123456789012345678901234"
-					if string(tt.bal.SignData[:len(expectedSig)]) != expectedSig {
-						t.Errorf("SignData was not properly set")
-					}
-				}
-			}
-		})
-	}
-}
-
-func TestVerifyBAL(t *testing.T) {
-	// Setup test environment
-	signerKey, _ := crypto.GenerateKey()
-	signerAddr := crypto.PubkeyToAddress(signerKey.PublicKey)
-
-	// Helper function to create a properly signed BAL
-	createBlockWithBAL := func(addr common.Address, version uint32, signLength int, accounts []types.AccountAccessListEncode) *types.Block {
-		header := &types.Header{
-			ParentHash: types.EmptyRootHash,
-			Number:     big.NewInt(10),
-			Coinbase:   addr,
-		}
-		block := types.NewBlock(header, nil, nil, nil)
-		bal := &types.BlockAccessListEncode{
-			Version:  version,
-			Number:   block.Number().Uint64(),
-			Hash:     block.Hash(),
-			SignData: make([]byte, signLength),
-			Accounts: accounts,
-		}
-
-		// RLP encode the data
-		data, _ := rlp.EncodeToBytes([]interface{}{bal.Version, bal.Number, bal.Hash, bal.Accounts})
-
-		// Create signature using the test key
-		hash := crypto.Keccak256(data)
-		sig, _ := crypto.Sign(hash, signerKey)
-		copy(bal.SignData, sig)
-		block = block.WithBAL(bal)
-		return block
-	}
-
-	// Create a Parlia instance
-	parlia := &Parlia{}
-
-	tests := []struct {
-		name          string
-		block         *types.Block
-		expectedError bool
-		description   string
-	}{
-		{
-			name: "valid signature verification",
-			block: createBlockWithBAL(signerAddr, 0, 65, []types.AccountAccessListEncode{
-				{
-					Address: common.HexToAddress("0x1234567890123456789012345678901234567890"),
-					StorageItems: []types.StorageAccessItem{
-						{Key: common.HexToHash("0x01"), TxIndex: 0, Dirty: false},
-					},
-				},
-			}),
-			expectedError: false,
-			description:   "Should successfully verify a properly signed BAL",
-		},
-		{
-			name: "invalid version",
-			block: createBlockWithBAL(signerAddr, 1, 65, []types.AccountAccessListEncode{
-				{
-					Address: common.HexToAddress("0x1234567890123456789012345678901234567890"),
-					StorageItems: []types.StorageAccessItem{
-						{Key: common.HexToHash("0x01"), TxIndex: 0, Dirty: false},
-					},
-				},
-			}),
-			expectedError: true,
-			description:   "Should fail when version is invalid",
-		},
-		{
-			name:          "invalid signature length - too short",
-			block:         createBlockWithBAL(signerAddr, 0, 64, []types.AccountAccessListEncode{}),
-			expectedError: true,
-			description:   "Should fail when signature is too short",
-		},
-		{
-			name:          "invalid signature length - too long",
-			block:         createBlockWithBAL(signerAddr, 0, 66, []types.AccountAccessListEncode{}),
-			expectedError: true,
-			description:   "Should fail when signature is too long",
-		},
-		{
-			name:          "empty signature",
-			block:         createBlockWithBAL(signerAddr, 0, 0, []types.AccountAccessListEncode{}),
-			expectedError: true,
-			description:   "Should fail with empty signature",
-		},
-		{
-			name: "signer mismatch",
-			block: createBlockWithBAL(common.HexToAddress("0x1234567890123456789012345678901234567890"), 0, 65, []types.AccountAccessListEncode{
-				{
-					Address: common.HexToAddress("0x1234567890123456789012345678901234567890"),
-					StorageItems: []types.StorageAccessItem{
-						{Key: common.HexToHash("0x01"), TxIndex: 0, Dirty: false},
-					},
-				},
-			}),
-			expectedError: true,
-			description:   "Should fail when signer address doesn't match recovered address",
-		},
-		{
-			name:          "empty accounts list",
-			block:         createBlockWithBAL(signerAddr, 0, 65, []types.AccountAccessListEncode{}),
-			expectedError: false,
-			description:   "Should successfully verify BAL with empty accounts",
-		},
-		{
-			name: "multiple accounts",
-			block: createBlockWithBAL(signerAddr, 0, 65, []types.AccountAccessListEncode{
-				{
-					Address: common.HexToAddress("0x1111111111111111111111111111111111111111"),
-					StorageItems: []types.StorageAccessItem{
-						{Key: common.HexToHash("0x01"), TxIndex: 0, Dirty: false},
-						{Key: common.HexToHash("0x02"), TxIndex: 1, Dirty: true},
-					},
-				},
-				{
-					Address: common.HexToAddress("0x2222222222222222222222222222222222222222"),
-					StorageItems: []types.StorageAccessItem{
-						{Key: common.HexToHash("0x03"), TxIndex: 2, Dirty: false},
-					},
-				},
-			}),
-			expectedError: false,
-			description:   "Should successfully verify BAL with multiple accounts",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := parlia.VerifyBAL(tt.block, tt.block.BAL())
-			if tt.expectedError {
-				if err == nil {
-					t.Errorf("Expected error but got none. %s", tt.description)
-				}
-			} else {
-				if err != nil {
-					t.Errorf("Expected no error but got: %v. %s", err, tt.description)
-				}
-			}
-		})
-	}
-}
-
-func TestVerifyBAL_EdgeCases(t *testing.T) {
-	// Test with different key to ensure proper signature verification
-	key1, _ := crypto.GenerateKey()
-	key2, _ := crypto.GenerateKey()
-	addr1 := crypto.PubkeyToAddress(key1.PublicKey)
-	addr2 := crypto.PubkeyToAddress(key2.PublicKey)
-
-	parlia := &Parlia{}
-
-	header1 := &types.Header{
-		ParentHash: types.EmptyRootHash,
-		Number:     big.NewInt(10),
-		Coinbase:   addr1,
-	}
-	block1 := types.NewBlock(header1, nil, nil, nil)
-	// Create BAL signed with key1
-	bal := &types.BlockAccessListEncode{
-		Version:  0,
-		Number:   block1.Number().Uint64(),
-		Hash:     block1.Hash(),
-		SignData: make([]byte, 65),
-		Accounts: []types.AccountAccessListEncode{
-			{
-				Address: common.HexToAddress("0x1234567890123456789012345678901234567890"),
-				StorageItems: []types.StorageAccessItem{
-					{Key: common.HexToHash("0x01"), TxIndex: 0, Dirty: false},
-				},
-			},
-		},
-	}
-
-	// Sign with key1
-	data, _ := rlp.EncodeToBytes([]interface{}{bal.Version, bal.Number, bal.Hash, bal.Accounts})
-	hash := crypto.Keccak256(data)
-	sig, _ := crypto.Sign(hash, key1)
-	copy(bal.SignData, sig)
-
-	// Should succeed with addr1
-	err := parlia.VerifyBAL(block1, bal)
-	if err != nil {
-		t.Errorf("Verification with correct signer failed: %v", err)
-	}
-
-	// Should fail with addr2 (different key)
-	header2 := &types.Header{
-		ParentHash: types.EmptyRootHash,
-		Number:     big.NewInt(10),
-		Coinbase:   addr2,
-	}
-	block2 := types.NewBlock(header2, nil, nil, nil)
-	err = parlia.VerifyBAL(block2, bal)
-	if err == nil {
-		t.Error("Expected verification to fail with different signer address")
-	}
-}
-
-func TestVerifyBAL_TooLargeData(t *testing.T) {
-	// Test with large amount of data to ensure RLP encoding works correctly
-	key, _ := crypto.GenerateKey()
-	addr := crypto.PubkeyToAddress(key.PublicKey)
-	parlia := &Parlia{}
-
-	// Create BAL with many accounts
-	accounts := make([]types.AccountAccessListEncode, 20000)
-	for i := 0; i < 20000; i++ {
-		accounts[i] = types.AccountAccessListEncode{
-			Address: common.BigToAddress(big.NewInt(int64(i))),
-			StorageItems: []types.StorageAccessItem{
-				{Key: common.BigToHash(big.NewInt(int64(i))), TxIndex: uint32(i), Dirty: i%2 == 0},
-				{Key: common.BigToHash(big.NewInt(int64(i + 1000))), TxIndex: uint32(i + 1), Dirty: i%3 == 0},
-			},
-		}
-	}
-
-	header := &types.Header{
-		ParentHash: types.EmptyRootHash,
-		Number:     big.NewInt(10),
-		Coinbase:   addr,
-	}
-	block := types.NewBlock(header, nil, nil, nil)
-	bal := &types.BlockAccessListEncode{
-		Version:  0,
-		Number:   block.Number().Uint64(),
-		Hash:     block.Hash(),
-		SignData: make([]byte, 65),
-		Accounts: accounts,
-	}
-
-	// Sign the large data
-	data, err := rlp.EncodeToBytes([]interface{}{bal.Version, bal.Number, bal.Hash, bal.Accounts})
-	if err != nil {
-		t.Fatalf("Failed to RLP encode large data: %v", err)
-	}
-
-	hash := crypto.Keccak256(data)
-	sig, err := crypto.Sign(hash, key)
-	if err != nil {
-		t.Fatalf("Failed to sign large data: %v", err)
-	}
-	copy(bal.SignData, sig)
-
-	// Verify the signature
-	err = parlia.VerifyBAL(block, bal)
-	if err.Error() != "data is too large" {
-		t.Errorf("Failed to verify BAL with large data: %v", err)
-	}
-}
-
-func TestSignBAL_VerifyBAL_Integration(t *testing.T) {
-	// Test complete sign-verify cycle
-	key, _ := crypto.GenerateKey()
-	addr := crypto.PubkeyToAddress(key.PublicKey)
-
-	// Create mock signing function
-	mockSignFn := func(account accounts.Account, mimeType string, data []byte) ([]byte, error) {
-		if account.Address != addr {
-			return nil, fmt.Errorf("wrong address")
-		}
-		if mimeType != accounts.MimetypeParlia {
-			return nil, fmt.Errorf("wrong mime type")
-		}
-		// Use the actual private key to sign
-		hash := crypto.Keccak256(data)
-		return crypto.Sign(hash, key)
-	}
-
-	parlia := &Parlia{
-		val:    addr,
-		signFn: mockSignFn,
-	}
-
-	testCases := []struct {
-		name     string
-		version  uint32
-		accounts []types.AccountAccessListEncode
-	}{
-		{
-			name:     "empty accounts",
-			version:  0,
-			accounts: []types.AccountAccessListEncode{},
-		},
-		{
-			name:    "single account",
-			version: 0,
-			accounts: []types.AccountAccessListEncode{
-				{
-					Address: common.HexToAddress("0x1234567890123456789012345678901234567890"),
-					StorageItems: []types.StorageAccessItem{
-						{Key: common.HexToHash("0x01"), TxIndex: 0, Dirty: false},
-						{Key: common.HexToHash("0x02"), TxIndex: 1, Dirty: true},
-					},
-				},
-			},
-		},
-		{
-			name:    "multiple accounts",
-			version: 0,
-			accounts: []types.AccountAccessListEncode{
-				{
-					Address: common.HexToAddress("0x1111111111111111111111111111111111111111"),
-					StorageItems: []types.StorageAccessItem{
-						{Key: common.HexToHash("0x01"), TxIndex: 0, Dirty: false},
-					},
-				},
-				{
-					Address: common.HexToAddress("0x2222222222222222222222222222222222222222"),
-					StorageItems: []types.StorageAccessItem{
-						{Key: common.HexToHash("0x02"), TxIndex: 1, Dirty: true},
-						{Key: common.HexToHash("0x03"), TxIndex: 2, Dirty: false},
-					},
-				},
-			},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			header := &types.Header{
-				ParentHash: types.EmptyRootHash,
-				Number:     big.NewInt(10),
-				Coinbase:   addr,
-			}
-			block := types.NewBlock(header, nil, nil, nil)
-			// Create BAL
-			bal := &types.BlockAccessListEncode{
-				Version:  tc.version,
-				Number:   block.Number().Uint64(),
-				Hash:     block.Hash(),
-				SignData: make([]byte, 65),
-				Accounts: tc.accounts,
-			}
-
-			// Sign the BAL
-			err := parlia.SignBAL(bal)
-			if err != nil {
-				t.Fatalf("SignBAL failed: %v", err)
-			}
-
-			// Verify signature length
-			if len(bal.SignData) != 65 {
-				t.Errorf("Expected SignData to be 65 bytes, got %d", len(bal.SignData))
-			}
-
-			// Verify the BAL with correct signer
-			err = parlia.VerifyBAL(block, bal)
-			if err != nil {
-				t.Errorf("VerifyBAL failed with correct signer: %v", err)
-			}
-		})
-	}
 }
