@@ -32,7 +32,7 @@ drives an agent over consensus code. Review it like production.
 ## What belongs in `.github/workflows/`
 
 **Chiliz-owned workflows only.** The current set is: `bsc-upstream-sync.yml`, `build.yml`,
-`build-test.yml`, `deploy.yml`, `docker-release.yml`, `evm-tests.yml`, `fuzz.yml`, `lint.yml`,
+`build-test.yml`, `deploy.yml`, `docker-release.yml`, `dockerhub-release.yml`, `evm-tests.yml`, `fuzz.yml`, `lint.yml`,
 `nancy.yml`, `pre-release.yml`, `release.yml`, `unit-test.yml`.
 
 Upstream BSC/go-ethereum workflows must be **deleted on every sync**, and they come back two ways:
